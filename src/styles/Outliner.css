@@ -1,0 +1,146 @@
+/* src/styles/Outliner.css */
+
+/* Root */
+.outliner-root {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  color: #fff;
+  font-family: Inter, sans-serif;
+  font-size: 13px;
+}
+
+/* Header */
+.outliner-header {
+  padding: 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.outliner-title {
+  font-weight: 700;
+}
+.outliner-spacer { flex: 1; }
+.outliner-filter {
+  padding: 6px;
+  min-width: 120px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.04);
+  background: transparent;
+  color: inherit;
+}
+
+/* Tree */
+.outliner-tree {
+  padding: 8px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Empty */
+.outliner-empty {
+  color: var(--text-muted, rgba(200,200,220,0.65));
+  padding: 8px;
+}
+
+/* Item */
+.outliner-item {
+  --depth: 0;
+  padding-left: calc(var(--depth) * 12px);
+  margin-bottom: 6px;
+  border-radius: 6px;
+  outline: none;
+}
+.outliner-item.drag-over { box-shadow: inset 0 0 0 2px rgba(127,90,240,0.12); border-radius: 6px; }
+.outliner-item.selected .outliner-content { background: rgba(127,90,240,0.12); }
+
+/* Row */
+.outliner-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Toggle */
+.toggle-btn {
+  width: 20px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+}
+.toggle-placeholder { width: 20px; height: 24px; }
+
+/* Content */
+.outliner-content {
+  flex: 1;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  background: transparent;
+}
+.outliner-content:focus { box-shadow: 0 0 0 2px rgba(127,90,240,0.08); outline: none; }
+
+/* Label wrap */
+.outliner-label-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  overflow: hidden;
+}
+.outliner-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.outliner-sub { font-size: 12px; color: var(--text-muted, rgba(200,200,220,0.6)); }
+
+/* Icon buttons */
+.icon-btn {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+}
+.icon-btn:hover { background: rgba(255,255,255,0.02); }
+
+/* Edit input */
+.outliner-edit-input {
+  width: 100%;
+  padding: 6px;
+  font-size: 13px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(0,0,0,0.35);
+  color: #fff;
+}
+
+/* Children */
+.outliner-children {
+  margin-top: 6px;
+  margin-left: 6px;
+}
+
+/* Responsive */
+@media (max-width: 700px) {
+  .outliner-row { gap: 6px; }
+  .outliner-filter { min-width: 80px; }
+}
