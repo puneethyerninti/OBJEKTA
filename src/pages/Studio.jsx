@@ -14,6 +14,15 @@ import Workspace from "../components/Workspace";
 import ObjectProperties from "../components/ObjectProperties";
 import "../styles/Studio.css";
 
+// Engines / stores / utils (integration)
+import { SceneGraphStore } from "../store/SceneGraphStore";
+import  TextureStore  from "../store/TextureStore";
+import { ImportEngine } from "../engine/ImportEngine";
+import { ExportEngine } from "../engine/ExportEngine";
+import { TransformEngine } from "../engine/TransformEngine";
+import { HistoryEngine } from "../engine/HistoryEngine";
+import EventBus from "../utils/EventBus";
+
 const PALETTE_ITEMS = [
   { id: 1, name: "Cube" }, { id: 2, name: "Sphere" }, { id: 3, name: "Cone" },
   { id: 4, name: "Plane" }, { id: 5, name: "Cylinder" }, { id: 6, name: "Torus" },
@@ -170,6 +179,19 @@ export default function Studio() {
   const [matMetal, setMatMetal] = useState(0.0);
   const [matHasMap, setMatHasMap] = useState(false);
   const [matMapURL, setMatMapURL] = useState(null);
+  const prevMatMapRef = useRef(null);
+
+  // revoke previous blob URL when matMapURL changes (and cleanup on unmount)
+  useEffect(() => {
+    const prev = prevMatMapRef.current;
+    if (prev && typeof prev === 'string' && prev.startsWith && prev.startsWith('blob:') && prev !== matMapURL) {
+      try { URL.revokeObjectURL(prev); } catch (e) {}
+    }
+    prevMatMapRef.current = matMapURL;
+    return () => {
+      try { if (matMapURL && matMapURL.startsWith && matMapURL.startsWith('blob:')) URL.revokeObjectURL(matMapURL); } catch (e) {}
+    };
+  }, [matMapURL]);
 
   // --- Lighting editor state ---
   const [lights, setLights] = useState([]);
@@ -442,11 +464,36 @@ export default function Studio() {
       if (mat && typeof mat.metalness === 'number') setMatMetal(mat.metalness);
       if (mat && mat.map && mat.map.image) {
         setMatHasMap(true);
-        setMatMapURL(mat.map.image.currentSrc || mat.map.image.src || null);
+        // prefer stored preview url if available else try to use image.src
+        setMatMapURL(mat.map.__objekta_preview || (mat.map.image.currentSrc || mat.map.image.src || null));
       } else { setMatHasMap(false); setMatMapURL(null); }
     } else {
       setMatColor('#888888'); setMatRough(0.5); setMatMetal(0); setMatHasMap(false); setMatMapURL(null);
     }
+  };
+
+  // ---------- Helper: dispose resources ----------
+  const disposeObjectResources = (obj) => {
+    if (!obj) return;
+    obj.traverse(n => {
+      try {
+        if (n.isMesh) {
+          const mats = Array.isArray(n.material) ? n.material : [n.material];
+          mats.forEach(mat => {
+            if (!mat) return;
+            if (mat.map) {
+              try { mat.map.dispose && mat.map.dispose(); } catch (e) {}
+              // If you use TextureStore with refcounts, notify it here instead.
+              if (mat.map.__objekta_preview && typeof mat.map.__objekta_preview === 'string') {
+                try { /* don't auto-revoke here; Studio manages previews via matMapURL state */ } catch (e) {}
+              }
+            }
+            try { mat.dispose && mat.dispose(); } catch (e) {}
+          });
+          if (n.geometry) { try { n.geometry.dispose(); } catch (e) {} }
+        }
+      } catch (e) {}
+    });
   };
 
   // ---------- Material functions ----------
@@ -461,6 +508,7 @@ export default function Studio() {
             if (color && mat.color) mat.color.set(color);
             if (typeof roughness === 'number' && typeof mat.roughness === 'number') mat.roughness = roughness;
             if (typeof metalness === 'number' && typeof mat.metalness === 'number') mat.metalness = metalness;
+            mat.needsUpdate = true;
           });
         } catch (e) { console.warn("applyMaterial error", e); }
       }
@@ -470,6 +518,9 @@ export default function Studio() {
       try {
         const loader = new THREE.TextureLoader();
         loader.load(url, (tex) => {
+          // tag texture with preview info so Studio can show preview URL if desired
+          tex.__objekta_preview = url;
+          // if you have TextureStore, you can insert here (TextureStore.add(url, tex))
           selected.traverse((n) => {
             if (n.isMesh && n.material) {
               const mats = Array.isArray(n.material) ? n.material : [n.material];
@@ -481,16 +532,19 @@ export default function Studio() {
           pushToast({ type: "info", message: "Texture applied" });
         }, undefined, (err) => {
           pushToast({ type: "error", message: "Failed to load texture" });
-          URL.revokeObjectURL(url);
+          try { if (url.startsWith('blob:')) URL.revokeObjectURL(url); } catch (e) {}
         });
-      } catch (e) { URL.revokeObjectURL(url); }
+      } catch (e) {
+        try { if (url && url.startsWith && url.startsWith('blob:')) URL.revokeObjectURL(url); } catch (e) {}
+      }
     } else {
+      // Clear texture on all materials
       selected.traverse((n) => {
         if (n.isMesh && n.material) {
           const mats = Array.isArray(n.material) ? n.material : [n.material];
           mats.forEach((mat) => {
             if (mat.map) {
-              try { mat.map.dispose?.(); } catch (e) {}
+              try { mat.map.dispose && mat.map.dispose(); } catch (e) {}
               mat.map = null;
               mat.needsUpdate = true;
             }
@@ -529,10 +583,22 @@ export default function Studio() {
     refreshLightListFromScene();
   }, []);
 
+  const LIGHT_TYPE_MAP = {
+    "Point Light": "PointLight",
+    "Spot Light": "SpotLight",
+    "Directional Light": "DirectionalLight",
+    "Hemisphere Light": "HemisphereLight",
+    "PointLight": "PointLight",
+    "SpotLight": "SpotLight",
+    "DirectionalLight": "DirectionalLight",
+    "HemisphereLight": "HemisphereLight"
+  };
+
   const addLightToScene = (type = "PointLight") => {
     try {
-      workspaceRef.current?.addItem?.(type);
-      pushToast({ type: "info", message: `${type} added` });
+      const canonical = LIGHT_TYPE_MAP[type] || type;
+      workspaceRef.current?.addItem?.(canonical);
+      pushToast({ type: "info", message: `${canonical} added` });
       setTimeout(() => refreshLightListFromScene(), 300);
     } catch (e) { pushToast({ type: "error", message: "Failed to add light" }); }
   };
@@ -604,8 +670,8 @@ export default function Studio() {
       if (nv && nv !== obj.name) {
         try {
           if (workspaceRef.current?.selectObject) {
-            workspaceRef.current.selectObject(obj);
-            workspaceRef.current.renameSelected?.(nv);
+            workspaceRef.current?.selectObject(obj);
+            workspaceRef.current?.renameSelected?.(nv);
           } else obj.name = nv;
         } catch (e) { obj.name = nv; }
         pushToast({ type: "info", message: "Renamed" });
@@ -617,11 +683,16 @@ export default function Studio() {
       try {
         if (workspaceRef.current?.selectObject) {
           workspaceRef.current.selectObject(obj);
+          // dispose resources before deletion
+          disposeObjectResources(obj);
           workspaceRef.current.deleteSelected?.();
         } else {
           const scene = workspaceRef.current?.scene;
           const found = scene?.getObjectByProperty('uuid', obj.uuid);
-          if (found && found.parent) found.parent.remove(found);
+          if (found && found.parent) {
+            disposeObjectResources(found);
+            found.parent.remove(found);
+          }
         }
         pushToast({ type: "info", message: "Deleted" });
       } catch (e) { pushToast({ type: "error", message: "Delete failed" }); }
@@ -720,6 +791,10 @@ export default function Studio() {
       title: "Delete selected object",
       message: `Are you sure you want to delete '${selected.name || "object"}'? This cannot be undone.`,
       onConfirm: () => {
+        try {
+          // dispose resources before deletion
+          disposeObjectResources(selected);
+        } catch (e) {}
         workspaceRef.current?.deleteSelected?.();
         setSelected(null);
         setConfirmState((s) => ({ ...s, open: false }));
@@ -734,6 +809,14 @@ export default function Studio() {
       title: "Reset scene",
       message: "Resetting will remove all objects from the scene. Continue?",
       onConfirm: () => {
+        try {
+          // try to dispose everything under userGroup if available
+          const scene = workspaceRef.current?.scene;
+          const ug = scene?._userGroup || scene?._user_group;
+          if (ug) {
+            ug.children.forEach(child => disposeObjectResources(child));
+          }
+        } catch (e) {}
         workspaceRef.current?.resetScene?.();
         setConfirmState((s) => ({ ...s, open: false }));
         setSelected(null);
@@ -822,11 +905,71 @@ export default function Studio() {
   // ---------- Scene change handler (event-driven) ----------
   const handleSceneChange = (version) => {
     // update local sceneVersion so OutlinerView will rescan
-    setSceneVersion(version ?? (v => v + 1));
+    setSceneVersion((v) => (typeof version === 'number' ? version : v + 1));
     // refresh derived UI pieces
-    refreshLightListFromScene();
-    updateStatsOnce();
+    try { refreshLightListFromScene(); } catch (e) {}
+    try { updateStatsOnce(); } catch (e) {}
   };
+
+  // ---------- REPLACED: Integration block ----------
+  // Previously Studio contained a large `useEffect` that created a shimbed workspace API.
+  // That is removed. Workspace is now the authoritative API (forwardRef). Studio listens
+  // to EventBus updates to stay in sync.
+  useEffect(() => {
+    const onSceneUpdated = () => {
+      setSceneVersion((v) => v + 1);
+      updateStatsOnce();
+      refreshLightListFromScene();
+    };
+    const onObjectsSelected = (payload) => {
+      try {
+        const ids = Array.isArray(payload) ? payload : (payload?.ids || []);
+        const obj = ids && ids.length ? SceneGraphStore.objects[ids[0]]?.object : null;
+        setSelected(obj || null);
+      } catch (e) {}
+    };
+    const onObjectSelected = (p) => {
+      try {
+        const id = p?.id ?? p;
+        const obj = id ? (SceneGraphStore.objects?.[id]?.object || null) : null;
+        setSelected(obj);
+      } catch (e) {}
+    };
+
+    // Listen for completed transforms so we can push to HistoryEngine (if available).
+    const onTransformEnded = (payload) => {
+      try {
+        // Payload expected shape: { ids, before, after }
+        // HistoryEngine API varies across implementations; attempt safe calls.
+        if (HistoryEngine && typeof HistoryEngine.pushCommand === 'function') {
+          HistoryEngine.pushCommand(payload);
+        } else if (HistoryEngine && typeof HistoryEngine.record === 'function') {
+          HistoryEngine.record('transform', payload);
+        } else if (HistoryEngine && typeof HistoryEngine.execute === 'function') {
+          // some impls accept a raw command-like payload
+          HistoryEngine.execute(payload);
+        } else {
+          // no-op: HistoryEngine not present / API not matched
+        }
+      } catch (e) {
+        console.warn("Failed to forward transform to HistoryEngine:", e);
+      }
+    };
+
+    EventBus.on?.("scene:updated", onSceneUpdated);
+    EventBus.on?.("objects:selected", onObjectsSelected);
+    EventBus.on?.("object:selected", onObjectSelected);
+    EventBus.on?.("transform:ended", onTransformEnded);
+
+    return () => {
+      try {
+        EventBus.off?.("scene:updated", onSceneUpdated);
+        EventBus.off?.("objects:selected", onObjectsSelected);
+        EventBus.off?.("object:selected", onObjectSelected);
+        EventBus.off?.("transform:ended", onTransformEnded);
+      } catch (e) {}
+    };
+  }, []);
 
   // ---------- Render ----------
   return (
@@ -845,7 +988,7 @@ export default function Studio() {
         <div className="studio-panel palette-panel" style={{ width: paletteCollapsed ? 44 : paletteWidth, minWidth: paletteCollapsed ? 44 : 120 }}>
           {!paletteCollapsed ? (
             <Palette
-              items={PALETTE_ITEMS.map((it) => ({ ...it, fav: !!favorites[it.name] }))}
+              items={PALETTE_ITEMS.map((it) => ({ ...it, fav: !!favorites[it.name] }))} 
               onAction={(name, client) => workspaceRef.current?.addItem?.(name, client)}
             />
           ) : (

@@ -9,15 +9,16 @@ import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter";
 import { MeshBVH, acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "three-mesh-bvh";
 import { useDrop } from "react-dnd";
 import { PALETTE_TYPE } from "./Palette";
+import EventBus from "../utils/EventBus";
+import { SceneGraphStore } from "../store/SceneGraphStore";
 
 /*
-  Workspace.jsx — extended
-  - sceneVersion counter to avoid frequent outliner re-renders
-  - addGLTF returns Promise and supports onProgress
-  - exportGLTF embeds images (embedImages: true) to produce loadable glb
-  - exposes getSceneObjects/getSceneVersion/selectObject/validate stubs to host
-  - Non-blocking BVH building via scheduleComputeBoundsTreeForObject
-  - Batched transform updates (throttled/debounced) to avoid UI jank
+  Workspace.jsx — extended + fixes
+  - shared DRACOLoader instance (dracoRef) and disposal on unmount
+  - getUserGroup(scene?) helper to normalize _userGroup / _user_group access
+  - WeakMap (materialOriginalsRef) to store/restore emissive without polluting userData
+  - robust blob URL tracking / revoke
+  - preserved original architecture and history logic
 */
 
 const HISTORY_LIMIT = 200;
@@ -25,7 +26,7 @@ const THROTTLE_MS = 50;
 const AUTOSAVE_KEY = "objekta_autosave_v1";
 const HISTORY_DEBOUNCE_MS = 600;
 
-const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTopOffset = 12 }, ref) => {
+const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTopOffset = 12, onSceneChange }, ref) => {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
 
@@ -38,6 +39,11 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   const raycasterRef = useRef(new THREE.Raycaster());
   const mouseRef = useRef(new THREE.Vector2());
   const nameCountRef = useRef(1);
+  const blobUrlsRef = useRef(new Set());
+
+  // NEW: shared DRACO loader + WeakMap for material originals
+  const dracoRef = useRef(null);
+  const materialOriginalsRef = useRef(new WeakMap());
 
   const [selectedInternal, setSelectedInternal] = useState(null);
   const [toolbarPos, setToolbarPos] = useState({ x: -999, y: -999 });
@@ -45,7 +51,11 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
   // simple scene-version counter — increment whenever scene changes
   const sceneVersionRef = useRef(0);
-  const bumpSceneVersion = (why) => { sceneVersionRef.current++; /* optional: console.debug('sceneVersion++', why) */ };
+  const bumpSceneVersion = (why) => {
+    sceneVersionRef.current++;
+    try { if (typeof onSceneChange === "function") onSceneChange(sceneVersionRef.current); } catch (e) {}
+    try { EventBus?.emit?.("scene:updated", { version: sceneVersionRef.current, why }); } catch (e) {}
+  };
 
   // snapshot history (legacy/autosave)
   const snapshotHistoryRef = useRef([]);
@@ -122,9 +132,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   }
 
   // --- Non-blocking BVH / computeBoundsTree scheduler ---
-  // This schedules potentially expensive geometry BVH work in small chunks using
-  // requestIdleCallback when available, otherwise setTimeout. This prevents UI jank
-  // during large imports.
   const scheduleComputeBoundsTreeForObject = useCallback((obj) => {
     if (!obj) return;
     const tasks = [];
@@ -151,7 +158,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       while (tasks.length) {
         const fn = tasks.shift();
         try { fn(); } catch (e) {}
-        // yield if chunk runs too long
         if (performance.now() - start > 8) {
           setTimeout(runChunk, 12);
           return;
@@ -170,12 +176,10 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     }
   }, []);
 
-  // ensureBVHForObject now schedules the BVH compute instead of doing it immediately
   const ensureBVHForObject = useCallback((obj) => {
     try {
       scheduleComputeBoundsTreeForObject(obj);
     } catch (e) {
-      // fallback: attempt immediate compute (best-effort)
       try {
         obj.traverse((n) => {
           if (n.isMesh && n.geometry && typeof n.geometry.computeBoundsTree === "function") {
@@ -191,6 +195,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
   const disposeObject = (obj) => {
+    if (!obj) return;
     obj.traverse((n) => {
       if (n.isMesh) {
         try { n.geometry?.disposeBoundsTree?.(); } catch (e) {}
@@ -214,6 +219,18 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       o = o.parent;
     }
     return null;
+  };
+
+  // Helper: ensure a consistent user-group container on the scene
+  const getUserGroup = (scene = sceneRef.current) => {
+    if (!scene) return null;
+    if (!scene._user_group && !scene._userGroup) {
+      const g = new THREE.Group();
+      g.name = "_user_group";
+      scene.add(g);
+      scene._userGroup = scene._user_group = g;
+    }
+    return scene._user_group ?? scene._userGroup;
   };
 
   // ---------- Init Scene ----------
@@ -266,6 +283,21 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
             };
           } else transformStartRef.current = null;
         } catch (err) { transformStartRef.current = null; }
+
+        // Emit transform:started so external modules (Studio / HistoryEngine) can capture "before"
+        try {
+          const attached = transformRef.current?.object ?? transform.object;
+          const ids = attached ? [attached.uuid] : [];
+          const before = {};
+          if (attached) {
+            before[attached.uuid] = {
+              position: [attached.position.x, attached.position.y, attached.position.z],
+              rotation: [attached.rotation.x, attached.rotation.y, attached.rotation.z],
+              scale: [attached.scale.x, attached.scale.y, attached.scale.z],
+            };
+          }
+          EventBus?.emit?.("transform:started", { ids, before });
+        } catch (e) { /* ignore */ }
       }
     });
 
@@ -285,15 +317,38 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
             cmdHistoryRef.current.push(new Cmd(
               () => {
-                const obj = sceneRef.current?._userGroup?.getObjectByProperty('uuid', end.uuid);
+                const ug = getUserGroup();
+                const obj = ug?.getObjectByProperty('uuid', end.uuid);
                 if (obj) { obj.position.copy(end.pos); obj.rotation.set(end.rot.x, end.rot.y, end.rot.z); obj.scale.copy(end.scale); }
               },
               () => {
-                const obj = sceneRef.current?._userGroup?.getObjectByProperty('uuid', start.uuid);
+                const ug = getUserGroup();
+                const obj = ug?.getObjectByProperty('uuid', start.uuid);
                 if (obj) { obj.position.copy(start.pos); obj.rotation.set(start.rot.x, start.rot.y, start.rot.z); obj.scale.copy(start.scale); }
               },
               "transform"
             ));
+
+            // Emit transform:ended with before/after so other modules can produce full TransformCommand
+            try {
+              const ids = [end.uuid];
+              const before = {
+                [start.uuid]: {
+                  position: [start.pos.x, start.pos.y, start.pos.z],
+                  rotation: [start.rot.x, start.rot.y, start.rot.z],
+                  scale: [start.scale.x, start.scale.y, start.scale.z],
+                }
+              };
+              const after = {
+                [end.uuid]: {
+                  position: [end.pos.x, end.pos.y, end.pos.z],
+                  rotation: [end.rot.x, end.rot.y, end.rot.z],
+                  scale: [end.scale.x, end.scale.y, end.scale.z],
+                }
+              };
+              EventBus?.emit?.("transform:ended", { ids, before, after });
+            } catch (e) { /* ignore */ }
+
             bumpSceneVersion('transform');
           }
         } catch (e) { console.warn("Transform commit failed", e); }
@@ -439,8 +494,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       try {
         const selBox = sceneRef.current._editorGroup.getObjectByName("_selection_box");
         if (selBox && selBox.isBoxHelper) {
-          const sel = (selectedInternal && sceneRef.current._userGroup)
-            ? sceneRef.current._user_group?.getObjectByProperty?.('uuid', selectedInternal.uuid) || sceneRef.current._userGroup.getObjectByProperty('uuid', selectedInternal.uuid)
+          const sel = (selectedInternal && getUserGroup())
+            ? (getUserGroup()?.getObjectByProperty?.('uuid', selectedInternal.uuid) || getUserGroup().getObjectByProperty('uuid', selectedInternal.uuid))
             : null;
           if (sel) {
             selBox.setFromObject(sel);
@@ -449,7 +504,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
         }
       } catch (e) {}
 
-      renderer.render(scene, camera);
+      renderer.render(scene, cameraRef.current);
       const now = Date.now();
       if (now - lastToolbarUpdate.current > THROTTLE_MS) {
         updateToolbarPosition();
@@ -463,8 +518,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       const w = containerRef.current.clientWidth;
       const h = containerRef.current.clientHeight;
       renderer.setSize(w, h, false);
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
+      cameraRef.current.aspect = w / h;
+      cameraRef.current.updateProjectionMatrix();
     };
     window.addEventListener("resize", doResize);
     doResize();
@@ -535,11 +590,23 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       try { rendererRef.current?.dispose?.(); } catch (e) {}
 
       try {
-        const toRemove = (sceneRef.current && sceneRef.current._userGroup) ? Array.from(sceneRef.current._userGroup.children) : [];
+        const ug = getUserGroup();
+        const toRemove = ug ? Array.from(ug.children) : [];
         toRemove.forEach((c) => {
           try { disposeObject(c); } catch (e) {}
         });
       } catch (err) {}
+
+      // dispose DRACOLoader instance if created
+      try { dracoRef.current?.dispose?.(); dracoRef.current = null; } catch (e) {}
+
+      // revoke any created blob URLs (GLTF loads / exports)
+      try {
+        for (const url of blobUrlsRef.current) {
+          try { URL.revokeObjectURL(url); } catch (e) {}
+        }
+        blobUrlsRef.current.clear();
+      } catch (e) {}
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onFullScreenChange, panelTopOffset]);
@@ -572,13 +639,13 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     if (selBox) selBox.visible = false;
   };
 
-  const markSelectionVisual = (obj, selected) => {
+  const markSelectionVisual = (obj, selectedFlag) => {
     if (!obj) return;
 
     try {
       const selBox = sceneRef.current?._editorGroup?.getObjectByName("_selection_box");
       if (selBox && selBox.isBoxHelper) {
-        if (selected) {
+        if (selectedFlag) {
           selBox.setFromObject(obj);
           selBox.material.color.set(0x7f5af0);
           selBox.visible = true;
@@ -588,23 +655,32 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       }
     } catch (err) {}
 
+    // Use WeakMap to remember original material emissive values
     obj.traverse((n) => {
       if (n.isMesh && n.material) {
-        if (selected) {
-          try {
-            if (!n.userData._origEmissive && n.material.emissive) n.userData._origEmissive = n.material.emissive.clone();
-            if (n.material.emissive) n.material.emissive.set(0x7f5af0);
-          } catch (err) {}
-        } else if (n.userData._origEmissive) {
-          try {
-            if (n.material.emissive) n.material.emissive.copy(n.userData._origEmissive);
-            delete n.userData._origEmissive;
-          } catch (err) {}
-        }
+        try {
+          const mats = Array.isArray(n.material) ? n.material : [n.material];
+          if (selectedFlag) {
+            mats.forEach((mat) => {
+              try {
+                if (mat && mat.emissive && !materialOriginalsRef.current.has(mat)) materialOriginalsRef.current.set(mat, mat.emissive.clone());
+                if (mat && mat.emissive) mat.emissive.set(0x7f5af0);
+              } catch (e) {}
+            });
+          } else {
+            mats.forEach((mat) => {
+              try {
+                const orig = materialOriginalsRef.current.get(mat);
+                if (orig && mat && mat.emissive) mat.emissive.copy(orig);
+                materialOriginalsRef.current.delete(mat);
+              } catch (e) {}
+            });
+          }
+        } catch (err) {}
       }
     });
 
-    obj.userData.__selected = !!selected;
+    obj.userData.__selected = !!selectedFlag;
   };
 
   // ---------- Multi-select helpers ----------
@@ -615,9 +691,11 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       set.delete(obj);
       markSelectionVisual(obj, false);
       multiParentMapRef.current.delete(obj.uuid);
+      try { SceneGraphStore.removeObject?.(obj.uuid); } catch (e) {}
     } else {
       set.add(obj);
       markSelectionVisual(obj, true);
+      try { SceneGraphStore.addObject?.(obj.uuid, obj, { name: obj.name, type: obj.type }); } catch (e) {}
     }
 
     if (set.size >= 2) {
@@ -759,11 +837,19 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     obj.userData.__objekta = true;
     obj.traverse((n) => { if (!n.userData) n.userData = {}; n.userData.__objekta = true; });
 
-    const userGroup = sceneRef.current?._userGroup;
+    const userGroup = getUserGroup();
     if (userGroup) userGroup.add(obj);
     else sceneRef.current.add(obj);
 
     try { ensureBVHForObject(obj); } catch (e) {}
+
+    // register with SceneGraphStore so Studio/outliner/stats stay in sync
+    try {
+      SceneGraphStore.addObject?.(obj.uuid, obj, { name: obj.name, type: name });
+    } catch (e) { /* ignore if store missing */ }
+
+    // notify listeners
+    try { EventBus?.emit?.("scene:updated", { id: obj.uuid, type: "add" }); } catch (e) {}
 
     selectObject(obj);
     bumpSceneVersion('addItem');
@@ -778,7 +864,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
             const recreated = loader.parse(snap);
             recreated.userData = recreated.userData || {};
             recreated.userData.__objekta = true;
-            if (sceneRef.current?._userGroup) sceneRef.current._user_group?.add(recreated) ?? sceneRef.current._userGroup.add(recreated);
+            const ug = getUserGroup();
+            if (ug) ug.add(recreated);
             else sceneRef.current.add(recreated);
             ensureBVHForObject(recreated);
             selectObject(recreated);
@@ -787,7 +874,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
         },
         () => {
           try {
-            const ug = sceneRef.current?._userGroup;
+            const ug = getUserGroup();
             const existing = ug?.getObjectByProperty('uuid', uuid);
             if (existing) { disposeObject(existing); if (existing.parent) existing.parent.remove(existing); clearSelection(); bumpSceneVersion('undo-add'); }
           } catch (e) { console.warn("Undo add failed", e); }
@@ -837,7 +924,13 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   const addGLTF = (input, point = null, onProgress = null) => {
     return new Promise((resolve, reject) => {
       const loader = new GLTFLoader();
-      try { const draco = new DRACOLoader(); loader.setDRACOLoader(draco); } catch (e) {}
+      try {
+        if (!dracoRef.current) dracoRef.current = new DRACOLoader();
+        loader.setDRACOLoader(dracoRef.current);
+      } catch (e) {
+        // if DRACOLoader unavailable, continue without it
+        console.warn("DRACOLoader init failed or missing", e);
+      }
       setLoading(true);
 
       const addNodeToScene = (sceneNode) => {
@@ -866,12 +959,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
                 try { child.material = Array.isArray(child.material) ? child.material.map(m => m.clone()) : child.material.clone(); } catch (err) { child.material = new THREE.MeshStandardMaterial({ color: 0x888888 }); }
               } else child.material = new THREE.MeshStandardMaterial({ color: 0x888888 });
               child.castShadow = true; child.receiveShadow = true;
-
-              // schedule BVH compute instead of running potentially expensive compute synchronously
-              try {
-                // formerly: child.geometry.computeBoundsTree() or new MeshBVH(...)
-                // now we schedule a non-blocking pass for the whole node below
-              } catch (e) {}
             }
             if (!child.userData) child.userData = {};
             child.userData.__objekta = true;
@@ -882,13 +969,24 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
           sceneNode.userData.__objekta = true;
           sceneNode.name = sceneNode.name || "Imported_" + nameCountRef.current++;
 
-          const userGroup = sceneRef.current?._userGroup;
+          const userGroup = getUserGroup();
           if (userGroup) userGroup.add(sceneNode);
           else sceneRef.current.add(sceneNode);
 
-          selectObject(sceneNode);
-          // Instead of blocking compute, schedule BVH building in background
+          // register all loaded nodes with SceneGraphStore
+          try {
+            sceneNode.traverse((n) => {
+              if (n.userData?.__objekta) {
+                try { SceneGraphStore.addObject?.(n.uuid, n, { name: n.name, type: n.type }); } catch (e) {}
+              }
+            });
+          } catch (e) {}
+
+          // notify listeners
+          try { EventBus?.emit?.("scene:updated", { id: sceneNode.uuid, type: "import" }); } catch (e) {}
+
           ensureBVHForObject(sceneNode);
+          selectObject(sceneNode);
           bumpSceneVersion('addGLTF');
 
           try {
@@ -901,7 +999,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
                   const recreated = loader2.parse(snap);
                   recreated.userData = recreated.userData || {};
                   recreated.userData.__objekta = true;
-                  if (sceneRef.current?._userGroup) sceneRef.current._user_group?.add(recreated) ?? sceneRef.current._userGroup.add(recreated);
+                  const ug = getUserGroup();
+                  if (ug) ug.add(recreated);
                   else sceneRef.current.add(recreated);
                   ensureBVHForObject(recreated);
                   selectObject(recreated);
@@ -910,9 +1009,12 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
               },
               () => {
                 try {
-                  const ug = sceneRef.current?._user_group ?? sceneRef.current?._userGroup;
+                  const ug = getUserGroup();
                   const existing = ug?.getObjectByProperty('uuid', uuid);
-                  if (existing) { disposeObject(existing); if (existing.parent) existing.parent.remove(existing); clearSelection(); bumpSceneVersion('undo-import'); }
+                  if (existing) {
+                    try { existing.traverse(n => { SceneGraphStore.removeObject?.(n.uuid); }); } catch (e) {}
+                    disposeObject(existing); if (existing.parent) existing.parent.remove(existing); clearSelection(); bumpSceneVersion('undo-import');
+                  }
                 } catch (e) { console.warn("Undo import failed", e); }
               },
               "import"
@@ -946,22 +1048,23 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       }
 
       const url = URL.createObjectURL(input);
+      try { blobUrlsRef.current.add(url); } catch (e) {}
       loader.load(url, (gltf) => {
         try {
           const sceneNode = gltf.scene || gltf.scenes?.[0];
           if (!sceneNode) { throw new Error('GLTF has no scene'); }
           addNodeToScene(sceneNode);
-          setTimeout(() => { try { URL.revokeObjectURL(url); } catch (e) {} }, 1500);
+          setTimeout(() => { try { URL.revokeObjectURL(url); blobUrlsRef.current.delete(url); } catch (e) {} }, 1500);
           resolve(sceneNode);
         } catch (err) {
-          try { URL.revokeObjectURL(url); } catch (e) {}
+          try { URL.revokeObjectURL(url); blobUrlsRef.current.delete(url); } catch (e) {}
           setLoading(false);
           reject(err);
         }
       }, (xhr) => {
         try { if (onProgress && xhr && xhr.loaded && xhr.total) onProgress(xhr.loaded / xhr.total); } catch (e) {}
       }, (err) => {
-        try { URL.revokeObjectURL(url); } catch (e) {}
+        try { URL.revokeObjectURL(url); blobUrlsRef.current.delete(url); } catch (e) {}
         setLoading(false);
         reject(err);
       });
@@ -972,7 +1075,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   const exportGLTF = (binary = true) => {
     return new Promise((resolve, reject) => {
       if (!sceneRef.current) { reject(new Error('No scene')); return; }
-      const userGroup = sceneRef.current._user_group ?? sceneRef.current._userGroup;
+      const userGroup = getUserGroup();
       const userObjects = userGroup ? Array.from(userGroup.children) : [];
 
       const exporter = new GLTFExporter();
@@ -1019,10 +1122,11 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
           // trigger download for compatibility
           const link = document.createElement('a');
           const url = URL.createObjectURL(blob);
+          try { blobUrlsRef.current.add(url); } catch (e) {}
           link.href = url;
           link.download = binary ? 'scene.glb' : 'scene.gltf';
           link.click();
-          setTimeout(() => URL.revokeObjectURL(url), 1500);
+          setTimeout(() => { try { URL.revokeObjectURL(url); blobUrlsRef.current.delete(url); } catch (e) {} }, 1500);
 
           resolve(blob);
         } catch (e) { reject(e); }
@@ -1034,7 +1138,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   const computeSceneSignature = () => {
     if (!sceneRef.current) return "";
     try {
-      const objs = (sceneRef.current._user_group ? Array.from(sceneRef.current._user_group.children) : (sceneRef.current._userGroup ? Array.from(sceneRef.current._userGroup.children) : [])).filter((c) => c.userData?.__objekta);
+      const ug = sceneRef.current._user_group ? Array.from(sceneRef.current._user_group.children) : (sceneRef.current._userGroup ? Array.from(sceneRef.current._userGroup.children) : []);
+      const objs = ug.filter((c) => c.userData?.__objekta);
       return objs.map((c) => {
         const p = c.position; const r = c.rotation; const s = c.scale;
         let matSig = "";
@@ -1054,7 +1159,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     if (signature && lastHistorySignatureRef.current === signature) return;
     lastHistorySignatureRef.current = signature;
 
-    const userGroup = sceneRef.current._user_group ?? sceneRef.current._userGroup;
+    const userGroup = getUserGroup();
     const snaps = userGroup ? Array.from(userGroup.children).filter((c) => c.userData?.__objekta).map((c) => c.toJSON()) : [];
     snapshotHistoryRef.current.push({ label, snaps });
     if (snapshotHistoryRef.current.length > HISTORY_LIMIT) snapshotHistoryRef.current.shift();
@@ -1070,7 +1175,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
   const loadHistory = (entry) => {
     if (!entry || !sceneRef.current) return;
-    const userGroup = sceneRef.current._user_group ?? sceneRef.current._userGroup;
+    const userGroup = getUserGroup();
     const toRemove = userGroup ? Array.from(userGroup.children) : [];
     toRemove.forEach((c) => { try { disposeObject(c); } catch (e) {} if (c.parent) c.parent.remove(c); });
     const loader = new THREE.ObjectLoader();
@@ -1104,6 +1209,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   const deleteSelected = () => {
     if (!selectedInternal || !sceneRef.current) return;
     try {
+      try { selectedInternal.traverse(n => { SceneGraphStore.removeObject?.(n.uuid); }); } catch (e) {}
       const snap = selectedInternal.toJSON();
       const uuid = selectedInternal.uuid;
       try { disposeObject(selectedInternal); } catch (e) {}
@@ -1111,9 +1217,11 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       clearSelection();
       bumpSceneVersion('delete');
 
+      try { EventBus?.emit?.("scene:updated", { id: uuid, type: "delete" }); } catch (e) {}
+
       cmdHistoryRef.current.push(new Cmd(
         () => {
-          const ug = sceneRef.current?._user_group ?? sceneRef.current?._userGroup;
+          const ug = getUserGroup();
           const ex = ug?.getObjectByProperty('uuid', uuid);
           if (ex) { disposeObject(ex); if (ex.parent) ex.parent.remove(ex); }
         },
@@ -1123,9 +1231,10 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
             const recreated = loader.parse(snap);
             recreated.userData = recreated.userData || {};
             recreated.userData.__objekta = true;
-            if (sceneRef.current?._user_group) sceneRef.current._user_group.add(recreated);
-            else if (sceneRef.current?._userGroup) sceneRef.current._userGroup.add(recreated);
+            const ug = getUserGroup();
+            if (ug) ug.add(recreated);
             else sceneRef.current.add(recreated);
+            try { recreated.traverse(n => { SceneGraphStore.addObject?.(n.uuid, n, { name: n.name, type: n.type }); }); } catch (e) {}
             ensureBVHForObject(recreated);
             bumpSceneVersion('undo-delete');
           } catch (e) { console.warn("Undo delete failed", e); }
@@ -1144,11 +1253,16 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       clone.name = (selectedInternal.name || 'clone') + '_dup_' + nameCountRef.current++;
       clone.userData.__objekta = true;
       clone.traverse((n) => { if (n.isMesh && n.material) { try { n.material = Array.isArray(n.material) ? n.material.map(m => m.clone()) : n.material.clone(); } catch (err) {} } });
-      const userGroup = sceneRef.current._user_group ?? sceneRef.current._userGroup;
+      const userGroup = getUserGroup();
       if (userGroup) userGroup.add(clone); else sceneRef.current.add(clone);
       ensureBVHForObject(clone);
+
+      try { clone.traverse(n => { SceneGraphStore.addObject?.(n.uuid, n, { name: n.name, type: n.type }); }); } catch (e) {}
+
       selectObject(clone);
       bumpSceneVersion('duplicate');
+
+      try { EventBus?.emit?.("scene:updated", { id: clone.uuid, type: "duplicate" }); } catch (e) {}
 
       try {
         const snap = clone.toJSON();
@@ -1160,17 +1274,21 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
               const recreated = loader.parse(snap);
               recreated.userData = recreated.userData || {};
               recreated.userData.__objekta = true;
-              if (sceneRef.current?._user_group) sceneRef.current._user_group.add(recreated);
-              else if (sceneRef.current?._userGroup) sceneRef.current._userGroup.add(recreated);
+              const ug = getUserGroup();
+              if (ug) ug.add(recreated);
               else sceneRef.current.add(recreated);
+              try { recreated.traverse(n => { SceneGraphStore.addObject?.(n.uuid, n, { name: n.name, type: n.type }); }); } catch (e) {}
               ensureBVHForObject(recreated);
               bumpSceneVersion('redo-duplicate');
             } catch (e) { console.warn("Redo duplicate failed", e); }
           },
           () => {
-            const ug = sceneRef.current?._user_group ?? sceneRef.current?._userGroup;
+            const ug = getUserGroup();
             const ex = ug?.getObjectByProperty('uuid', uuid);
-            if (ex) { disposeObject(ex); if (ex.parent) ex.parent.remove(ex); bumpSceneVersion('undo-duplicate'); }
+            if (ex) {
+              try { ex.traverse(n => { SceneGraphStore.removeObject?.(n.uuid); }); } catch (e) {}
+              disposeObject(ex); if (ex.parent) ex.parent.remove(ex); bumpSceneVersion('undo-duplicate');
+            }
           },
           "duplicate"
         ));
@@ -1192,24 +1310,33 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   // ---------- Scene serialization API ----------
   const serializeScene = () => {
     if (!sceneRef.current) return null;
-    const userGroup = sceneRef.current._user_group ?? sceneRef.current._userGroup;
+    const userGroup = getUserGroup();
     const snaps = userGroup ? Array.from(userGroup.children).filter((c) => c.userData?.__objekta).map((c) => c.toJSON()) : [];
     return { snaps };
   };
 
   const loadFromData = (data) => {
     if (!data || !data.snaps || !sceneRef.current) return;
-    const userGroup = sceneRef.current._user_group ?? sceneRef.current._userGroup;
+    const userGroup = getUserGroup();
     const toRemove = userGroup ? Array.from(userGroup.children) : [];
     toRemove.forEach((c) => { if (c.parent) c.parent.remove(c); try { disposeObject(c); } catch (e) {} });
     const loader = new THREE.ObjectLoader();
-    data.snaps.forEach((snap) => { try { const obj = loader.parse(snap); obj.userData.__objekta = true; if (userGroup) userGroup.add(obj); else sceneRef.current.add(obj); ensureBVHForObject(obj); } catch (err) { console.error('Failed to load object from data', err); } });
+    data.snaps.forEach((snap) => {
+      try {
+        const obj = loader.parse(snap);
+        obj.userData.__objekta = true;
+        if (userGroup) userGroup.add(obj); else sceneRef.current.add(obj);
+        ensureBVHForObject(obj);
+        try { obj.traverse(n => { SceneGraphStore.addObject?.(n.uuid, n, { name: n.name, type: n.type }); }); } catch (e) {}
+      } catch (err) { console.error('Failed to load object from data', err); }
+    });
     commitHistory('load');
     bumpSceneVersion('loadFromData');
+    try { EventBus?.emit?.("scene:updated", { type: "load" }); } catch (e) {}
   };
 
   const resetScene = ({ skipConfirm } = {}) => {
-    const userGroup = sceneRef.current._user_group ?? sceneRef.current._userGroup;
+    const userGroup = getUserGroup();
     const toRemove = userGroup ? Array.from(userGroup.children) : [];
     toRemove.forEach((c) => { try { disposeObject(c); } catch (e) {} if (c.parent) c.parent.remove(c); });
     snapshotHistoryRef.current = [];
@@ -1218,13 +1345,25 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     pushHistorySnapshot('reset');
     clearSelection();
     bumpSceneVersion('resetScene');
+
+    try {
+      if (SceneGraphStore.clearSelection) SceneGraphStore.clearSelection();
+      if (SceneGraphStore.objects) SceneGraphStore.objects = {};
+    } catch (e) {}
+    try { EventBus?.emit?.("scene:updated", { type: "reset" }); } catch (e) {}
   };
 
   // ---------- Helpers used by ObjectProperties ----------
-  const renameSelected = (name) => { if (!selectedInternal) return; selectedInternal.name = name; commitHistory('rename'); bumpSceneVersion('rename'); };
+  const renameSelected = (name) => {
+    if (!selectedInternal) return;
+    selectedInternal.name = name;
+    commitHistory('rename');
+    bumpSceneVersion('rename');
+    try { SceneGraphStore.renameObject?.(selectedInternal.uuid, name); } catch (e) {}
+    try { EventBus?.emit?.("scene:updated", { id: selectedInternal.uuid, type: "rename" }); } catch (e) {}
+  };
 
   // ---------- Transform batching (throttle / debounce) ----------
-  // Prevent flooding heavy scene ops when the user drags or types rapidly.
   const pendingTransformRef = useRef({ position: false, rotation: false, scale: false });
   const transformFlushTimerRef = useRef(null);
   const TRANSFORM_FLUSH_MS = 100; // coalesce updates into 100ms windows (tweakable)
@@ -1238,17 +1377,14 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     if (typeof idx !== 'number' || idx < 0 || idx > 2) return;
     const key = axes[idx];
 
-    // Apply immediately to the selected object so UI feels responsive
     try {
       if (prop === 'rotation') selectedInternal.rotation[key] = val;
       else selectedInternal[prop][key] = val;
     } catch (e) { /* ignore */ }
 
-    // mark pending and schedule a coalesced commit + history push
     pendingTransformRef.current[prop] = true;
     if (transformFlushTimerRef.current) clearTimeout(transformFlushTimerRef.current);
     transformFlushTimerRef.current = setTimeout(() => {
-      // commit debounce (push snapshot for history)
       try { commitHistoryDebounced('prop-change'); } catch (e) {}
       try { bumpSceneVersion('prop-change'); } catch (e) {}
       pendingTransformRef.current = { position: false, rotation: false, scale: false };
@@ -1267,7 +1403,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   const getSceneSummary = () => {
     const scene = sceneRef.current;
     if (!scene) return { totalTris: 0, objects: 0, objectsList: [] };
-    const userGroup = scene._user_group ?? scene._userGroup;
+    const userGroup = getUserGroup();
     const objs = userGroup ? Array.from(userGroup.children) : [];
     let totalTris = 0;
     const objectsList = objs.map(o => {
@@ -1289,7 +1425,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   const validateSceneAPI = async () => {
     try {
       const data = serializeScene();
-      // If you add a validator util, call it here. For now return a lightweight summary
       return { ok: true, summary: getSceneSummary() };
     } catch (e) {
       return { ok: false, error: e.message || String(e) };
@@ -1309,7 +1444,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     validateScene: validateSceneAPI,
     getSceneSummary,
     getSceneObjects: () => {
-      const ug = sceneRef.current?._user_group ?? sceneRef.current?._userGroup;
+      const ug = getUserGroup();
       return ug ? Array.from(ug.children) : [];
     },
     getSceneVersion: () => sceneVersionRef.current,
@@ -1331,7 +1466,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     useEffect(() => {
       let mounted = true;
       const scanOnce = () => {
-        const ug = sceneRef.current?._user_group ?? sceneRef.current?._userGroup;
+        const ug = getUserGroup();
         const list = ug ? Array.from(ug.children) : [];
         if (!mounted) return;
         setItems(list);
