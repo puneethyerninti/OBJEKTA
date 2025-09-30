@@ -194,6 +194,283 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
+  // --- Sculpting integration (paste after clamp) ---
+  const sculptStateRef = useRef({
+    active: false,
+    target: null,
+    mode: 'inflate', // inflate | deflate | grab | smooth | pinch | flatten
+    radius: 0.25,
+    strength: 0.6,
+    symmetry: { x: false, y: false, z: false },
+    pointerDown: false,
+    lastPoint: null,
+    neighborsMap: new Map(),
+    undoTmp: null,
+  });
+
+  // Build adjacency (vertex neighbors) for BufferGeometry
+  const buildVertexNeighbors = (geometry) => {
+    if (!geometry || !geometry.isBufferGeometry) return [];
+    const posAttr = geometry.attributes.position;
+    const idxAttr = geometry.index;
+    const nVerts = posAttr.count;
+    const neighbors = new Array(nVerts);
+    for (let i = 0; i < nVerts; i++) neighbors[i] = new Set();
+
+    if (idxAttr) {
+      const idx = idxAttr.array;
+      for (let i = 0; i < idx.length; i += 3) {
+        const a = idx[i], b = idx[i + 1], c = idx[i + 2];
+        neighbors[a].add(b); neighbors[a].add(c);
+        neighbors[b].add(a); neighbors[b].add(c);
+        neighbors[c].add(a); neighbors[c].add(b);
+      }
+    } else {
+      const pos = posAttr.array;
+      for (let i = 0, vi = 0; i < pos.length; i += 9, vi += 3) {
+        const a = vi, b = vi + 1, c = vi + 2;
+        neighbors[a].add(b); neighbors[a].add(c);
+        neighbors[b].add(a); neighbors[b].add(c);
+        neighbors[c].add(a); neighbors[c].add(b);
+      }
+    }
+    return neighbors.map((s) => Array.from(s));
+  };
+
+  // falloff curve (cosine-like)
+  const falloff = (t) => {
+    const x = Math.max(0, Math.min(1, t));
+    // 1 at center, 0 at radius
+    return 0.5 * (1 + Math.cos(Math.PI * Math.min(1, x)));
+  };
+
+  // apply brush at a world point
+  const applyBrushToMesh = (mesh, worldPoint, opts = {}) => {
+    if (!mesh || !mesh.geometry || !mesh.geometry.isBufferGeometry) return null;
+    const geometry = mesh.geometry;
+    const posAttr = geometry.attributes.position;
+    const nVerts = posAttr.count;
+    const localPoint = worldPoint.clone();
+    mesh.worldToLocal(localPoint);
+
+    const radius = (typeof opts.radius === 'number') ? opts.radius : sculptStateRef.current.radius;
+    const strength = (typeof opts.strength === 'number') ? opts.strength : sculptStateRef.current.strength;
+    const mode = opts.mode || sculptStateRef.current.mode;
+
+    if (!sculptStateRef.current.neighborsMap.has(geometry.uuid)) {
+      sculptStateRef.current.neighborsMap.set(geometry.uuid, buildVertexNeighbors(geometry));
+    }
+    const neighbors = sculptStateRef.current.neighborsMap.get(geometry.uuid);
+
+    if (!geometry.attributes.normal) geometry.computeVertexNormals();
+    const normals = geometry.attributes.normal.array;
+    const positions = posAttr.array;
+    const changed = new Map();
+
+    for (let i = 0; i < nVerts; i++) {
+      const ix = i * 3;
+      const vx = positions[ix], vy = positions[ix + 1], vz = positions[ix + 2];
+      const dx = vx - localPoint.x, dy = vy - localPoint.y, dz = vz - localPoint.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (dist > radius) continue;
+      const t = dist / radius;
+      const w = falloff(1 - t); // stronger at center
+
+      let nx = normals[ix], ny = normals[ix + 1], nz = normals[ix + 2];
+      const nl = Math.hypot(nx, ny, nz) || 1;
+      nx /= nl; ny /= nl; nz /= nl;
+
+      let dirx = nx, diry = ny, dirz = nz;
+      if (mode === 'grab') {
+        if (opts.viewDir) { dirx = opts.viewDir.x; diry = opts.viewDir.y; dirz = opts.viewDir.z; }
+      } else if (mode === 'flatten') {
+        if (opts.planeNormal) { dirx = opts.planeNormal.x; diry = opts.planeNormal.y; dirz = opts.planeNormal.z; }
+      } else if (mode === 'pinch') {
+        dirx = -dx; diry = -dy; dirz = -dz;
+        const dl = Math.hypot(dirx, diry, dirz) || 1; dirx /= dl; diry /= dl; dirz /= dl;
+      }
+
+      const sign = (mode === 'deflate') ? -1 : 1;
+      const delta = strength * sign * w * 0.08; // tuned scale
+
+      if (!changed.has(i)) changed.set(i, [vx, vy, vz]);
+
+      positions[ix] = vx + dirx * delta;
+      positions[ix + 1] = vy + diry * delta;
+      positions[ix + 2] = vz + dirz * delta;
+    }
+
+    // smoothing pass for smooth mode
+    if (mode === 'smooth') {
+      const out = new Float32Array(positions.length);
+      out.set(positions);
+      const lambda = strength * 0.6;
+      for (let i = 0; i < nVerts; i++) {
+        const nb = neighbors[i];
+        if (!nb || nb.length === 0) continue;
+        const ix = i*3;
+        let sx=0, sy=0, sz=0;
+        for (let j=0;j<nb.length;j++) {
+          const k = nb[j]*3;
+          sx += positions[k]; sy += positions[k+1]; sz += positions[k+2];
+        }
+        const inv = 1/nb.length;
+        sx *= inv; sy *= inv; sz *= inv;
+        out[ix] += (sx - positions[ix]) * lambda;
+        out[ix+1] += (sy - positions[ix+1]) * lambda;
+        out[ix+2] += (sz - positions[ix+2]) * lambda;
+      }
+      positions.set(out);
+    }
+
+    posAttr.needsUpdate = true;
+    if (geometry.computeVertexNormals) geometry.computeVertexNormals();
+    if (geometry.computeBoundingSphere) geometry.computeBoundingSphere();
+
+    try { ensureBVHForObject(mesh); } catch (e) {}
+
+    return { mesh, geometry, changed };
+  };
+
+  // push sculpt command (undo/redo)
+  const pushSculptCommand = (mesh, changedMap, label = 'sculpt') => {
+    if (!mesh || !mesh.geometry || !changedMap || changedMap.size === 0) return;
+    try {
+      const geometry = mesh.geometry;
+      const pos = geometry.attributes.position;
+      const redoSnapshot = new Map();
+      for (const [i] of changedMap) {
+        const ix = i*3;
+        redoSnapshot.set(i, [pos.array[ix], pos.array[ix+1], pos.array[ix+2]]);
+      }
+      const undoSnapshot = changedMap;
+
+      cmdHistoryRef.current.push(new Cmd(
+        () => {
+          for (const [i, v] of redoSnapshot) {
+            const ix = i*3;
+            pos.array[ix] = v[0]; pos.array[ix+1] = v[1]; pos.array[ix+2] = v[2];
+          }
+          pos.needsUpdate = true; geometry.computeVertexNormals && geometry.computeVertexNormals();
+          ensureBVHForObject(mesh); bumpSceneVersion('sculpt-redo');
+        },
+        () => {
+          for (const [i, v] of undoSnapshot) {
+            const ix = i*3;
+            pos.array[ix] = v[0]; pos.array[ix+1] = v[1]; pos.array[ix+2] = v[2];
+          }
+          pos.needsUpdate = true; geometry.computeVertexNormals && geometry.computeVertexNormals();
+          ensureBVHForObject(mesh); bumpSceneVersion('sculpt-undo');
+        },
+        label
+      ));
+    } catch (e) { console.warn('pushSculptCommand failed', e); }
+  };
+
+  // start / stop sculpt state
+  const startSculptingInternal = (mesh, { mode = 'inflate', radius = 0.25, strength = 0.6 } = {}) => {
+    if (!mesh || !mesh.geometry) return false;
+    sculptStateRef.current.active = true;
+    sculptStateRef.current.target = mesh;
+    sculptStateRef.current.mode = mode;
+    sculptStateRef.current.radius = radius;
+    sculptStateRef.current.strength = strength;
+    sculptStateRef.current.pointerDown = false;
+    sculptStateRef.current.lastPoint = null;
+    sculptStateRef.current.undoTmp = null;
+    try { mesh.geometry.computeVertexNormals?.(); } catch(e){}
+    try { ensureBVHForObject(mesh); } catch(e){}
+    bumpSceneVersion('sculpt-start');
+    // disable transform/orbit while sculpting
+    try { orbitRef.current && (orbitRef.current.enabled = false); transformRef.current && (transformRef.current.enabled = false); } catch (e) {}
+    return true;
+  };
+  const stopSculptingInternal = () => {
+    if (!sculptStateRef.current.active) return;
+    sculptStateRef.current.active = false;
+    sculptStateRef.current.target = null;
+    sculptStateRef.current.pointerDown = false;
+    sculptStateRef.current.lastPoint = null;
+    sculptStateRef.current.undoTmp = null;
+    bumpSceneVersion('sculpt-stop');
+    try { orbitRef.current && (orbitRef.current.enabled = true); transformRef.current && (transformRef.current.enabled = true); } catch (e) {}
+  };
+
+  // pointer handlers
+  const onSculptPointerDown = (event) => {
+    if (!sculptStateRef.current.active) return;
+    sculptStateRef.current.pointerDown = true;
+    try {
+      const rect = rendererRef.current.domElement.getBoundingClientRect();
+      const ndc = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
+      raycasterRef.current.setFromCamera(ndc, cameraRef.current);
+      const hits = raycasterRef.current.intersectObjects(sceneRef.current.children, true);
+      if (!hits || hits.length === 0) return;
+      const hit = hits[0];
+      const mesh = sculptStateRef.current.target || findObjektaAncestor(hit.object);
+      if (!mesh) return;
+      const worldPoint = hit.point.clone();
+      const res = applyBrushToMesh(mesh, worldPoint, { radius: sculptStateRef.current.radius, strength: sculptStateRef.current.strength, mode: sculptStateRef.current.mode, viewDir: cameraRef.current.getWorldDirection(new THREE.Vector3()).clone() });
+      if (res && res.changed && res.changed.size > 0) {
+        sculptStateRef.current.undoTmp = res.changed;
+        // We'll push a command at pointerup to group the stroke into one undo
+      }
+    } catch (e) { console.warn('sculpt pointerdown', e); }
+  };
+
+  const onSculptPointerMove = (event) => {
+    if (!sculptStateRef.current.active || !sculptStateRef.current.pointerDown) return;
+    try {
+      const rect = rendererRef.current.domElement.getBoundingClientRect();
+      const ndc = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
+      raycasterRef.current.setFromCamera(ndc, cameraRef.current);
+      const hits = raycasterRef.current.intersectObjects(sceneRef.current.children, true);
+      if (!hits || hits.length === 0) return;
+      const hit = hits[0];
+      const mesh = sculptStateRef.current.target || findObjektaAncestor(hit.object);
+      if (!mesh) return;
+      const worldPoint = hit.point.clone();
+      const res = applyBrushToMesh(mesh, worldPoint, { radius: sculptStateRef.current.radius, strength: sculptStateRef.current.strength, mode: sculptStateRef.current.mode, viewDir: cameraRef.current.getWorldDirection(new THREE.Vector3()).clone() });
+      if (res && res.changed && res.changed.size > 0) {
+        if (!sculptStateRef.current.undoTmp) sculptStateRef.current.undoTmp = new Map();
+        for (const [k, v] of res.changed) {
+          if (!sculptStateRef.current.undoTmp.has(k)) sculptStateRef.current.undoTmp.set(k, v);
+        }
+      }
+    } catch (e) { console.warn('sculpt pointermove', e); }
+  };
+
+  const onSculptPointerUp = (event) => {
+    if (!sculptStateRef.current.active || !sculptStateRef.current.pointerDown) return;
+    sculptStateRef.current.pointerDown = false;
+    const mesh = sculptStateRef.current.target;
+    if (sculptStateRef.current.undoTmp && mesh) {
+      pushSculptCommand(mesh, sculptStateRef.current.undoTmp, 'sculpt-stroke');
+      sculptStateRef.current.undoTmp = null;
+      bumpSceneVersion('sculpt-stroke-commit');
+    }
+  };
+
+  // attach sculpt pointer listeners (separate effect)
+  useEffect(() => {
+    const el = rendererRef.current?.domElement;
+    if (!el) return;
+    el.addEventListener('pointerdown', onSculptPointerDown);
+    el.addEventListener('pointermove', onSculptPointerMove);
+    window.addEventListener('pointerup', onSculptPointerUp);
+    return () => {
+      el.removeEventListener('pointerdown', onSculptPointerDown);
+      el.removeEventListener('pointermove', onSculptPointerMove);
+      window.removeEventListener('pointerup', onSculptPointerUp);
+    };
+  }, []);
+
+  // convenience API setters for toolbar (used below in useImperativeHandle)
+  const setSculptRadius = (r) => { sculptStateRef.current.radius = r; };
+  const setSculptStrength = (s) => { sculptStateRef.current.strength = s; };
+  const setSculptMode = (m) => { sculptStateRef.current.mode = m; };
+  const setSculptSymmetry = (s) => { sculptStateRef.current.symmetry = s; };
+
   const disposeObject = (obj) => {
     if (!obj) return;
     obj.traverse((n) => {
@@ -385,6 +662,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     const onPointerDown = (event) => {
       if (!rendererRef.current || !cameraRef.current) return;
       if (transformDirtyRef.current) return;
+      if (sculptStateRef.current?.active) return; // ignore selection while sculpting
 
       const rect = rendererRef.current.domElement.getBoundingClientRect();
       mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -1439,8 +1717,19 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     onResize: () => { if (!containerRef.current || !rendererRef.current || !cameraRef.current) return; const w = containerRef.current.clientWidth; const h = containerRef.current.clientHeight; rendererRef.current.setSize(w, h, false); cameraRef.current.aspect = w / h; cameraRef.current.updateProjectionMatrix(); },
     renameSelected, handleTransformChange, toggleSnap, setSnapValue, duplicateSelected,
     selectObject,
-    startSculpting: () => { console.warn('startSculpting: not implemented'); },
-    stopSculpting: () => { console.warn('stopSculpting: not implemented'); },
+    // sculpt API (real implementations)
+    startSculpting: (mesh = null, opts = {}) => {
+      const target = mesh || selectedInternal;
+      if (!target) {
+        console.warn('startSculpting: no target mesh');
+        return false;
+      }
+      return startSculptingInternal(target, opts);
+    },
+    stopSculpting: () => {
+      stopSculptingInternal();
+    },
+    setSculptRadius, setSculptStrength, setSculptMode, setSculptSymmetry,
     validateScene: validateSceneAPI,
     getSceneSummary,
     getSceneObjects: () => {
