@@ -12,11 +12,12 @@ import {
 import Palette, { PALETTE_TYPE } from "../components/Palette";
 import Workspace from "../components/Workspace";
 import ObjectProperties from "../components/ObjectProperties";
+import SculptToolbar from "../components/SculptToolbar";
 import "../styles/Studio.css";
 
 // Engines / stores / utils (integration)
 import { SceneGraphStore } from "../store/SceneGraphStore";
-import  TextureStore  from "../store/TextureStore";
+import TextureStore from "../store/TextureStore";
 import { ImportEngine } from "../engine/ImportEngine";
 import { ExportEngine } from "../engine/ExportEngine";
 import { TransformEngine } from "../engine/TransformEngine";
@@ -628,7 +629,8 @@ export default function Studio() {
   };
 
   // ---------- Outliner helpers (uses workspace.getSceneVersion/getSceneObjects to avoid blinking) ----------
-  const OutlinerView = ({ onSelect, sceneVersion }) => {
+  // NOTE: now accepts parent search & setter explicitly
+  const OutlinerView = ({ onSelect, sceneVersion, outlinerSearch: parentSearch, setOutlinerSearch: setParentSearch }) => {
     const [items, setItems] = useState([]);
     const lastVerRef = useRef(-1);
 
@@ -652,7 +654,7 @@ export default function Studio() {
           if (!mounted) return;
           lastVerRef.current = ver;
           // apply outlinerSearch filter
-          const filtered = outlinerSearch ? list.filter(i => (i.name || '').toLowerCase().includes(outlinerSearch.toLowerCase())) : list;
+          const filtered = parentSearch ? list.filter(i => (i.name || '').toLowerCase().includes(parentSearch.toLowerCase())) : list;
           setItems(filtered);
         } catch (e) {
           // ignore
@@ -660,9 +662,9 @@ export default function Studio() {
       };
 
       scanIfNeeded();
-      // Re-run when sceneVersion or outlinerSearch changes (no interval)
+      // Re-run when sceneVersion or parentSearch changes (no interval)
       return () => { mounted = false; };
-    }, [outlinerSearch, sceneVersion]);
+    }, [parentSearch, sceneVersion]);
 
     const toggleVisibility = (obj) => { obj.visible = !obj.visible; pushToast({ type: "info", message: `${obj.name} ${obj.visible ? "shown" : "hidden"}` }); };
     const renameObject = (obj) => {
@@ -701,8 +703,8 @@ export default function Studio() {
     return (
       <div style={{ padding: 8, overflowY: 'auto', height: '100%' }}>
         <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-          <input placeholder="Filter..." value={outlinerSearch} onChange={e => setOutlinerSearch(e.target.value)} style={{ flex: 1, padding: 6 }} />
-          <button onClick={() => { setOutlinerSearch(''); }} className="studio-btn icon-btn"><FiSearch /></button>
+          <input placeholder="Filter..." value={parentSearch} onChange={e => setParentSearch(e.target.value)} style={{ flex: 1, padding: 6 }} />
+          <button onClick={() => { setParentSearch(''); }} className="studio-btn icon-btn"><FiSearch /></button>
         </div>
         {items.map((it) => (
           <div key={it.uuid} style={{
@@ -912,7 +914,7 @@ export default function Studio() {
   };
 
   // ---------- REPLACED: Integration block ----------
-  // Previously Studio contained a large `useEffect` that created a shimbed workspace API.
+  // Previously Studio contained a large `useEffect` that created a shimmed workspace API.
   // That is removed. Workspace is now the authoritative API (forwardRef). Studio listens
   // to EventBus updates to stay in sync.
   useEffect(() => {
@@ -988,7 +990,7 @@ export default function Studio() {
         <div className="studio-panel palette-panel" style={{ width: paletteCollapsed ? 44 : paletteWidth, minWidth: paletteCollapsed ? 44 : 120 }}>
           {!paletteCollapsed ? (
             <Palette
-              items={PALETTE_ITEMS.map((it) => ({ ...it, fav: !!favorites[it.name] }))} 
+              items={PALETTE_ITEMS.map((it) => ({ ...it, fav: !!favorites[it.name] }))}
               onAction={(name, client) => workspaceRef.current?.addItem?.(name, client)}
             />
           ) : (
@@ -1063,6 +1065,13 @@ export default function Studio() {
             </div>
           </div>
 
+          {/* Sculpt toolbar (floating overlay) */}
+          <SculptToolbar
+            workspaceRef={workspaceRef}
+            /* optional selector — you can omit to fall back to first canvas found */
+            rendererSelector=".workspace-area canvas"
+          />
+
           <Workspace
             ref={workspaceRef}
             selected={selected}
@@ -1071,138 +1080,199 @@ export default function Studio() {
             onSceneChange={handleSceneChange}
           />
 
+          {/* ---------- Properties panel (tab-safe rendering) ---------- */}
           {!propsCollapsed && (
-            <div ref={panelRef} className="studio-panel properties-panel" style={{ width: propsWidth, top: panelPos.top, right: panelPos.right }}>
+            <div
+              ref={panelRef}
+              className="studio-panel properties-panel"
+              style={{ width: propsWidth, top: panelPos.top, right: panelPos.right }}
+              role="region"
+              aria-label="Inspector"
+            >
               <div className="properties-resizer" onMouseDown={startPropsResize} />
               <div className="properties-drag-handle" onMouseDown={startDrag}><div /><div /><div /></div>
 
-              <div style={{ display: 'flex', gap: 6, padding: 8 }}>
-                <button onClick={() => setPropsTab('props')} className={propsTab === 'props' ? 'active' : ''}>Transform</button>
-                <button onClick={() => setPropsTab('material')} className={propsTab === 'material' ? 'active' : ''}>Material</button>
-                <button onClick={() => setPropsTab('lights')} className={propsTab === 'lights' ? 'active' : ''}>Lighting</button>
-                <button onClick={() => setPropsTab('outliner')} className={propsTab === 'outliner' ? 'active' : ''}>Outliner</button>
-                <button onClick={() => setPropsTab('validate')} className={propsTab === 'validate' ? 'active' : ''}>Validate</button>
+              {/* Tabs (use role=tablist for clarity/accessibility) */}
+              <div role="tablist" aria-label="Inspector Tabs" style={{ display: 'flex', gap: 6, padding: 8 }}>
+                <button role="tab" aria-selected={propsTab === 'props'} onClick={() => setPropsTab('props')} className={propsTab === 'props' ? 'active' : ''}>Transform</button>
+                <button role="tab" aria-selected={propsTab === 'material'} onClick={() => setPropsTab('material')} className={propsTab === 'material' ? 'active' : ''}>Material</button>
+                <button role="tab" aria-selected={propsTab === 'lights'} onClick={() => setPropsTab('lights')} className={propsTab === 'lights' ? 'active' : ''}>Lighting</button>
+                <button role="tab" aria-selected={propsTab === 'outliner'} onClick={() => setPropsTab('outliner')} className={propsTab === 'outliner' ? 'active' : ''}>Outliner</button>
+                <button role="tab" aria-selected={propsTab === 'validate'} onClick={() => setPropsTab('validate')} className={propsTab === 'validate' ? 'active' : ''}>Validate</button>
               </div>
 
+              {/* Content area - only the active section is rendered/shown */}
               <div style={{ padding: 8, overflowY: 'auto', height: 'calc(100% - 72px)' }}>
-                {propsTab === 'props' && selected && (
-                  <ObjectProperties
-                    selected={selected}
-                    onTransformChange={(prop, axis, val) => workspaceRef.current?.handleTransformChange?.(prop, axis, val)}
-                    onColorChange={(col) => { if (selected) { selected.traverse((n) => { if (n.isMesh && n.material) { try { n.material.color.set(col); } catch (e) {} } }); pushToast({ type: "info", message: "Color updated" }); } }}
-                    onVisibilityToggle={(vis) => { if (selected) selected.visible = vis; }}
-                    onDelete={requestDeleteSelected}
-                    onRename={(name) => {
-                      if (workspaceRef.current?.renameSelected) {
-                        workspaceRef.current.renameSelected(name);
-                      } else {
-                        selected.name = name;
-                      }
-                    }}
-                  />
-                )}
+                {/* Transform */}
+                <div
+                  className="props-section"
+                  role="tabpanel"
+                  aria-hidden={propsTab !== 'props'}
+                  style={{ display: propsTab === 'props' ? 'block' : 'none' }}
+                >
+                  {propsTab === 'props' && selected ? (
+                    <ObjectProperties
+                      selected={selected}
+                      onTransformChange={(prop, axis, val) => workspaceRef.current?.handleTransformChange?.(prop, axis, val)}
+                      onColorChange={(col) => {
+                        if (selected) {
+                          selected.traverse((n) => {
+                            if (n.isMesh && n.material) {
+                              try { n.material.color.set(col); } catch (e) {}
+                            }
+                          });
+                          pushToast({ type: "info", message: "Color updated" });
+                        }
+                      }}
+                      onVisibilityToggle={(vis) => { if (selected) selected.visible = vis; }}
+                      onDelete={requestDeleteSelected}
+                      onRename={(name) => {
+                        if (workspaceRef.current?.renameSelected) {
+                          workspaceRef.current.renameSelected(name);
+                        } else {
+                          selected.name = name;
+                        }
+                      }}
+                    />
+                  ) : propsTab === 'props' ? (
+                    <div style={{ color: 'var(--text-muted)' }}>No object selected.</div>
+                  ) : null}
+                </div>
 
-                {propsTab === 'material' && (
-                  <div>
-                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Material Editor</div>
-                    <form onSubmit={onApplyMaterialSubmit}>
-                      <div style={{ marginBottom: 8 }}>
-                        <label style={{ display: 'block', fontSize: 12 }}>Color</label>
-                        <input type="color" value={matColor} onChange={(e) => setMatColor(e.target.value)} />
-                      </div>
-                      <div style={{ marginBottom: 8 }}>
-                        <label style={{ display: 'block', fontSize: 12 }}>Roughness: {matRough.toFixed(2)}</label>
-                        <input type="range" min="0" max="1" step="0.01" value={matRough} onChange={(e) => setMatRough(parseFloat(e.target.value))} style={{ width: '100%' }} />
-                      </div>
-                      <div style={{ marginBottom: 8 }}>
-                        <label style={{ display: 'block', fontSize: 12 }}>Metalness: {matMetal.toFixed(2)}</label>
-                        <input type="range" min="0" max="1" step="0.01" value={matMetal} onChange={(e) => setMatMetal(parseFloat(e.target.value))} style={{ width: '100%' }} />
-                      </div>
-
-                      <div style={{ marginBottom: 8 }}>
-                        <label style={{ display: 'block', fontSize: 12 }}>Texture (optional)</label>
-                        <input id="tex-upload-input" type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) setMatMapURL(URL.createObjectURL(f)); }} />
-                        {matMapURL && <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
-                          <img src={matMapURL} alt="preview" style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 6 }} />
-                          <div style={{ display: 'flex', flexDirection: 'column' }}>
-                            <div style={{ fontSize: 12 }}>{matHasMap ? 'Applied texture' : 'New texture (pending)'}</div>
-                            <div style={{ marginTop: 6 }}>
-                              <button type="button" className="studio-btn" onClick={() => {
-                                const file = document.getElementById('tex-upload-input')?.files?.[0];
-                                applyMaterialToSelection({ color: matColor, roughness: matRough, metalness: matMetal, mapFile: file });
-                              }}>Apply texture</button>
-                              <button type="button" className="studio-btn" onClick={() => { removeTexture(); }}>Remove</button>
-                            </div>
-                          </div>
-                        </div>}
-                      </div>
-
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <button type="submit" className="launch-btn">Apply</button>
-                        <button type="button" className="studio-btn" onClick={() => { if (selected) { selected.traverse((n) => { if (n.isMesh && n.material) { try { n.material.color.set('#888888'); n.material.roughness = 0.5; n.material.metalness = 0.0; } catch (e) {} } }); pushToast({ type: "info", message: "Reset material" }); } }}>Reset</button>
-                      </div>
-                    </form>
-                  </div>
-                )}
-
-                {propsTab === 'lights' && (
-                  <div>
-                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Lighting</div>
-                    <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                      <button className="studio-btn" onClick={() => addLightToScene('Point Light')}><FiSun /> Point</button>
-                      <button className="studio-btn" onClick={() => addLightToScene('Spot Light')}><FiStar /> Spot</button>
-                      <button className="studio-btn" onClick={() => addLightToScene('Directional Light')}><FiRotateCw /> Dir</button>
-                      <button className="studio-btn" onClick={() => addLightToScene('Hemisphere Light')}><FiMoon /> Hemi</button>
-                    </div>
-
+                {/* Material */}
+                <div
+                  className="props-section"
+                  role="tabpanel"
+                  aria-hidden={propsTab !== 'material'}
+                  style={{ display: propsTab === 'material' ? 'block' : 'none' }}
+                >
+                  {propsTab === 'material' && (
                     <div>
-                      {lights.length === 0 && <div style={{ color: 'var(--text-muted)' }}>No lights in scene</div>}
-                      {lights.map(l => (
-                        <div key={l.uuid} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', padding: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: 700 }}>{l.name}</div>
-                            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{l.type}</div>
-                          </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
-                            <input type="color" value={l.color} onChange={(e) => updateLight(l.uuid, { color: e.target.value })} />
-                            <input type="range" min="0" max="4" step="0.01" value={l.intensity} onChange={(e) => updateLight(l.uuid, { intensity: parseFloat(e.target.value) })} />
-                            <div style={{ display: 'flex', gap: 6 }}>
-                              <button className="studio-btn" onClick={() => removeLight(l.uuid)}>Remove</button>
+                      <div style={{ fontWeight: 700, marginBottom: 8 }}>Material Editor</div>
+                      <form onSubmit={onApplyMaterialSubmit}>
+                        <div style={{ marginBottom: 8 }}>
+                          <label style={{ display: 'block', fontSize: 12 }}>Color</label>
+                          <input type="color" value={matColor} onChange={(e) => setMatColor(e.target.value)} />
+                        </div>
+                        <div style={{ marginBottom: 8 }}>
+                          <label style={{ display: 'block', fontSize: 12 }}>Roughness: {matRough.toFixed(2)}</label>
+                          <input type="range" min="0" max="1" step="0.01" value={matRough} onChange={(e) => setMatRough(parseFloat(e.target.value))} style={{ width: '100%' }} />
+                        </div>
+                        <div style={{ marginBottom: 8 }}>
+                          <label style={{ display: 'block', fontSize: 12 }}>Metalness: {matMetal.toFixed(2)}</label>
+                          <input type="range" min="0" max="1" step="0.01" value={matMetal} onChange={(e) => setMatMetal(parseFloat(e.target.value))} style={{ width: '100%' }} />
+                        </div>
+
+                        <div style={{ marginBottom: 8 }}>
+                          <label style={{ display: 'block', fontSize: 12 }}>Texture (optional)</label>
+                          <input id="tex-upload-input" type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) setMatMapURL(URL.createObjectURL(f)); }} />
+                          {matMapURL && <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <img src={matMapURL} alt="preview" style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 6 }} />
+                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                              <div style={{ fontSize: 12 }}>{matHasMap ? 'Applied texture' : 'New texture (pending)'}</div>
+                              <div style={{ marginTop: 6 }}>
+                                <button type="button" className="studio-btn" onClick={() => {
+                                  const file = document.getElementById('tex-upload-input')?.files?.[0];
+                                  applyMaterialToSelection({ color: matColor, roughness: matRough, metalness: matMetal, mapFile: file });
+                                }}>Apply texture</button>
+                                <button type="button" className="studio-btn" onClick={() => { removeTexture(); }}>Remove</button>
+                              </div>
+                            </div>
+                          </div>}
+                        </div>
+
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button type="submit" className="launch-btn">Apply</button>
+                          <button type="button" className="studio-btn" onClick={() => { if (selected) { selected.traverse((n) => { if (n.isMesh && n.material) { try { n.material.color.set('#888888'); n.material.roughness = 0.5; n.material.metalness = 0.0; } catch (e) {} } }); pushToast({ type: "info", message: "Reset material" }); } }}>Reset</button>
+                        </div>
+                      </form>
+                    </div>
+                  )}
+                </div>
+
+                {/* Lighting */}
+                <div
+                  className="props-section"
+                  role="tabpanel"
+                  aria-hidden={propsTab !== 'lights'}
+                  style={{ display: propsTab === 'lights' ? 'block' : 'none' }}
+                >
+                  {propsTab === 'lights' && (
+                    <div>
+                      <div style={{ fontWeight: 700, marginBottom: 8 }}>Lighting</div>
+                      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                        <button className="studio-btn" onClick={() => addLightToScene('Point Light')}><FiSun /> Point</button>
+                        <button className="studio-btn" onClick={() => addLightToScene('Spot Light')}><FiStar /> Spot</button>
+                        <button className="studio-btn" onClick={() => addLightToScene('Directional Light')}><FiRotateCw /> Dir</button>
+                        <button className="studio-btn" onClick={() => addLightToScene('Hemisphere Light')}><FiMoon /> Hemi</button>
+                      </div>
+
+                      <div>
+                        {lights.length === 0 && <div style={{ color: 'var(--text-muted)' }}>No lights in scene</div>}
+                        {lights.map(l => (
+                          <div key={l.uuid} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', padding: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontWeight: 700 }}>{l.name}</div>
+                              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{l.type}</div>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+                              <input type="color" value={l.color} onChange={(e) => updateLight(l.uuid, { color: e.target.value })} />
+                              <input type="range" min="0" max="4" step="0.01" value={l.intensity} onChange={(e) => updateLight(l.uuid, { intensity: parseFloat(e.target.value) })} />
+                              <div style={{ display: 'flex', gap: 6 }}>
+                                <button className="studio-btn" onClick={() => removeLight(l.uuid)}>Remove</button>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {propsTab === 'outliner' && (
-                  <div>
-                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Scene Outliner</div>
-                    <OutlinerView onSelect={handleOutlinerSelect} sceneVersion={sceneVersion} />
-                  </div>
-                )}
-
-                {propsTab === 'validate' && (
-                  <div>
-                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Validation</div>
-                    <div style={{ marginBottom: 10 }}>
-                      <button className="launch-btn" onClick={() => runValidation()}>Run Validation</button>
-                      <button className="studio-btn" onClick={() => setValidationResult(null)}>Clear</button>
-                    </div>
-
-                    {!validationResult && <div style={{ color: 'var(--text-muted)' }}>No validation run yet. Click "Run Validation".</div>}
-
-                    {validationResult && (
-                      <div style={{ fontSize: 13 }}>
-                        {validationResult.ok ? <div style={{ color: 'var(--success)' }}>OK</div> : <div style={{ color: 'var(--danger)' }}>Issues found</div>}
-                        <pre style={{ whiteSpace: 'pre-wrap', marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
-{JSON.stringify(validationResult, null, 2)}
-                        </pre>
+                        ))}
                       </div>
-                    )}
-                  </div>
-                )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Outliner */}
+                <div
+                  className="props-section"
+                  role="tabpanel"
+                  aria-hidden={propsTab !== 'outliner'}
+                  style={{ display: propsTab === 'outliner' ? 'block' : 'none' }}
+                >
+                  {propsTab === 'outliner' && (
+                    <div>
+                      <div style={{ fontWeight: 700, marginBottom: 8 }}>Scene Outliner</div>
+                      <OutlinerView onSelect={handleOutlinerSelect} sceneVersion={sceneVersion}
+                        outlinerSearch={outlinerSearch} setOutlinerSearch={setOutlinerSearch} />
+                    </div>
+                  )}
+                </div>
+
+                {/* Validate */}
+                <div
+                  className="props-section"
+                  role="tabpanel"
+                  aria-hidden={propsTab !== 'validate'}
+                  style={{ display: propsTab === 'validate' ? 'block' : 'none' }}
+                >
+                  {propsTab === 'validate' && (
+                    <div>
+                      <div style={{ fontWeight: 700, marginBottom: 8 }}>Validation</div>
+                      <div style={{ marginBottom: 10 }}>
+                        <button className="launch-btn" onClick={() => runValidation()}>Run Validation</button>
+                        <button className="studio-btn" onClick={() => setValidationResult(null)}>Clear</button>
+                      </div>
+
+                      {!validationResult && <div style={{ color: 'var(--text-muted)' }}>No validation run yet. Click "Run Validation".</div>}
+
+                      {validationResult && (
+                        <div style={{ fontSize: 13 }}>
+                          {validationResult.ok ? <div style={{ color: 'var(--success)' }}>OK</div> : <div style={{ color: 'var(--danger)' }}>Issues found</div>}
+                          <pre style={{ whiteSpace: 'pre-wrap', marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+{JSON.stringify(validationResult, null, 2)}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
 
             </div>
@@ -1210,16 +1280,16 @@ export default function Studio() {
         </div>
 
         <div className="status-bar">
-            Objects: {stats.objects} • Tris: {stats.tris} • Selected: {selected ? (selected.name || selected.uuid) : "—"} • Snap: {snapEnabled ? `${snapSize}` : "off"} • Collab: {collabConnected ? 'on' : 'off'} {lastSaveAt ? ` • Saved: ${new Date(lastSaveAt).toLocaleString()}` : ''}
+          Objects: {stats.objects} • Tris: {stats.tris} • Selected: {selected ? (selected.name || selected.uuid) : "—"} • Snap: {snapEnabled ? `${snapSize}` : "off"} • Collab: {collabConnected ? 'on' : 'off'} {lastSaveAt ? ` • Saved: ${new Date(lastSaveAt).toLocaleString()}` : ''}
         </div>
 
         {ctxMenu && (
           <div className="context-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }} onMouseLeave={closeContext}>
-              <button className="context-menu-btn" onClick={ctxDuplicate}><FiCopy style={{ marginRight: 8 }} /> Duplicate</button>
-              <button className="context-menu-btn delete" onClick={ctxDelete}><FiTrash2 style={{ marginRight: 8 }} /> Delete</button>
-              <button className="context-menu-btn" onClick={ctxExport}><FiSave style={{ marginRight: 8 }} /> Export GLB</button>
-              <button className="context-menu-btn" onClick={ctxSave}><FiPlusSquare style={{ marginRight: 8 }} /> Save JSON</button>
-              <button className="context-menu-btn" onClick={ctxReset}><FiRefreshCcw style={{ marginRight: 8 }} /> Reset Scene</button>
+            <button className="context-menu-btn" onClick={ctxDuplicate}><FiCopy style={{ marginRight: 8 }} /> Duplicate</button>
+            <button className="context-menu-btn delete" onClick={ctxDelete}><FiTrash2 style={{ marginRight: 8 }} /> Delete</button>
+            <button className="context-menu-btn" onClick={ctxExport}><FiSave style={{ marginRight: 8 }} /> Export GLB</button>
+            <button className="context-menu-btn" onClick={ctxSave}><FiPlusSquare style={{ marginRight: 8 }} /> Save JSON</button>
+            <button className="context-menu-btn" onClick={ctxReset}><FiRefreshCcw style={{ marginRight: 8 }} /> Reset Scene</button>
           </div>
         )}
       </div>

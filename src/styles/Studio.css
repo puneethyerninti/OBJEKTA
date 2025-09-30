@@ -265,3 +265,27 @@
 button, [role="button"], input[type="button"], input[type="submit"] {
   -webkit-tap-highlight-color: rgba(0,0,0,0.0);
 }
+
+
+/* ----- Tab visibility safety + subtle fade ----- */
+/* .props-section is controlled by inline styles in Studio.jsx (display:block/none)
+   but these rules ensure accessibility + non-interactivity if aria-hidden is used instead. */
+
+.props-section {
+  will-change: opacity, transform;
+  transition: opacity 160ms ease, transform 160ms ease;
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto; /* interactive when visible */
+}
+
+/* If aria-hidden is true (or JS chooses to hide with attribute), make it inert */
+.props-section[aria-hidden="true"] {
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  /* keep it out of tab order for screen readers that respect aria-hidden */
+}
+
+/* Extra: make sure inline display:none still prevents layout flash,
+   but this attribute-driven approach covers other cases and improves accessibility. */

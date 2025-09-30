@@ -6,8 +6,13 @@ import * as THREE from "three";
 import "../styles/Outliner.css";
 
 /**
- * Outliner — UI separated from styles in Outliner.css
- * Behavior is unchanged from your original upgraded version.
+ * Outliner — improved syncing and UX.
+ *
+ * Key features:
+ * - Prefer workspaceRef (if provided) to fetch scene & objects.
+ * - Listen to EventBus "scene:updated" and "object:selected" events.
+ * - Build a hierarchical tree from the user-group children.
+ * - Scroll selected item into view and support keyboard navigation.
  */
 
 const isUserObject = (o) => {
@@ -24,7 +29,10 @@ const disposeObjectSimple = (obj) => {
     obj.traverse((n) => {
       if (n.isMesh) {
         try { n.geometry?.dispose?.(); } catch (e) {}
-        try { if (Array.isArray(n.material)) n.material.forEach((m) => m?.dispose?.()); else n.material?.dispose?.(); } catch (e) {}
+        try {
+          if (Array.isArray(n.material)) n.material.forEach((m) => m?.dispose?.());
+          else n.material?.dispose?.();
+        } catch (e) {}
         try { if (n.material?.map) n.material.map.dispose?.(); } catch (e) {}
       }
     });
@@ -47,6 +55,7 @@ const OutlinerItem = React.memo(function OutlinerItem({
   const [open, setOpen] = useState(true);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(obj?.name || "");
+  const itemRef = useRef(null);
 
   useEffect(() => { setName(obj?.name || ""); }, [obj?.name]);
 
@@ -55,10 +64,17 @@ const OutlinerItem = React.memo(function OutlinerItem({
   const isSelected = selectedIds.includes(obj?.uuid);
   const isDragOver = dragOverId === obj?.uuid;
 
+  // Scroll into view when selected
+  useEffect(() => {
+    if (isSelected && itemRef.current) {
+      try { itemRef.current.scrollIntoView({ block: "nearest", behavior: "smooth", inline: "nearest" }); } catch (e) {}
+    }
+  }, [isSelected]);
+
   const handlePrimaryClick = useCallback((e) => {
     e?.stopPropagation();
     if (!obj) return;
-    const isMulti = e?.ctrlKey || e?.metaKey;
+    const isMulti = !!(e?.ctrlKey || e?.metaKey);
     onSelect?.(obj, { multi: isMulti });
   }, [obj, onSelect]);
 
@@ -70,8 +86,12 @@ const OutlinerItem = React.memo(function OutlinerItem({
       e.preventDefault(); setEditing(true);
     } else if (e.key === "Delete") {
       e.preventDefault(); if (confirm(`Delete '${obj.name || obj.type}'?`)) onDelete?.(obj);
+    } else if (e.key === "ArrowRight" && hasChildren && !open) {
+      e.preventDefault(); setOpen(true);
+    } else if (e.key === "ArrowLeft" && hasChildren && open) {
+      e.preventDefault(); setOpen(false);
     }
-  }, [obj, onSelect, onDelete]);
+  }, [obj, onSelect, onDelete, hasChildren, open]);
 
   const handleRenameBlur = useCallback(() => {
     setEditing(false);
@@ -87,8 +107,14 @@ const OutlinerItem = React.memo(function OutlinerItem({
     try { e.dataTransfer.setData('text/plain', obj.uuid); e.dataTransfer.effectAllowed = 'move'; } catch (err) {}
   }, [obj]);
 
-  const handleDragOver = useCallback((e) => { e.preventDefault(); e.stopPropagation(); try { e.dataTransfer.dropEffect = 'move'; } catch (err) {} onDragEnter?.(obj?.uuid); }, [onDragEnter, obj]);
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault(); e.stopPropagation();
+    try { e.dataTransfer.dropEffect = 'move'; } catch (err) {}
+    onDragEnter?.(obj?.uuid);
+  }, [onDragEnter, obj]);
+
   const handleDragLeave = useCallback((e) => { e.preventDefault(); e.stopPropagation(); onDragLeave?.(obj?.uuid); }, [onDragLeave, obj]);
+
   const handleDrop = useCallback((e) => {
     e.preventDefault(); e.stopPropagation();
     try {
@@ -99,6 +125,7 @@ const OutlinerItem = React.memo(function OutlinerItem({
 
   return (
     <div
+      ref={itemRef}
       className={`outliner-item ${isDragOver ? 'drag-over' : ''} ${isSelected ? 'selected' : ''}`}
       role="treeitem"
       aria-expanded={hasChildren ? open : undefined}
@@ -171,80 +198,120 @@ export default function Outliner({ workspaceRef = null, onSelect: onSelectProp =
   const [dragOverId, setDragOverId] = useState(null);
   const mountedRef = useRef(true);
 
-  const getTopLevelObjects = useCallback(() => {
+  // Build tree from scene / store / workspace
+  const buildTree = useCallback(() => {
     try {
+      // prefer SceneGraphStore.getObjects if available (flattened)
       if (SceneGraphStore && typeof SceneGraphStore.getObjects === "function") {
         const objs = SceneGraphStore.getObjects() || [];
-        return objs.filter((o) => isUserObject(o));
+        if (Array.isArray(objs)) return objs.filter((o) => isUserObject(o));
       }
+
+      // prefer workspaceRef / global workspace
+      const globalWs = workspaceRef?.current ?? window.__OBJEKTA_WORKSPACE ?? null;
+      if (globalWs) {
+        if (typeof globalWs.getSceneObjects === "function") {
+          const list = globalWs.getSceneObjects() || [];
+          return list.filter((o) => isUserObject(o));
+        }
+        const scene = typeof globalWs.getScene === "function" ? globalWs.getScene() : (globalWs.scene || null);
+        if (scene) {
+          const ug = scene._user_group ?? scene._userGroup ?? null;
+          if (ug) return Array.from(ug.children).filter((o) => isUserObject(o));
+          // fallback to top-level scene children
+          return Array.from(scene.children).filter((o) => isUserObject(o));
+        }
+      }
+
+      // fallback to SceneGraphStore.objects map
       if (SceneGraphStore && SceneGraphStore.objects && typeof SceneGraphStore.objects === "object") {
         return Object.values(SceneGraphStore.objects).map((x) => x.object).filter((o) => isUserObject(o));
       }
-      if (SceneGraphStore && typeof SceneGraphStore.getSelected === "function") {
-        const sel = SceneGraphStore.getSelected?.(); if (sel) setSelectedId(sel);
-      } else if (SceneGraphStore && typeof SceneGraphStore.selected !== "undefined") {
-        setSelectedId(SceneGraphStore.selected || null);
-      }
-    } catch (e) {}
-
-    try {
-      const globalWs = window.__OBJEKTA_WORKSPACE;
-      if (globalWs) {
-        if (typeof globalWs.getSceneObjects === "function") {
-          const objs = globalWs.getSceneObjects() || [];
-          return objs.filter((o) => isUserObject(o));
-        }
-        if (typeof globalWs.getScene === "function") {
-          const s = globalWs.getScene(); const ug = s?._user_group ?? s?._userGroup; if (ug) return Array.from(ug.children).filter((o) => isUserObject(o));
-        }
-        if (globalWs.scene) {
-          const s = globalWs.scene; const ug = s?._user_group ?? s?._userGroup; if (ug) return Array.from(ug.children).filter((o) => isUserObject(o));
-        }
-      }
-    } catch (e) {}
-
+    } catch (e) {
+      console.warn("Outliner.buildTree fallback failed", e);
+    }
     return [];
-  }, []);
+  }, [workspaceRef]);
 
   const refresh = useCallback(() => {
     if (!mountedRef.current) return;
     try {
-      const list = getTopLevelObjects();
-      list.sort((a, b) => (String(a.name || a.type || "").localeCompare(String(b.name || b.type || ""))));
+      const list = buildTree();
+      list.sort((a, b) => String((a.name || a.type || "")).localeCompare(String((b.name || b.type || ""))));
       setItems(list);
+
+      // update selection from store if provided
       try {
-        if (SceneGraphStore && typeof SceneGraphStore.getSelected === "function") setSelectedId(SceneGraphStore.getSelected() || null);
-        else if (SceneGraphStore && typeof SceneGraphStore.selected !== "undefined") setSelectedId(SceneGraphStore.selected || null);
+        if (SceneGraphStore && typeof SceneGraphStore.getSelected === "function") {
+          const sel = SceneGraphStore.getSelected();
+          if (sel) { setSelectedId(sel); setSelectedIds([sel]); }
+        } else if (SceneGraphStore && typeof SceneGraphStore.selected !== "undefined") {
+          const sel = SceneGraphStore.selected || null;
+          if (sel) { setSelectedId(sel); setSelectedIds([sel]); }
+        }
       } catch (e) {}
-    } catch (e) { console.warn("Outliner: refresh failed", e); }
-  }, [getTopLevelObjects]);
+    } catch (e) {
+      console.warn("Outliner: refresh failed", e);
+    }
+  }, [buildTree]);
 
   useEffect(() => {
     mountedRef.current = true;
     refresh();
+
     const onSceneUpdated = () => refresh();
     const onObjectSelected = (payload) => {
       const id = typeof payload === "string" ? payload : payload?.id ?? payload?.uuid ?? payload;
       if (!id) return;
       setSelectedIds([id]); setSelectedId(id);
     };
+
     try { EventBus?.on?.("scene:updated", onSceneUpdated); } catch (e) {}
     try { EventBus?.on?.("object:selected", onObjectSelected); } catch (e) {}
-    const iv = setInterval(() => refresh(), 1200);
-    return () => { mountedRef.current = false; try { EventBus?.off?.("scene:updated", onSceneUpdated); } catch (e) {} try { EventBus?.off?.("object:selected", onObjectSelected); } catch (e) {} clearInterval(iv); };
+
+    // If the host workspace doesn't emit events often, ensure periodic refresh as a fallback
+    const iv = setInterval(() => {
+      try { refresh(); } catch (e) {}
+    }, 1500);
+
+    return () => {
+      mountedRef.current = false;
+      try { EventBus?.off?.("scene:updated", onSceneUpdated); } catch (e) {}
+      try { EventBus?.off?.("object:selected", onObjectSelected); } catch (e) {}
+      clearInterval(iv);
+    };
   }, [refresh]);
 
   const findObjectByUUID = useCallback((uuid) => {
-    const stack = [...items];
-    while (stack.length) {
-      const n = stack.shift(); if (!n) continue; if (n.uuid === uuid) return n; if (Array.isArray(n.children)) stack.push(...n.children); }
-    // fallback: walk scene
     try {
-      const s = window.__OBJEKTA_WORKSPACE?.getScene?.() ?? window.__OBJEKTA_WORKSPACE?.scene ?? null;
-      if (s) return s.getObjectByProperty('uuid', uuid);
+      // workspace-first
+      const globalWs = workspaceRef?.current ?? window.__OBJEKTA_WORKSPACE ?? null;
+      if (globalWs) {
+        try {
+          const scene = typeof globalWs.getScene === "function" ? globalWs.getScene() : (globalWs.scene || null);
+          if (scene) return scene.getObjectByProperty('uuid', uuid);
+          if (typeof globalWs.getSceneObjects === 'function') {
+            const arr = globalWs.getSceneObjects() || [];
+            const flat = [];
+            const pushChildren = (o) => {
+              if (!o) return;
+              flat.push(o);
+              if (Array.isArray(o.children)) o.children.forEach(pushChildren);
+            };
+            arr.forEach(pushChildren);
+            return flat.find((o) => o.uuid === uuid) || null;
+          }
+        } catch (e) {}
+      }
+
+      // SceneGraphStore fallback
+      if (SceneGraphStore && SceneGraphStore.objects && typeof SceneGraphStore.objects === "object") {
+        const rec = SceneGraphStore.objects[uuid];
+        return rec ? rec.object : null;
+      }
     } catch (e) {}
     return null;
-  }, [items]);
+  }, [workspaceRef]);
 
   const handleSelect = useCallback((obj, opts = {}) => {
     if (!obj) return;
@@ -255,7 +322,6 @@ export default function Outliner({ workspaceRef = null, onSelect: onSelectProp =
       if (multi) {
         const exists = prev.includes(id);
         const next = exists ? prev.filter((x) => x !== id) : [...prev, id];
-        // emit multi select event
         try { EventBus?.emit?.('objects:selected', next); } catch (e) {}
         return next;
       }
@@ -264,35 +330,59 @@ export default function Outliner({ workspaceRef = null, onSelect: onSelectProp =
       return [id];
     });
 
-    // prefer store selection API
+    // store selection if API is present
     try {
       if (SceneGraphStore && typeof SceneGraphStore.selectObject === "function") SceneGraphStore.selectObject(id);
       else if (SceneGraphStore && typeof SceneGraphStore.setSelected === "function") SceneGraphStore.setSelected(id);
     } catch (e) {}
 
+    // try workspace selection API
     try { if (workspaceRef && workspaceRef.current && typeof workspaceRef.current.selectObject === "function") workspaceRef.current.selectObject(obj); } catch (e) {}
     try { onSelectProp?.(obj); } catch (e) {}
   }, [workspaceRef, onSelectProp]);
 
   const handleRename = useCallback((obj, newName) => {
     if (!obj) return;
-    try { if (SceneGraphStore && typeof SceneGraphStore.renameObject === "function") { SceneGraphStore.renameObject(obj.uuid, newName); EventBus?.emit?.('scene:updated'); return; } } catch (e) {}
+    try {
+      if (SceneGraphStore && typeof SceneGraphStore.renameObject === "function") {
+        SceneGraphStore.renameObject(obj.uuid, newName);
+        EventBus?.emit?.('scene:updated');
+        return;
+      }
+    } catch (e) {}
     try { obj.name = newName; EventBus?.emit?.('scene:updated'); } catch (e) { console.warn('Outliner: rename fallback failed', e); }
   }, []);
 
   const handleDelete = useCallback((obj) => {
     if (!obj) return;
-    try { if (SceneGraphStore && typeof SceneGraphStore.removeObject === "function") { SceneGraphStore.removeObject(obj.uuid); EventBus?.emit?.('scene:updated'); return; } } catch (e) {}
-    try { if (workspaceRef && workspaceRef.current && typeof workspaceRef.current.deleteSelected === "function") { if (typeof workspaceRef.current.selectObject === "function") workspaceRef.current.selectObject(obj); workspaceRef.current.deleteSelected(); EventBus?.emit?.('scene:updated'); return; } } catch (e) {}
+    try {
+      if (SceneGraphStore && typeof SceneGraphStore.removeObject === "function") {
+        SceneGraphStore.removeObject(obj.uuid);
+        EventBus?.emit?.('scene:updated');
+        return;
+      }
+    } catch (e) {}
+
+    try {
+      if (workspaceRef && workspaceRef.current && typeof workspaceRef.current.deleteSelected === "function") {
+        if (typeof workspaceRef.current.selectObject === "function") workspaceRef.current.selectObject(obj);
+        workspaceRef.current.deleteSelected();
+        EventBus?.emit?.('scene:updated');
+        return;
+      }
+    } catch (e) {}
+
     try { disposeObjectSimple(obj); if (obj.parent) obj.parent.remove(obj); EventBus?.emit?.('scene:updated'); } catch (e) { console.warn('Outliner: delete fallback failed', e); }
   }, [workspaceRef]);
 
-  const handleToggleVisibility = useCallback((obj) => { if (!obj) return; try { obj.visible = !obj.visible; EventBus?.emit?.('scene:updated'); } catch (e) { console.warn('Outliner: toggle visibility failed', e); } }, []);
+  const handleToggleVisibility = useCallback((obj) => {
+    if (!obj) return;
+    try { obj.visible = !obj.visible; EventBus?.emit?.('scene:updated'); } catch (e) { console.warn('Outliner: toggle visibility failed', e); }
+  }, []);
 
   const handleDropItem = useCallback((draggedId, targetId) => {
     if (!draggedId) return;
     try {
-      // prefer store-level reparent API
       if (SceneGraphStore && typeof SceneGraphStore.reparentObject === 'function') {
         SceneGraphStore.reparentObject(draggedId, targetId || null);
         EventBus?.emit?.('scene:updated');
@@ -302,7 +392,6 @@ export default function Outliner({ workspaceRef = null, onSelect: onSelectProp =
       }
     } catch (e) {}
 
-    // fallback: reparent via three.js objects
     try {
       const child = findObjectByUUID(draggedId);
       const parent = targetId ? findObjectByUUID(targetId) : null;
@@ -316,31 +405,30 @@ export default function Outliner({ workspaceRef = null, onSelect: onSelectProp =
         }
         p = p.parent;
       }
-      // remove from old parent
       if (child.parent) child.parent.remove(child);
-      // add to new parent or to user group / scene root
       if (parent) parent.add(child);
       else {
-        // try to find a user group in the scene
-        try {
-          const globalWs = window.__OBJEKTA_WORKSPACE;
-          const scene = globalWs?.getScene?.() ?? globalWs?.scene ?? null;
-          const userGroup = scene?._user_group ?? scene?._userGroup ?? null;
-          if (userGroup) userGroup.add(child);
-          else if (scene) scene.add(child);
-        } catch (e) { /* best-effort */ }
+        const globalWs = workspaceRef?.current ?? window.__OBJEKTA_WORKSPACE ?? null;
+        const scene = globalWs?.getScene?.() ?? globalWs?.scene ?? null;
+        const userGroup = scene?._user_group ?? scene?._userGroup ?? null;
+        if (userGroup) userGroup.add(child);
+        else if (scene) scene.add(child);
       }
       EventBus?.emit?.('scene:updated');
       setDragOverId(null);
       refresh();
     } catch (e) { console.warn('Outliner: drop fallback failed', e); }
-  }, [findObjectByUUID, refresh]);
+  }, [findObjectByUUID, refresh, workspaceRef]);
 
   const handleDragEnter = useCallback((uuid) => { setDragOverId(uuid); }, []);
   const handleDragLeave = useCallback((uuid) => { setDragOverId((cur) => (cur === uuid ? null : cur)); }, []);
 
   const filtered = useMemo(() => {
-    const q = (filter || "").trim().toLowerCase(); if (!q) return items; return items.filter((it) => { try { return (it.name || it.type || "").toLowerCase().includes(q); } catch (e) { return true; } });
+    const q = (filter || "").trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((it) => {
+      try { return (it.name || it.type || "").toLowerCase().includes(q); } catch (e) { return true; }
+    });
   }, [items, filter]);
 
   return (
@@ -354,7 +442,20 @@ export default function Outliner({ workspaceRef = null, onSelect: onSelectProp =
       <div role="tree" className="outliner-tree">
         {filtered.length === 0 && <div className="outliner-empty">No objects</div>}
         {filtered.map((it) => (
-          <OutlinerItem key={it.uuid} obj={it} depth={0} selectedIds={selectedIds} dragOverId={dragOverId} onSelect={handleSelect} onRename={handleRename} onDelete={(o) => { if (confirm(`Delete '${o.name || o.type}'?`)) handleDelete(o); }} onToggleVisibility={handleToggleVisibility} onDropItem={handleDropItem} onDragEnter={handleDragEnter} onDragLeave={handleDragLeave} />
+          <OutlinerItem
+            key={it.uuid}
+            obj={it}
+            depth={0}
+            selectedIds={selectedIds}
+            dragOverId={dragOverId}
+            onSelect={handleSelect}
+            onRename={handleRename}
+            onDelete={(o) => { if (confirm(`Delete '${o.name || o.type}'?`)) handleDelete(o); }}
+            onToggleVisibility={handleToggleVisibility}
+            onDropItem={handleDropItem}
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+          />
         ))}
       </div>
     </div>
