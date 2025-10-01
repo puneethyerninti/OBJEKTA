@@ -9,19 +9,14 @@ import {
   FiWifi, FiWifiOff, FiSun, FiMoon, FiSearch
 } from "react-icons/fi";
 
-import Palette, { PALETTE_TYPE } from "../components/Palette";
+import Palette from "../components/Palette";
 import Workspace from "../components/Workspace";
 import ObjectProperties from "../components/ObjectProperties";
 import SculptToolbar from "../components/SculptToolbar";
 import "../styles/Studio.css";
 
-// Engines / stores / utils (integration)
 import { SceneGraphStore } from "../store/SceneGraphStore";
 import TextureStore from "../store/TextureStore";
-import { ImportEngine } from "../engine/ImportEngine";
-import { ExportEngine } from "../engine/ExportEngine";
-import { TransformEngine } from "../engine/TransformEngine";
-import { HistoryEngine } from "../engine/HistoryEngine";
 import EventBus from "../utils/EventBus";
 
 const PALETTE_ITEMS = [
@@ -182,7 +177,6 @@ export default function Studio() {
   const [matMapURL, setMatMapURL] = useState(null);
   const prevMatMapRef = useRef(null);
 
-  // revoke previous blob URL when matMapURL changes (and cleanup on unmount)
   useEffect(() => {
     const prev = prevMatMapRef.current;
     if (prev && typeof prev === 'string' && prev.startsWith && prev.startsWith('blob:') && prev !== matMapURL) {
@@ -194,17 +188,20 @@ export default function Studio() {
     };
   }, [matMapURL]);
 
-  // --- Lighting editor state ---
+  // --- Lighting & Environment editor state ---
   const [lights, setLights] = useState([]);
   const [collabConnected, setCollabConnected] = useState(false);
   const collabSocketRef = useRef(null);
   const [collabLoading, setCollabLoading] = useState(false);
 
-  // --- Outliner search ---
   const [outlinerSearch, setOutlinerSearch] = useState("");
+  const [sceneVersion, setSceneVersion] = useState(0);
+  const [propsTab, setPropsTab] = useState("props"); // props | material | lights | outliner | validate | environment
+  const [envColor, setEnvColor] = useState("#111122");
+  const [envIntensity, setEnvIntensity] = useState(1.0);
+  const [bloomEnabled, setBloomEnabled] = useState(false);
 
   const pushSceneToast = (msg) => pushToast({ type: "info", message: msg });
-
   const safeDate = () => new Date().toISOString().replace(/[:.]/g, "-");
 
   // ---------- Save / Load JSON ----------
@@ -404,10 +401,6 @@ export default function Studio() {
 
   const [stats, setStats] = useState({ objects: 0, tris: 0 });
 
-  // NEW: sceneVersion to react to Workspace events instead of polling
-  const [sceneVersion, setSceneVersion] = useState(0);
-
-  // compute stats once (used on sceneChange)
   const updateStatsOnce = () => {
     try {
       const scene = workspaceRef.current?.scene;
@@ -433,9 +426,7 @@ export default function Studio() {
   };
 
   useEffect(() => {
-    // initial stats fill on mount
     updateStatsOnce();
-    // no polling interval anymore — updates happen via onSceneChange
   }, []);
 
   useEffect(() => {
@@ -465,7 +456,6 @@ export default function Studio() {
       if (mat && typeof mat.metalness === 'number') setMatMetal(mat.metalness);
       if (mat && mat.map && mat.map.image) {
         setMatHasMap(true);
-        // prefer stored preview url if available else try to use image.src
         setMatMapURL(mat.map.__objekta_preview || (mat.map.image.currentSrc || mat.map.image.src || null));
       } else { setMatHasMap(false); setMatMapURL(null); }
     } else {
@@ -484,7 +474,6 @@ export default function Studio() {
             if (!mat) return;
             if (mat.map) {
               try { mat.map.dispose && mat.map.dispose(); } catch (e) {}
-              // If you use TextureStore with refcounts, notify it here instead.
               if (mat.map.__objekta_preview && typeof mat.map.__objekta_preview === 'string') {
                 try { /* don't auto-revoke here; Studio manages previews via matMapURL state */ } catch (e) {}
               }
@@ -519,9 +508,7 @@ export default function Studio() {
       try {
         const loader = new THREE.TextureLoader();
         loader.load(url, (tex) => {
-          // tag texture with preview info so Studio can show preview URL if desired
           tex.__objekta_preview = url;
-          // if you have TextureStore, you can insert here (TextureStore.add(url, tex))
           selected.traverse((n) => {
             if (n.isMesh && n.material) {
               const mats = Array.isArray(n.material) ? n.material : [n.material];
@@ -558,7 +545,7 @@ export default function Studio() {
     pushToast({ type: "info", message: "Material applied" });
   };
 
-  // ---------- Lighting helpers (read from scene exposed by Workspace) ----------
+  // ---------- Lighting helpers ----------
   const refreshLightListFromScene = () => {
     try {
       const scene = workspaceRef.current?.scene;
@@ -580,7 +567,6 @@ export default function Studio() {
   };
 
   useEffect(() => {
-    // initial refresh; subsequent updates happen via onSceneChange
     refreshLightListFromScene();
   }, []);
 
@@ -628,8 +614,7 @@ export default function Studio() {
     } catch (e) { console.warn(e); }
   };
 
-  // ---------- Outliner helpers (uses workspace.getSceneVersion/getSceneObjects to avoid blinking) ----------
-  // NOTE: now accepts parent search & setter explicitly
+  // ---------- Outliner view (uses workspace.getSceneObjects if available) ----------
   const OutlinerView = ({ onSelect, sceneVersion, outlinerSearch: parentSearch, setOutlinerSearch: setParentSearch }) => {
     const [items, setItems] = useState([]);
     const lastVerRef = useRef(-1);
@@ -641,9 +626,7 @@ export default function Studio() {
           const ws = workspaceRef.current;
           if (!ws) return;
           const ver = typeof ws.getSceneVersion === 'function' ? ws.getSceneVersion() : null;
-          // if version is provided by prop and equals last, skip
           if (typeof sceneVersion === 'number' && sceneVersion === lastVerRef.current) return;
-          // otherwise proceed
           let list = [];
           if (typeof ws.getSceneObjects === 'function') {
             list = ws.getSceneObjects();
@@ -653,16 +636,12 @@ export default function Studio() {
           }
           if (!mounted) return;
           lastVerRef.current = ver;
-          // apply outlinerSearch filter
           const filtered = parentSearch ? list.filter(i => (i.name || '').toLowerCase().includes(parentSearch.toLowerCase())) : list;
           setItems(filtered);
-        } catch (e) {
-          // ignore
-        }
+        } catch (e) {}
       };
 
       scanIfNeeded();
-      // Re-run when sceneVersion or parentSearch changes (no interval)
       return () => { mounted = false; };
     }, [parentSearch, sceneVersion]);
 
@@ -685,7 +664,6 @@ export default function Studio() {
       try {
         if (workspaceRef.current?.selectObject) {
           workspaceRef.current.selectObject(obj);
-          // dispose resources before deletion
           disposeObjectResources(obj);
           workspaceRef.current.deleteSelected?.();
         } else {
@@ -729,7 +707,7 @@ export default function Studio() {
     );
   };
 
-  // ---------- Collaboration (lightweight) ----------
+  // ---------- Collaboration (unchanged) ----------
   const startCollab = async () => {
     if (collabSocketRef.current) {
       try { collabSocketRef.current.disconnect(); } catch (e) {}
@@ -793,10 +771,7 @@ export default function Studio() {
       title: "Delete selected object",
       message: `Are you sure you want to delete '${selected.name || "object"}'? This cannot be undone.`,
       onConfirm: () => {
-        try {
-          // dispose resources before deletion
-          disposeObjectResources(selected);
-        } catch (e) {}
+        try { disposeObjectResources(selected); } catch (e) {}
         workspaceRef.current?.deleteSelected?.();
         setSelected(null);
         setConfirmState((s) => ({ ...s, open: false }));
@@ -812,12 +787,9 @@ export default function Studio() {
       message: "Resetting will remove all objects from the scene. Continue?",
       onConfirm: () => {
         try {
-          // try to dispose everything under userGroup if available
           const scene = workspaceRef.current?.scene;
           const ug = scene?._userGroup || scene?._user_group;
-          if (ug) {
-            ug.children.forEach(child => disposeObjectResources(child));
-          }
+          if (ug) ug.children.forEach(child => disposeObjectResources(child));
         } catch (e) {}
         workspaceRef.current?.resetScene?.();
         setConfirmState((s) => ({ ...s, open: false }));
@@ -827,7 +799,7 @@ export default function Studio() {
     });
   };
 
-  // ---------- Sculpting placeholder ----------
+  // ---------- Sculpting toggle ----------
   const [sculptMode, setSculptMode] = useState(false);
   const toggleSculpt = () => {
     setSculptMode((v) => {
@@ -835,18 +807,15 @@ export default function Studio() {
       try {
         if (next) {
           workspaceRef.current?.startSculpting?.();
-          pushToast({ type: "info", message: "Sculpt mode ON (placeholder)" });
+          pushToast({ type: "info", message: "Sculpt mode ON" });
         } else {
           workspaceRef.current?.stopSculpting?.();
-          pushToast({ type: "info", message: "Sculpt mode OFF (placeholder)" });
+          pushToast({ type: "info", message: "Sculpt mode OFF" });
         }
       } catch (e) { pushToast({ type: "error", message: "Sculpt not available" }); }
       return next;
     });
   };
-
-  // ---------- Panel UI state -->
-  const [propsTab, setPropsTab] = useState("props"); // props | material | lights | outliner | validate
 
   // ---------- Material form submit ----------
   const onApplyMaterialSubmit = (e) => {
@@ -882,7 +851,7 @@ export default function Studio() {
     }
   };
 
-  // ---------- Save / Load project (localStorage) ----------
+  // ---------- Save / Load project ----------
   const [lastSaveAt, setLastSaveAt] = useState(null);
   const saveProject = (name = "latest") => {
     try {
@@ -904,19 +873,14 @@ export default function Studio() {
     } catch (e) { pushToast({ type: "error", message: "Load failed" }); }
   };
 
-  // ---------- Scene change handler (event-driven) ----------
+  // ---------- Scene change handler ----------
   const handleSceneChange = (version) => {
-    // update local sceneVersion so OutlinerView will rescan
     setSceneVersion((v) => (typeof version === 'number' ? version : v + 1));
-    // refresh derived UI pieces
     try { refreshLightListFromScene(); } catch (e) {}
     try { updateStatsOnce(); } catch (e) {}
   };
 
-  // ---------- REPLACED: Integration block ----------
-  // Previously Studio contained a large `useEffect` that created a shimmed workspace API.
-  // That is removed. Workspace is now the authoritative API (forwardRef). Studio listens
-  // to EventBus updates to stay in sync.
+  // ---------- EventBus / Integration ----------
   useEffect(() => {
     const onSceneUpdated = () => {
       setSceneVersion((v) => v + 1);
@@ -938,39 +902,186 @@ export default function Studio() {
       } catch (e) {}
     };
 
-    // Listen for completed transforms so we can push to HistoryEngine (if available).
-    const onTransformEnded = (payload) => {
-      try {
-        // Payload expected shape: { ids, before, after }
-        // HistoryEngine API varies across implementations; attempt safe calls.
-        if (HistoryEngine && typeof HistoryEngine.pushCommand === 'function') {
-          HistoryEngine.pushCommand(payload);
-        } else if (HistoryEngine && typeof HistoryEngine.record === 'function') {
-          HistoryEngine.record('transform', payload);
-        } else if (HistoryEngine && typeof HistoryEngine.execute === 'function') {
-          // some impls accept a raw command-like payload
-          HistoryEngine.execute(payload);
-        } else {
-          // no-op: HistoryEngine not present / API not matched
-        }
-      } catch (e) {
-        console.warn("Failed to forward transform to HistoryEngine:", e);
-      }
-    };
-
     EventBus.on?.("scene:updated", onSceneUpdated);
     EventBus.on?.("objects:selected", onObjectsSelected);
     EventBus.on?.("object:selected", onObjectSelected);
-    EventBus.on?.("transform:ended", onTransformEnded);
 
     return () => {
       try {
         EventBus.off?.("scene:updated", onSceneUpdated);
         EventBus.off?.("objects:selected", onObjectsSelected);
         EventBus.off?.("object:selected", onObjectSelected);
-        EventBus.off?.("transform:ended", onTransformEnded);
       } catch (e) {}
     };
+  }, []);
+
+  // ---------- Environment / HDR helpers ----------
+  // Helper to obtain renderer (try workspace ref then global fallback)
+  const getRenderer = () => {
+    try {
+      return workspaceRef.current?.getRenderer?.() ?? window.__OBJEKTA_WORKSPACE?.getRenderer?.();
+    } catch (e) { return null; }
+  };
+
+  const applyEnvTexture = async (texture, isEquirect = true) => {
+    // create PMREM using renderer if available, otherwise set as background only
+    const scene =
+  workspaceRef.current?.scene ??
+  window.__OBJEKTA_WORKSPACE?.getScene?.();
+
+    if (!scene) { pushToast({ type: "error", message: "No scene to apply environment to" }); return; }
+    const renderer = getRenderer();
+    if (renderer && typeof THREE.PMREMGenerator === 'function') {
+      try {
+        const pmrem = new THREE.PMREMGenerator(renderer);
+        pmrem.compileEquirectangularShader();
+        const envMap = pmrem.fromEquirectangular(texture).texture;
+        scene.environment = envMap;
+        scene.background = envMap; // optional, might be heavy for HDR (you can set to color instead)
+        pmrem.dispose();
+        texture.dispose && texture.dispose(); // we used it to generate env; cleanup
+        pushToast({ type: "info", message: "Environment applied (PMREM)" });
+        setTimeout(() => setSceneVersion((v) => v + 1), 40);
+        return;
+      } catch (e) {
+        console.warn("PMREM apply failed", e);
+      }
+    }
+
+    // fallback: apply as simple background
+    try {
+      scene.background = texture;
+      pushToast({ type: "info", message: "Environment texture applied (fallback)" });
+      setTimeout(() => setSceneVersion((v) => v + 1), 40);
+    } catch (e) { pushToast({ type: "error", message: "Failed to apply environment" }); }
+  };
+
+  const applyEnvironmentFromFile = async (file) => {
+    if (!file) return;
+    const name = (file.name || "").toLowerCase();
+    setLoading(true);
+    try {
+      if (name.endsWith('.hdr') || name.endsWith('.exr')) {
+        // try to dynamic import RGBELoader
+        const { RGBELoader } = await import('three/examples/jsm/loaders/RGBELoader');
+        const renderer = getRenderer();
+        const loader = new RGBELoader();
+        const url = URL.createObjectURL(file);
+        const texData = await new Promise((res, rej) => loader.load(url, (t) => res(t), undefined, (err) => rej(err)));
+        try { URL.revokeObjectURL(url); } catch (e) {}
+        await applyEnvTexture(texData, true);
+      } else {
+        // normal LDR image
+        const loader = new THREE.TextureLoader();
+        const url = URL.createObjectURL(file);
+        const tex = await new Promise((res, rej) => loader.load(url, (t) => res(t), undefined, (err) => rej(err)));
+        tex.mapping = THREE.EquirectangularReflectionMapping;
+        try { URL.revokeObjectURL(url); } catch (e) {}
+        await applyEnvTexture(tex, true);
+      }
+    } catch (e) {
+      console.error('applyEnvironmentFromFile failed', e);
+      pushToast({ type: "error", message: "Environment load failed" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const applyEnvironmentColor = (hex) => {
+    try {
+      const scene = workspaceRef.current?.scene;
+      if (!scene) { pushToast({ type: "error", message: "No scene" }); return; }
+      scene.background = new THREE.Color(hex);
+      // optionally remove environment so PBR doesn't use it
+      scene.environment = null;
+      pushToast({ type: "info", message: "Background color applied" });
+      setSceneVersion((v) => v + 1);
+    } catch (e) { pushToast({ type: "error", message: "Failed to set color" }); }
+  };
+
+  // ---------- Performance helpers ----------
+  const setDevicePixelRatio = (ratio) => {
+    try {
+      const renderer = getRenderer();
+      if (!renderer) { pushToast({ type: "error", message: "Renderer not accessible" }); return; }
+      renderer.setPixelRatio(ratio);
+      renderer.setSize(renderer.domElement.clientWidth, renderer.domElement.clientHeight, false);
+      pushToast({ type: "info", message: `Pixel ratio set to ${ratio}` });
+    } catch (e) { pushToast({ type: "error", message: "Failed to set pixel ratio" }); }
+  };
+
+  const toggleShadows = (enable) => {
+    try {
+      const renderer = getRenderer();
+      if (renderer) renderer.shadowMap.enabled = !!enable;
+      const scene = workspaceRef.current?.scene;
+      if (scene) {
+        scene.traverse((n) => {
+          if (n.isLight) {
+            try { n.castShadow = !!enable; } catch (e) {}
+          }
+          if (n.isMesh) {
+            try { n.receiveShadow = !!enable; n.castShadow = !!enable; } catch (e) {}
+          }
+        });
+      }
+      pushToast({ type: "info", message: `${enable ? 'Shadows enabled' : 'Shadows disabled'}` });
+    } catch (e) { pushToast({ type: "error", message: "Failed to toggle shadows" }); }
+  };
+
+  // Non-destructive optimization for local editing (texture filters / LOD hints)
+  const optimizeForLocalEdit = () => {
+    try {
+      const scene = workspaceRef.current?.scene;
+      if (!scene) { pushToast({ type: "error", message: "No scene" }); return; }
+      scene.traverse((n) => {
+        if (n.isMesh && n.material) {
+          const mats = Array.isArray(n.material) ? n.material : [n.material];
+          mats.forEach((m) => {
+            if (m.map) {
+              try {
+                m.map.anisotropy = Math.min(4, m.map.anisotropy || 1);
+                m.map.generateMipmaps = true;
+                m.map.minFilter = THREE.LinearMipmapLinearFilter;
+                m.map.needsUpdate = true;
+              } catch (e) {}
+            }
+            // reduce roughness if extremely high to improve perceived speed in viewport
+            if (typeof m.roughness === 'number') m.roughness = Math.max(0.1, m.roughness);
+          });
+        }
+      });
+      pushToast({ type: "info", message: "Optimized materials for local editing" });
+    } catch (e) { pushToast({ type: "error", message: "Optimization failed" }); }
+  };
+
+  // ---------- PostFX (bloom) ----------
+  const toggleBloom = (enabled) => {
+    setBloomEnabled(enabled);
+    try {
+      EventBus?.emit?.('postfx:bloom:toggle', { enabled });
+      pushToast({ type: "info", message: `Bloom ${enabled ? 'enabled' : 'disabled'} (Studio emitted)` });
+    } catch (e) {}
+  };
+
+  // ---------- Undo/Redo wrappers ----------
+  const undoWrapper = () => workspaceRef.current?.undo?.();
+  const redoWrapper = () => workspaceRef.current?.redo?.();
+
+  // ---------- Delete / Duplicate wrappers ----------
+  const requestDeleteSelectedWrapper = requestDeleteSelected;
+  const duplicateWrapper = () => { workspaceRef.current?.duplicateSelected?.(); pushToast({ type: "info", message: "Duplicated selection" }); };
+
+  // ---------- Integration events ----------
+  useEffect(() => {
+    // react to workspace scene updates (EventBus or ref)
+    const cb = () => {
+      updateStatsOnce();
+      refreshLightListFromScene();
+      setSceneVersion((v) => v + 1);
+    };
+    EventBus.on?.("scene:updated", cb);
+    return () => { try { EventBus.off?.("scene:updated", cb); } catch (e) {} };
   }, []);
 
   // ---------- Render ----------
@@ -1011,8 +1122,8 @@ export default function Studio() {
 
         <div className="workspace-area">
           <div ref={toolbarRef} className="studio-toolbar">
-            <button className="studio-btn icon-btn" onClick={undo} title="Undo (Ctrl/Cmd+Z)"><FiRotateCcw /></button>
-            <button className="studio-btn icon-btn" onClick={redo} title="Redo (Ctrl/Cmd+Y)"><FiRotateCw /></button>
+            <button className="studio-btn icon-btn" onClick={undoWrapper} title="Undo (Ctrl/Cmd+Z)"><FiRotateCcw /></button>
+            <button className="studio-btn icon-btn" onClick={redoWrapper} title="Redo (Ctrl/Cmd+Y)"><FiRotateCw /></button>
 
             <div className="segmented-control">
               {[["translate", "Move"], ["rotate", "Rotate"], ["scale", "Scale"]].map(([m, label]) => (
@@ -1028,7 +1139,7 @@ export default function Studio() {
               <input type="number" value={snapSize} step={0.1} min={0} onChange={(e) => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) setSnapSize(v); }} title="Snap size" />
             </div>
 
-            <button className="studio-btn icon-btn" onClick={() => { workspaceRef.current?.duplicateSelected?.(); pushToast({ type: "info", message: "Duplicated selection" }); }} title="Duplicate (Ctrl/Cmd+D)">
+            <button className="studio-btn icon-btn" onClick={duplicateWrapper} title="Duplicate (Ctrl/Cmd+D)">
               <FiCopy />
             </button>
 
@@ -1057,18 +1168,16 @@ export default function Studio() {
 
             <button className="studio-btn icon-btn" onClick={() => toggleSculpt()} title="Sculpt (placeholder)">🪵</button>
 
-            {/* Save / Load project */}
+            {/* Performance quick controls */}
             <div style={{ marginLeft: 8, display: "flex", gap: 6 }}>
-              <button className="studio-btn" onClick={() => saveProject("latest")}>Save Project</button>
-              <button className="studio-btn" onClick={() => loadLastProject("latest")}>Load Last</button>
-              <button className="studio-btn" onClick={() => runValidation()}>Validate</button>
+              <button className="studio-btn" onClick={() => setDevicePixelRatio(0.75)}>Low DPR</button>
+              <button className="studio-btn" onClick={() => setDevicePixelRatio(1)}>Normal DPR</button>
+              <button className="studio-btn" onClick={() => setDevicePixelRatio(window.devicePixelRatio || 2)}>High DPR</button>
             </div>
           </div>
 
-          {/* Sculpt toolbar (floating overlay) */}
           <SculptToolbar
             workspaceRef={workspaceRef}
-            /* optional selector — you can omit to fall back to first canvas found */
             rendererSelector=".workspace-area canvas"
           />
 
@@ -1080,7 +1189,6 @@ export default function Studio() {
             onSceneChange={handleSceneChange}
           />
 
-          {/* ---------- Properties panel (tab-safe rendering) ---------- */}
           {!propsCollapsed && (
             <div
               ref={panelRef}
@@ -1092,25 +1200,19 @@ export default function Studio() {
               <div className="properties-resizer" onMouseDown={startPropsResize} />
               <div className="properties-drag-handle" onMouseDown={startDrag}><div /><div /><div /></div>
 
-              {/* Tabs (use role=tablist for clarity/accessibility) */}
               <div role="tablist" aria-label="Inspector Tabs" style={{ display: 'flex', gap: 6, padding: 8 }}>
                 <button role="tab" aria-selected={propsTab === 'props'} onClick={() => setPropsTab('props')} className={propsTab === 'props' ? 'active' : ''}>Transform</button>
                 <button role="tab" aria-selected={propsTab === 'material'} onClick={() => setPropsTab('material')} className={propsTab === 'material' ? 'active' : ''}>Material</button>
                 <button role="tab" aria-selected={propsTab === 'lights'} onClick={() => setPropsTab('lights')} className={propsTab === 'lights' ? 'active' : ''}>Lighting</button>
                 <button role="tab" aria-selected={propsTab === 'outliner'} onClick={() => setPropsTab('outliner')} className={propsTab === 'outliner' ? 'active' : ''}>Outliner</button>
                 <button role="tab" aria-selected={propsTab === 'validate'} onClick={() => setPropsTab('validate')} className={propsTab === 'validate' ? 'active' : ''}>Validate</button>
+                <button role="tab" aria-selected={propsTab === 'environment'} onClick={() => setPropsTab('environment')} className={propsTab === 'environment' ? 'active' : ''}>Environment</button>
               </div>
 
-              {/* Content area - only the active section is rendered/shown */}
               <div style={{ padding: 8, overflowY: 'auto', height: 'calc(100% - 72px)' }}>
                 {/* Transform */}
-                <div
-                  className="props-section"
-                  role="tabpanel"
-                  aria-hidden={propsTab !== 'props'}
-                  style={{ display: propsTab === 'props' ? 'block' : 'none' }}
-                >
-                  {propsTab === 'props' && selected ? (
+                {propsTab === 'props' && (
+                  selected ? (
                     <ObjectProperties
                       selected={selected}
                       onTransformChange={(prop, axis, val) => workspaceRef.current?.handleTransformChange?.(prop, axis, val)}
@@ -1134,145 +1236,170 @@ export default function Studio() {
                         }
                       }}
                     />
-                  ) : propsTab === 'props' ? (
+                  ) : (
                     <div style={{ color: 'var(--text-muted)' }}>No object selected.</div>
-                  ) : null}
-                </div>
+                  )
+                )}
 
                 {/* Material */}
-                <div
-                  className="props-section"
-                  role="tabpanel"
-                  aria-hidden={propsTab !== 'material'}
-                  style={{ display: propsTab === 'material' ? 'block' : 'none' }}
-                >
-                  {propsTab === 'material' && (
-                    <div>
-                      <div style={{ fontWeight: 700, marginBottom: 8 }}>Material Editor</div>
-                      <form onSubmit={onApplyMaterialSubmit}>
-                        <div style={{ marginBottom: 8 }}>
-                          <label style={{ display: 'block', fontSize: 12 }}>Color</label>
-                          <input type="color" value={matColor} onChange={(e) => setMatColor(e.target.value)} />
-                        </div>
-                        <div style={{ marginBottom: 8 }}>
-                          <label style={{ display: 'block', fontSize: 12 }}>Roughness: {matRough.toFixed(2)}</label>
-                          <input type="range" min="0" max="1" step="0.01" value={matRough} onChange={(e) => setMatRough(parseFloat(e.target.value))} style={{ width: '100%' }} />
-                        </div>
-                        <div style={{ marginBottom: 8 }}>
-                          <label style={{ display: 'block', fontSize: 12 }}>Metalness: {matMetal.toFixed(2)}</label>
-                          <input type="range" min="0" max="1" step="0.01" value={matMetal} onChange={(e) => setMatMetal(parseFloat(e.target.value))} style={{ width: '100%' }} />
-                        </div>
-
-                        <div style={{ marginBottom: 8 }}>
-                          <label style={{ display: 'block', fontSize: 12 }}>Texture (optional)</label>
-                          <input id="tex-upload-input" type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) setMatMapURL(URL.createObjectURL(f)); }} />
-                          {matMapURL && <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
-                            <img src={matMapURL} alt="preview" style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 6 }} />
-                            <div style={{ display: 'flex', flexDirection: 'column' }}>
-                              <div style={{ fontSize: 12 }}>{matHasMap ? 'Applied texture' : 'New texture (pending)'}</div>
-                              <div style={{ marginTop: 6 }}>
-                                <button type="button" className="studio-btn" onClick={() => {
-                                  const file = document.getElementById('tex-upload-input')?.files?.[0];
-                                  applyMaterialToSelection({ color: matColor, roughness: matRough, metalness: matMetal, mapFile: file });
-                                }}>Apply texture</button>
-                                <button type="button" className="studio-btn" onClick={() => { removeTexture(); }}>Remove</button>
-                              </div>
-                            </div>
-                          </div>}
-                        </div>
-
-                        <div style={{ display: 'flex', gap: 8 }}>
-                          <button type="submit" className="launch-btn">Apply</button>
-                          <button type="button" className="studio-btn" onClick={() => { if (selected) { selected.traverse((n) => { if (n.isMesh && n.material) { try { n.material.color.set('#888888'); n.material.roughness = 0.5; n.material.metalness = 0.0; } catch (e) {} } }); pushToast({ type: "info", message: "Reset material" }); } }}>Reset</button>
-                        </div>
-                      </form>
-                    </div>
-                  )}
-                </div>
-
-                {/* Lighting */}
-                <div
-                  className="props-section"
-                  role="tabpanel"
-                  aria-hidden={propsTab !== 'lights'}
-                  style={{ display: propsTab === 'lights' ? 'block' : 'none' }}
-                >
-                  {propsTab === 'lights' && (
-                    <div>
-                      <div style={{ fontWeight: 700, marginBottom: 8 }}>Lighting</div>
-                      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                        <button className="studio-btn" onClick={() => addLightToScene('Point Light')}><FiSun /> Point</button>
-                        <button className="studio-btn" onClick={() => addLightToScene('Spot Light')}><FiStar /> Spot</button>
-                        <button className="studio-btn" onClick={() => addLightToScene('Directional Light')}><FiRotateCw /> Dir</button>
-                        <button className="studio-btn" onClick={() => addLightToScene('Hemisphere Light')}><FiMoon /> Hemi</button>
+                {propsTab === 'material' && (
+                  <div>
+                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Material Editor</div>
+                    <form onSubmit={onApplyMaterialSubmit}>
+                      <div style={{ marginBottom: 8 }}>
+                        <label style={{ display: 'block', fontSize: 12 }}>Color</label>
+                        <input type="color" value={matColor} onChange={(e) => setMatColor(e.target.value)} />
+                      </div>
+                      <div style={{ marginBottom: 8 }}>
+                        <label style={{ display: 'block', fontSize: 12 }}>Roughness: {matRough.toFixed(2)}</label>
+                        <input type="range" min="0" max="1" step="0.01" value={matRough} onChange={(e) => setMatRough(parseFloat(e.target.value))} style={{ width: '100%' }} />
+                      </div>
+                      <div style={{ marginBottom: 8 }}>
+                        <label style={{ display: 'block', fontSize: 12 }}>Metalness: {matMetal.toFixed(2)}</label>
+                        <input type="range" min="0" max="1" step="0.01" value={matMetal} onChange={(e) => setMatMetal(parseFloat(e.target.value))} style={{ width: '100%' }} />
                       </div>
 
-                      <div>
-                        {lights.length === 0 && <div style={{ color: 'var(--text-muted)' }}>No lights in scene</div>}
-                        {lights.map(l => (
-                          <div key={l.uuid} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', padding: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
-                            <div style={{ flex: 1 }}>
-                              <div style={{ fontWeight: 700 }}>{l.name}</div>
-                              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{l.type}</div>
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
-                              <input type="color" value={l.color} onChange={(e) => updateLight(l.uuid, { color: e.target.value })} />
-                              <input type="range" min="0" max="4" step="0.01" value={l.intensity} onChange={(e) => updateLight(l.uuid, { intensity: parseFloat(e.target.value) })} />
-                              <div style={{ display: 'flex', gap: 6 }}>
-                                <button className="studio-btn" onClick={() => removeLight(l.uuid)}>Remove</button>
-                              </div>
+                      <div style={{ marginBottom: 8 }}>
+                        <label style={{ display: 'block', fontSize: 12 }}>Texture (optional)</label>
+                        <input id="tex-upload-input" type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) setMatMapURL(URL.createObjectURL(f)); }} />
+                        {matMapURL && <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <img src={matMapURL} alt="preview" style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 6 }} />
+                          <div style={{ display: 'flex', flexDirection: 'column' }}>
+                            <div style={{ fontSize: 12 }}>{matHasMap ? 'Applied texture' : 'New texture (pending)'}</div>
+                            <div style={{ marginTop: 6 }}>
+                              <button type="button" className="studio-btn" onClick={() => {
+                                const file = document.getElementById('tex-upload-input')?.files?.[0];
+                                applyMaterialToSelection({ color: matColor, roughness: matRough, metalness: matMetal, mapFile: file });
+                              }}>Apply texture</button>
+                              <button type="button" className="studio-btn" onClick={() => { removeTexture(); }}>Remove</button>
                             </div>
                           </div>
-                        ))}
+                        </div>}
                       </div>
+
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button type="submit" className="launch-btn">Apply</button>
+                        <button type="button" className="studio-btn" onClick={() => { if (selected) { selected.traverse((n) => { if (n.isMesh && n.material) { try { n.material.color.set('#888888'); n.material.roughness = 0.5; n.material.metalness = 0.0; } catch (e) {} } }); pushToast({ type: "info", message: "Reset material" }); } }}>Reset</button>
+                      </div>
+                    </form>
+                  </div>
+                )}
+
+                {/* Lighting */}
+                {propsTab === 'lights' && (
+                  <div>
+                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Lighting</div>
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                      <button className="studio-btn" onClick={() => addLightToScene('Point Light')}><FiSun /> Point</button>
+                      <button className="studio-btn" onClick={() => addLightToScene('Spot Light')}><FiStar /> Spot</button>
+                      <button className="studio-btn" onClick={() => addLightToScene('Directional Light')}><FiRotateCw /> Dir</button>
+                      <button className="studio-btn" onClick={() => addLightToScene('Hemisphere Light')}><FiMoon /> Hemi</button>
                     </div>
-                  )}
-                </div>
+
+                    <div>
+                      {lights.length === 0 && <div style={{ color: 'var(--text-muted)' }}>No lights in scene</div>}
+                      {lights.map(l => (
+                        <div key={l.uuid} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', padding: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 700 }}>{l.name}</div>
+                            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{l.type}</div>
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+                            <input type="color" value={l.color} onChange={(e) => updateLight(l.uuid, { color: e.target.value })} />
+                            <input type="range" min="0" max="4" step="0.01" value={l.intensity} onChange={(e) => updateLight(l.uuid, { intensity: parseFloat(e.target.value) })} />
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button className="studio-btn" onClick={() => removeLight(l.uuid)}>Remove</button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Outliner */}
-                <div
-                  className="props-section"
-                  role="tabpanel"
-                  aria-hidden={propsTab !== 'outliner'}
-                  style={{ display: propsTab === 'outliner' ? 'block' : 'none' }}
-                >
-                  {propsTab === 'outliner' && (
-                    <div>
-                      <div style={{ fontWeight: 700, marginBottom: 8 }}>Scene Outliner</div>
-                      <OutlinerView onSelect={handleOutlinerSelect} sceneVersion={sceneVersion}
-                        outlinerSearch={outlinerSearch} setOutlinerSearch={setOutlinerSearch} />
-                    </div>
-                  )}
-                </div>
+                {propsTab === 'outliner' && (
+                  <div>
+                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Scene Outliner</div>
+                    <OutlinerView onSelect={handleOutlinerSelect} sceneVersion={sceneVersion}
+                      outlinerSearch={outlinerSearch} setOutlinerSearch={setOutlinerSearch} />
+                  </div>
+                )}
 
                 {/* Validate */}
-                <div
-                  className="props-section"
-                  role="tabpanel"
-                  aria-hidden={propsTab !== 'validate'}
-                  style={{ display: propsTab === 'validate' ? 'block' : 'none' }}
-                >
-                  {propsTab === 'validate' && (
-                    <div>
-                      <div style={{ fontWeight: 700, marginBottom: 8 }}>Validation</div>
-                      <div style={{ marginBottom: 10 }}>
-                        <button className="launch-btn" onClick={() => runValidation()}>Run Validation</button>
-                        <button className="studio-btn" onClick={() => setValidationResult(null)}>Clear</button>
-                      </div>
-
-                      {!validationResult && <div style={{ color: 'var(--text-muted)' }}>No validation run yet. Click "Run Validation".</div>}
-
-                      {validationResult && (
-                        <div style={{ fontSize: 13 }}>
-                          {validationResult.ok ? <div style={{ color: 'var(--success)' }}>OK</div> : <div style={{ color: 'var(--danger)' }}>Issues found</div>}
-                          <pre style={{ whiteSpace: 'pre-wrap', marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
-{JSON.stringify(validationResult, null, 2)}
-                          </pre>
-                        </div>
-                      )}
+                {propsTab === 'validate' && (
+                  <div>
+                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Validation</div>
+                    <div style={{ marginBottom: 10 }}>
+                      <button className="launch-btn" onClick={() => runValidation()}>Run Validation</button>
+                      <button className="studio-btn" onClick={() => setValidationResult(null)}>Clear</button>
                     </div>
-                  )}
-                </div>
+
+                    {!validationResult && <div style={{ color: 'var(--text-muted)' }}>No validation run yet. Click "Run Validation".</div>}
+
+                    {validationResult && (
+                      <div style={{ fontSize: 13 }}>
+                        {validationResult.ok ? <div style={{ color: 'var(--success)' }}>OK</div> : <div style={{ color: 'var(--danger)' }}>Issues found</div>}
+                        <pre style={{ whiteSpace: 'pre-wrap', marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+{JSON.stringify(validationResult, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Environment */}
+                {propsTab === 'environment' && (
+                  <div>
+                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Environment / HDR</div>
+
+                    <div style={{ marginBottom: 12 }}>
+                      <label style={{ display: 'block', fontSize: 12 }}>Background Color</label>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <input type="color" value={envColor} onChange={(e) => { setEnvColor(e.target.value); }} />
+                        <button className="studio-btn" onClick={() => applyEnvironmentColor(envColor)}>Apply Color</button>
+                      </div>
+                    </div>
+
+                    <div style={{ marginBottom: 12 }}>
+                      <label style={{ display: 'block', fontSize: 12 }}>Upload HDR / Equirectangular</label>
+                      <input type="file" accept=".hdr,.exr,.jpg,.png,.jpeg" onChange={(e) => { const f = e.target.files?.[0]; if (f) applyEnvironmentFromFile(f); }} />
+                      <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+                        <button className="studio-btn" onClick={() => { /* example preset: use color as env*/ applyEnvironmentColor(envColor); }}>Apply simple color</button>
+                        <button className="studio-btn" onClick={() => { pushToast({ type: "info", message: "Hint: upload .hdr for PBR reflections (PMREM applied when available)" }) }}>Help</button>
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: 6, marginBottom: 12 }}>
+                      <label style={{ display: 'block', fontSize: 12 }}>Environment Intensity</label>
+                      <input type="range" min="0" max="4" step="0.01" value={envIntensity} onChange={(e) => {
+                        const v = parseFloat(e.target.value); setEnvIntensity(v);
+                        try {
+                          const scene = workspaceRef.current?.scene;
+                          if (scene && scene.environment) {
+                            // environment intensity is material-driven; adjust via envMap intensity on materials
+                            scene.traverse((n) => {
+                              if (n.isMesh && n.material) {
+                                const mats = Array.isArray(n.material) ? n.material : [n.material];
+                                mats.forEach(m => {
+                                  if (m && typeof m.envMapIntensity === 'number') m.envMapIntensity = v;
+                                  if (m && typeof m.needsUpdate !== 'undefined') m.needsUpdate = true;
+                                });
+                              }
+                            });
+                          }
+                        } catch (e) {}
+                      }} />
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                      <button className="studio-btn" onClick={() => optimizeForLocalEdit()}>Optimize for local edit</button>
+                      <button className="studio-btn" onClick={() => toggleShadows(false)}>Shadows Off</button>
+                      <button className="studio-btn" onClick={() => toggleShadows(true)}>Shadows On</button>
+                      <button className="studio-btn" onClick={() => toggleBloom(!bloomEnabled)}>{bloomEnabled ? 'Bloom Off' : 'Bloom On'}</button>
+                    </div>
+                  </div>
+                )}
               </div>
 
             </div>

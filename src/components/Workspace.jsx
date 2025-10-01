@@ -5,20 +5,26 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader";
+import { KTX2Loader } from "three/examples/jsm/loaders/KTX2Loader";
+import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter";
 import { MeshBVH, acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "three-mesh-bvh";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass";
+import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass";
+import { FXAAShader } from "three/examples/jsm/shaders/FXAAShader";
 import { useDrop } from "react-dnd";
 import { PALETTE_TYPE } from "./Palette";
 import EventBus from "../utils/EventBus";
 import { SceneGraphStore } from "../store/SceneGraphStore";
 
 /*
-  Workspace.jsx — extended + fixes
-  - shared DRACOLoader instance (dracoRef) and disposal on unmount
-  - getUserGroup(scene?) helper to normalize _userGroup / _user_group access
-  - WeakMap (materialOriginalsRef) to store/restore emissive without polluting userData
-  - robust blob URL tracking / revoke
-  - preserved original architecture and history logic
+  Workspace.jsx — updated
+  - reused GLTF/DRACO/KTX2 loaders
+  - composer (bloom + FXAA) + render-on-demand
+  - applyTextureToSelection and loadEnvironmentFromHDR helpers
+  - preserves your sculpting, BVH, history, multi-select, outliner, etc.
 */
 
 const HISTORY_LIMIT = 200;
@@ -36,18 +42,23 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   const orbitRef = useRef(null);
   const transformRef = useRef(null);
 
+  const composerRef = useRef(null);
+  const gltfLoaderRef = useRef(null);
+  const dracoRef = useRef(null);
+  const ktx2Ref = useRef(null);
+
   const raycasterRef = useRef(new THREE.Raycaster());
   const mouseRef = useRef(new THREE.Vector2());
   const nameCountRef = useRef(1);
   const blobUrlsRef = useRef(new Set());
-
-  // NEW: shared DRACO loader + WeakMap for material originals
-  const dracoRef = useRef(null);
   const materialOriginalsRef = useRef(new WeakMap());
 
   const [selectedInternal, setSelectedInternal] = useState(null);
   const [toolbarPos, setToolbarPos] = useState({ x: -999, y: -999 });
   const [transformMode, setTransformModeState] = useState("translate");
+
+  // render-on-demand flag
+  const needsRenderRef = useRef(true);
 
   // simple scene-version counter — increment whenever scene changes
   const sceneVersionRef = useRef(0);
@@ -70,7 +81,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     }
   }
   class HistoryManager {
-    constructor(limit = 200) {
+    constructor(limit = HISTORY_LIMIT) {
       this.limit = limit;
       this.stack = [];
       this.index = -1;
@@ -194,11 +205,11 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-  // --- Sculpting integration (paste after clamp) ---
+  // --- Sculpting integration (same as you provided) ---
   const sculptStateRef = useRef({
     active: false,
     target: null,
-    mode: 'inflate', // inflate | deflate | grab | smooth | pinch | flatten
+    mode: 'inflate',
     radius: 0.25,
     strength: 0.6,
     symmetry: { x: false, y: false, z: false },
@@ -208,7 +219,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     undoTmp: null,
   });
 
-  // Build adjacency (vertex neighbors) for BufferGeometry
   const buildVertexNeighbors = (geometry) => {
     if (!geometry || !geometry.isBufferGeometry) return [];
     const posAttr = geometry.attributes.position;
@@ -237,14 +247,11 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     return neighbors.map((s) => Array.from(s));
   };
 
-  // falloff curve (cosine-like)
   const falloff = (t) => {
     const x = Math.max(0, Math.min(1, t));
-    // 1 at center, 0 at radius
     return 0.5 * (1 + Math.cos(Math.PI * Math.min(1, x)));
   };
 
-  // apply brush at a world point
   const applyBrushToMesh = (mesh, worldPoint, opts = {}) => {
     if (!mesh || !mesh.geometry || !mesh.geometry.isBufferGeometry) return null;
     const geometry = mesh.geometry;
@@ -274,7 +281,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
       if (dist > radius) continue;
       const t = dist / radius;
-      const w = falloff(1 - t); // stronger at center
+      const w = falloff(1 - t);
 
       let nx = normals[ix], ny = normals[ix + 1], nz = normals[ix + 2];
       const nl = Math.hypot(nx, ny, nz) || 1;
@@ -291,7 +298,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       }
 
       const sign = (mode === 'deflate') ? -1 : 1;
-      const delta = strength * sign * w * 0.08; // tuned scale
+      const delta = strength * sign * w * 0.08;
 
       if (!changed.has(i)) changed.set(i, [vx, vy, vz]);
 
@@ -300,7 +307,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       positions[ix + 2] = vz + dirz * delta;
     }
 
-    // smoothing pass for smooth mode
     if (mode === 'smooth') {
       const out = new Float32Array(positions.length);
       out.set(positions);
@@ -329,10 +335,10 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
     try { ensureBVHForObject(mesh); } catch (e) {}
 
+    needsRenderRef.current = true;
     return { mesh, geometry, changed };
   };
 
-  // push sculpt command (undo/redo)
   const pushSculptCommand = (mesh, changedMap, label = 'sculpt') => {
     if (!mesh || !mesh.geometry || !changedMap || changedMap.size === 0) return;
     try {
@@ -353,6 +359,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
           }
           pos.needsUpdate = true; geometry.computeVertexNormals && geometry.computeVertexNormals();
           ensureBVHForObject(mesh); bumpSceneVersion('sculpt-redo');
+          needsRenderRef.current = true;
         },
         () => {
           for (const [i, v] of undoSnapshot) {
@@ -361,13 +368,13 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
           }
           pos.needsUpdate = true; geometry.computeVertexNormals && geometry.computeVertexNormals();
           ensureBVHForObject(mesh); bumpSceneVersion('sculpt-undo');
+          needsRenderRef.current = true;
         },
         label
       ));
     } catch (e) { console.warn('pushSculptCommand failed', e); }
   };
 
-  // start / stop sculpt state
   const startSculptingInternal = (mesh, { mode = 'inflate', radius = 0.25, strength = 0.6 } = {}) => {
     if (!mesh || !mesh.geometry) return false;
     sculptStateRef.current.active = true;
@@ -381,8 +388,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     try { mesh.geometry.computeVertexNormals?.(); } catch(e){}
     try { ensureBVHForObject(mesh); } catch(e){}
     bumpSceneVersion('sculpt-start');
-    // disable transform/orbit while sculpting
     try { orbitRef.current && (orbitRef.current.enabled = false); transformRef.current && (transformRef.current.enabled = false); } catch (e) {}
+    needsRenderRef.current = true;
     return true;
   };
   const stopSculptingInternal = () => {
@@ -394,9 +401,10 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     sculptStateRef.current.undoTmp = null;
     bumpSceneVersion('sculpt-stop');
     try { orbitRef.current && (orbitRef.current.enabled = true); transformRef.current && (transformRef.current.enabled = true); } catch (e) {}
+    needsRenderRef.current = true;
   };
 
-  // pointer handlers
+  // pointer handlers for sculpting
   const onSculptPointerDown = (event) => {
     if (!sculptStateRef.current.active) return;
     sculptStateRef.current.pointerDown = true;
@@ -413,7 +421,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       const res = applyBrushToMesh(mesh, worldPoint, { radius: sculptStateRef.current.radius, strength: sculptStateRef.current.strength, mode: sculptStateRef.current.mode, viewDir: cameraRef.current.getWorldDirection(new THREE.Vector3()).clone() });
       if (res && res.changed && res.changed.size > 0) {
         sculptStateRef.current.undoTmp = res.changed;
-        // We'll push a command at pointerup to group the stroke into one undo
       }
     } catch (e) { console.warn('sculpt pointerdown', e); }
   };
@@ -451,21 +458,21 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     }
   };
 
-  // attach sculpt pointer listeners (separate effect)
   useEffect(() => {
-    const el = rendererRef.current?.domElement;
-    if (!el) return;
-    el.addEventListener('pointerdown', onSculptPointerDown);
-    el.addEventListener('pointermove', onSculptPointerMove);
+    const el = () => rendererRef.current?.domElement;
+    const dom = rendererRef.current?.domElement;
+    if (!dom) return;
+    dom.addEventListener('pointerdown', onSculptPointerDown);
+    dom.addEventListener('pointermove', onSculptPointerMove);
     window.addEventListener('pointerup', onSculptPointerUp);
     return () => {
-      el.removeEventListener('pointerdown', onSculptPointerDown);
-      el.removeEventListener('pointermove', onSculptPointerMove);
+      dom.removeEventListener('pointerdown', onSculptPointerDown);
+      dom.removeEventListener('pointermove', onSculptPointerMove);
       window.removeEventListener('pointerup', onSculptPointerUp);
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // attach once (dom will be present after mount)
 
-  // convenience API setters for toolbar (used below in useImperativeHandle)
   const setSculptRadius = (r) => { sculptStateRef.current.radius = r; };
   const setSculptStrength = (s) => { sculptStateRef.current.strength = s; };
   const setSculptMode = (m) => { sculptStateRef.current.mode = m; };
@@ -498,7 +505,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     return null;
   };
 
-  // Helper: ensure a consistent user-group container on the scene
   const getUserGroup = (scene = sceneRef.current) => {
     if (!scene) return null;
     if (!scene._user_group && !scene._userGroup) {
@@ -510,10 +516,11 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     return scene._user_group ?? scene._userGroup;
   };
 
-  // ---------- Init Scene ----------
+  // ---------- Init Scene & Renderer ----------
   useEffect(() => {
     if (!canvasRef.current) return;
 
+    // Scene
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0a0a1a);
     sceneRef.current = scene;
@@ -530,20 +537,25 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     sceneRef.current._editorGroup = editorGroup;
     sceneRef.current._userGroup = userGroup;
 
+    // Camera
     const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 2000);
     camera.position.set(3, 3, 6);
     cameraRef.current = camera;
 
+    // Renderer
     const renderer = new THREE.WebGLRenderer({ antialias: true, canvas: canvasRef.current });
     renderer.setPixelRatio(window.devicePixelRatio || 1);
     renderer.shadowMap.enabled = true;
     if (THREE.sRGBEncoding) renderer.outputEncoding = THREE.sRGBEncoding;
     rendererRef.current = renderer;
 
+    // Orbit
     const orbit = new OrbitControls(camera, renderer.domElement);
     orbit.enableDamping = true;
     orbitRef.current = orbit;
+    orbit.addEventListener('change', () => { needsRenderRef.current = true; });
 
+    // Transform
     const transform = new TransformControls(camera, renderer.domElement);
     transform.addEventListener("dragging-changed", (e) => {
       orbit.enabled = !e.value;
@@ -561,7 +573,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
           } else transformStartRef.current = null;
         } catch (err) { transformStartRef.current = null; }
 
-        // Emit transform:started so external modules (Studio / HistoryEngine) can capture "before"
         try {
           const attached = transformRef.current?.object ?? transform.object;
           const ids = attached ? [attached.uuid] : [];
@@ -578,7 +589,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       }
     });
 
-    transform.addEventListener("change", () => updateToolbarPosition());
+    transform.addEventListener("change", () => { updateToolbarPosition(); needsRenderRef.current = true; });
     transform.addEventListener("mouseUp", () => {
       if (transformDirtyRef.current) {
         try {
@@ -606,7 +617,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
               "transform"
             ));
 
-            // Emit transform:ended with before/after so other modules can produce full TransformCommand
             try {
               const ids = [end.uuid];
               const before = {
@@ -627,6 +637,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
             } catch (e) { /* ignore */ }
 
             bumpSceneVersion('transform');
+            needsRenderRef.current = true;
           }
         } catch (e) { console.warn("Transform commit failed", e); }
         transformDirtyRef.current = false;
@@ -640,6 +651,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     editorGroup.add(transform);
     transformRef.current = transform;
 
+    // Ambient + editor lights + helpers
     const amb = new THREE.AmbientLight(0xffffff, 0.45);
     amb.name = "_ambient_light";
     const hemi = new THREE.HemisphereLight(0x606080, 0x202020, 0.4);
@@ -659,10 +671,47 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     selectionBox.visible = false;
     editorGroup.add(selectionBox);
 
+    // --- composer/postprocessing setup (bloom + fxaa)
+    try {
+      const composer = new EffectComposer(renderer);
+      composer.setSize(containerRef.current ? containerRef.current.clientWidth : 800, containerRef.current ? containerRef.current.clientHeight : 600);
+      const rp = new RenderPass(sceneRef.current, cameraRef.current);
+      composer.addPass(rp);
+      const bloom = new UnrealBloomPass(new THREE.Vector2(containerRef.current ? containerRef.current.clientWidth : 800, containerRef.current ? containerRef.current.clientHeight : 600), 0.35, 0.6, 0.9);
+      bloom.threshold = 0.9; bloom.strength = 0.55; bloom.radius = 0.3;
+      composer.addPass(bloom);
+      const fxaa = new ShaderPass(FXAAShader);
+      const pr = Math.max(1, window.devicePixelRatio || 1);
+      fxaa.material.uniforms['resolution'].value.x = 1 / ((containerRef.current ? containerRef.current.clientWidth : 800) * pr);
+      fxaa.material.uniforms['resolution'].value.y = 1 / ((containerRef.current ? containerRef.current.clientHeight : 600) * pr);
+      composer.addPass(fxaa);
+      composerRef.current = composer;
+    } catch (e) { console.warn('Composer init failed', e); composerRef.current = null; }
+
+    // --- shared loaders (DRACO/KTX2/GLTF) for reuse ---
+    try {
+      if (!dracoRef.current) {
+        dracoRef.current = new DRACOLoader();
+        dracoRef.current.setDecoderPath("/draco/"); // ensure decoders are served from public/draco
+      }
+      const gltfLoader = new GLTFLoader();
+      gltfLoader.setDRACOLoader(dracoRef.current);
+      // optional KTX2 (if you add basis transcoder in public/basis)
+      try {
+        ktx2Ref.current = new KTX2Loader().setTranscoderPath("/basis/").detectSupport(renderer);
+        gltfLoader.setKTX2Loader(ktx2Ref.current);
+      } catch (e) { /* optional */ }
+      gltfLoaderRef.current = gltfLoader;
+    } catch (e) {
+      console.warn("Shared loader init failed", e);
+      gltfLoaderRef.current = null;
+    }
+
+    // Pointer selection / hover / dblclick + render loop
     const onPointerDown = (event) => {
       if (!rendererRef.current || !cameraRef.current) return;
       if (transformDirtyRef.current) return;
-      if (sculptStateRef.current?.active) return; // ignore selection while sculpting
+      if (sculptStateRef.current?.active) return;
 
       const rect = rendererRef.current.domElement.getBoundingClientRect();
       mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -693,6 +742,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
         clearSelection();
         clearMultiSelectionIfAny();
       }
+      needsRenderRef.current = true;
     };
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
 
@@ -757,11 +807,12 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
         const offset = new THREE.Vector3(0, 1.8, 3).applyQuaternion(cam.quaternion);
         cam.position.copy(pos).add(offset);
         orbitRef.current.target.copy(pos);
+        needsRenderRef.current = true;
       }
     };
     renderer.domElement.addEventListener("dblclick", onDblClick);
 
-    // Render loop
+    // Render loop (rAF but render only when needed)
     let mounted = true;
     const tick = () => {
       if (!mounted) return;
@@ -782,7 +833,14 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
         }
       } catch (e) {}
 
-      renderer.render(scene, cameraRef.current);
+      if (needsRenderRef.current) {
+        try {
+          if (composerRef.current) composerRef.current.render();
+          else rendererRef.current.render(sceneRef.current, cameraRef.current);
+        } catch (e) { console.warn("Render failed:", e); }
+        needsRenderRef.current = false;
+      }
+
       const now = Date.now();
       if (now - lastToolbarUpdate.current > THROTTLE_MS) {
         updateToolbarPosition();
@@ -798,6 +856,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       renderer.setSize(w, h, false);
       cameraRef.current.aspect = w / h;
       cameraRef.current.updateProjectionMatrix();
+      if (composerRef.current) composerRef.current.setSize(w, h);
+      needsRenderRef.current = true;
     };
     window.addEventListener("resize", doResize);
     doResize();
@@ -877,8 +937,12 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
       // dispose DRACOLoader instance if created
       try { dracoRef.current?.dispose?.(); dracoRef.current = null; } catch (e) {}
+      try { ktx2Ref.current?.dispose?.(); ktx2Ref.current = null; } catch (e) {}
 
-      // revoke any created blob URLs (GLTF loads / exports)
+      // dispose composer
+      try { composerRef.current?.dispose?.(); composerRef.current = null; } catch (e) {}
+
+      // revoke any created blob URLs (GLTF loads / exports / textures)
       try {
         for (const url of blobUrlsRef.current) {
           try { URL.revokeObjectURL(url); } catch (e) {}
@@ -904,6 +968,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
     markSelectionVisual(obj, true);
     updateToolbarPosition();
+    needsRenderRef.current = true;
   };
 
   const clearSelection = () => {
@@ -915,6 +980,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
     const selBox = sceneRef.current?._editorGroup?.getObjectByName("_selection_box");
     if (selBox) selBox.visible = false;
+    needsRenderRef.current = true;
   };
 
   const markSelectionVisual = (obj, selectedFlag) => {
@@ -933,7 +999,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       }
     } catch (err) {}
 
-    // Use WeakMap to remember original material emissive values
     obj.traverse((n) => {
       if (n.isMesh && n.material) {
         try {
@@ -959,6 +1024,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     });
 
     obj.userData.__selected = !!selectedFlag;
+    needsRenderRef.current = true;
   };
 
   // ---------- Multi-select helpers ----------
@@ -1033,6 +1099,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
     transformGroupRef.current = group;
     try { transformRef.current.attach(group); } catch (e) {}
+    needsRenderRef.current = true;
   };
 
   const dissolveTransformGroup = () => {
@@ -1059,6 +1126,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       const first = set.values().next().value;
       if (first) try { transformRef.current.attach(first); } catch (e) {}
     }
+    needsRenderRef.current = true;
   };
 
   const worldPointAtMouse = (client) => {
@@ -1121,12 +1189,10 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
     try { ensureBVHForObject(obj); } catch (e) {}
 
-    // register with SceneGraphStore so Studio/outliner/stats stay in sync
     try {
       SceneGraphStore.addObject?.(obj.uuid, obj, { name: obj.name, type: name });
     } catch (e) { /* ignore if store missing */ }
 
-    // notify listeners
     try { EventBus?.emit?.("scene:updated", { id: obj.uuid, type: "add" }); } catch (e) {}
 
     selectObject(obj);
@@ -1161,6 +1227,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       ));
     } catch (e) {}
 
+    needsRenderRef.current = true;
     return obj;
   };
 
@@ -1198,17 +1265,15 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     return () => { el.removeEventListener('drop', handleDrop); el.removeEventListener('dragover', handleDragOver); };
   }, []);
 
-  // ---------- Add GLTF ----------
+  // ---------- Add GLTF (uses shared gltfLoaderRef) ----------
   const addGLTF = (input, point = null, onProgress = null) => {
     return new Promise((resolve, reject) => {
-      const loader = new GLTFLoader();
+      const loader = gltfLoaderRef.current || new GLTFLoader();
+      // ensure DRACO attached if available
       try {
-        if (!dracoRef.current) dracoRef.current = new DRACOLoader();
-        loader.setDRACOLoader(dracoRef.current);
-      } catch (e) {
-        // if DRACOLoader unavailable, continue without it
-        console.warn("DRACOLoader init failed or missing", e);
-      }
+        if (dracoRef.current && loader.setDRACOLoader) loader.setDRACOLoader(dracoRef.current);
+      } catch (e) {}
+
       setLoading(true);
 
       const addNodeToScene = (sceneNode) => {
@@ -1260,7 +1325,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
             });
           } catch (e) {}
 
-          // notify listeners
           try { EventBus?.emit?.("scene:updated", { id: sceneNode.uuid, type: "import" }); } catch (e) {}
 
           ensureBVHForObject(sceneNode);
@@ -1303,6 +1367,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
           console.warn("addNodeToScene error", err);
         } finally {
           setLoading(false);
+          needsRenderRef.current = true;
         }
       };
 
@@ -1390,14 +1455,12 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
       exportScene.updateMatrixWorld(true);
 
-      // embed images so exported GLB is self-contained
       exporter.parse(exportScene, (result) => {
         try {
           let blob;
           if (binary && result instanceof ArrayBuffer) blob = new Blob([result], { type: 'model/gltf-binary' });
           else { const str = JSON.stringify(result, null, 2); blob = new Blob([str], { type: 'application/json' }); }
 
-          // trigger download for compatibility
           const link = document.createElement('a');
           const url = URL.createObjectURL(blob);
           try { blobUrlsRef.current.add(url); } catch (e) {}
@@ -1443,6 +1506,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     if (snapshotHistoryRef.current.length > HISTORY_LIMIT) snapshotHistoryRef.current.shift();
     snapshotHistoryIndexRef.current = snapshotHistoryRef.current.length - 1;
     bumpSceneVersion('pushHistorySnapshot');
+    needsRenderRef.current = true;
   };
 
   const commitHistory = (label = "") => { pushHistorySnapshot(label); bumpSceneVersion('commitHistory'); };
@@ -1460,6 +1524,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     entry.snaps.forEach((snap) => { try { const obj = loader.parse(snap); obj.userData.__objekta = true; if (userGroup) userGroup.add(obj); else sceneRef.current.add(obj); ensureBVHForObject(obj); } catch (err) { console.error('Failed to parse history snapshot', err); } });
     clearSelection();
     bumpSceneVersion('loadHistory');
+    needsRenderRef.current = true;
   };
 
   // ---------- Undo/Redo ----------
@@ -1521,6 +1586,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       ));
     } catch (e) { console.error(e); }
     commitHistory("delete");
+    needsRenderRef.current = true;
   };
 
   const duplicateSelected = () => {
@@ -1573,6 +1639,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       } catch (e) {}
       commitHistory('duplicate');
     } catch (err) { console.error('duplicate error', err); }
+    needsRenderRef.current = true;
   };
 
   // ---------- Toolbar ----------
@@ -1611,6 +1678,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     commitHistory('load');
     bumpSceneVersion('loadFromData');
     try { EventBus?.emit?.("scene:updated", { type: "load" }); } catch (e) {}
+    needsRenderRef.current = true;
   };
 
   const resetScene = ({ skipConfirm } = {}) => {
@@ -1629,6 +1697,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       if (SceneGraphStore.objects) SceneGraphStore.objects = {};
     } catch (e) {}
     try { EventBus?.emit?.("scene:updated", { type: "reset" }); } catch (e) {}
+    needsRenderRef.current = true;
   };
 
   // ---------- Helpers used by ObjectProperties ----------
@@ -1639,12 +1708,13 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     bumpSceneVersion('rename');
     try { SceneGraphStore.renameObject?.(selectedInternal.uuid, name); } catch (e) {}
     try { EventBus?.emit?.("scene:updated", { id: selectedInternal.uuid, type: "rename" }); } catch (e) {}
+    needsRenderRef.current = true;
   };
 
   // ---------- Transform batching (throttle / debounce) ----------
   const pendingTransformRef = useRef({ position: false, rotation: false, scale: false });
   const transformFlushTimerRef = useRef(null);
-  const TRANSFORM_FLUSH_MS = 100; // coalesce updates into 100ms windows (tweakable)
+  const TRANSFORM_FLUSH_MS = 100;
 
   const handleTransformChange = (prop, axis, val) => {
     if (!selectedInternal) return;
@@ -1668,11 +1738,13 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       pendingTransformRef.current = { position: false, rotation: false, scale: false };
       transformFlushTimerRef.current = null;
     }, TRANSFORM_FLUSH_MS);
+    needsRenderRef.current = true;
   };
 
   const toggleSnap = (enable) => {
     const transform = transformRef.current; if (!transform) return; if (typeof enable === 'boolean') snapRef.current.enabled = enable; else snapRef.current.enabled = !snapRef.current.enabled;
     if (snapRef.current.enabled) { transform.setTranslationSnap(snapRef.current.value); transform.setRotationSnap(THREE.MathUtils.degToRad(15)); } else { transform.setTranslationSnap(null); transform.setRotationSnap(null); }
+    needsRenderRef.current = true;
   };
 
   const setSnapValue = (val) => { snapRef.current.value = val; if (snapRef.current.enabled && transformRef.current) transformRef.current.setTranslationSnap(snapRef.current.value); };
@@ -1709,15 +1781,83 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     }
   };
 
+  // ---------- New helpers: apply texture & HDR env loader ----------
+  const applyTextureToSelection = (file) => {
+    return new Promise((resolve, reject) => {
+      if (!file) return reject(new Error("No file provided"));
+      if (!selectedInternal && selectedSetRef.current.size === 0) return reject(new Error("No selection"));
+      const url = URL.createObjectURL(file);
+      try { blobUrlsRef.current.add(url); } catch(e) {}
+      const loader = new THREE.TextureLoader();
+      loader.load(url, (tex) => {
+        tex.encoding = THREE.sRGBEncoding;
+        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        const applyTo = selectedSetRef.current.size ? Array.from(selectedSetRef.current) : [selectedInternal];
+        applyTo.forEach(o => {
+          o.traverse(n => {
+            if (n.isMesh) {
+              const mats = Array.isArray(n.material) ? n.material : [n.material];
+              mats.forEach(m => {
+                try { m.map && m.map.dispose && m.map.dispose(); } catch(e) {}
+                m.map = tex;
+                m.needsUpdate = true;
+              });
+            }
+          });
+        });
+        needsRenderRef.current = true;
+        resolve(tex);
+      }, undefined, (err) => {
+        try { URL.revokeObjectURL(url); blobUrlsRef.current.delete(url); } catch(e) {}
+        reject(err);
+      });
+    });
+  };
+
+  const loadEnvironmentFromHDR = (fileOrUrl) => {
+    return new Promise((resolve, reject) => {
+      const loader = new RGBELoader();
+      const renderer = rendererRef.current;
+      if (!renderer) return reject(new Error("Renderer not ready"));
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      pmrem.compileEquirectangularShader();
+
+      const onLoaded = (tex) => {
+        const env = pmrem.fromEquirectangular(tex).texture;
+        sceneRef.current.environment = env;
+        tex.dispose();
+        pmrem.dispose();
+        needsRenderRef.current = true;
+        resolve(env);
+      };
+
+      if (typeof fileOrUrl === "string") {
+        loader.load(fileOrUrl, onLoaded, undefined, (err) => reject(err));
+      } else {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const arr = reader.result;
+          const blob = new Blob([arr], { type: fileOrUrl.type || "application/octet-stream" });
+          const url = URL.createObjectURL(blob);
+          try { blobUrlsRef.current.add(url); } catch (e) {}
+          loader.load(url, (tex) => {
+            onLoaded(tex);
+            try { URL.revokeObjectURL(url); blobUrlsRef.current.delete(url); } catch (e) {}
+          }, undefined, (err) => { try { URL.revokeObjectURL(url); blobUrlsRef.current.delete(url); } catch (e) {}; reject(err); });
+        };
+        reader.readAsArrayBuffer(fileOrUrl);
+      }
+    });
+  };
+
   // ---------- API ----------
   useImperativeHandle(ref, () => ({
     addItem, addGLTF, exportGLTF, undo, redo, deleteSelected,
     setTransformMode: (mode) => setTransformModeState(mode),
     serializeScene, loadFromData, resetScene,
-    onResize: () => { if (!containerRef.current || !rendererRef.current || !cameraRef.current) return; const w = containerRef.current.clientWidth; const h = containerRef.current.clientHeight; rendererRef.current.setSize(w, h, false); cameraRef.current.aspect = w / h; cameraRef.current.updateProjectionMatrix(); },
+    onResize: () => { if (!containerRef.current || !rendererRef.current || !cameraRef.current) return; const w = containerRef.current.clientWidth; const h = containerRef.current.clientHeight; rendererRef.current.setSize(w, h, false); cameraRef.current.aspect = w / h; cameraRef.current.updateProjectionMatrix(); if (composerRef.current) composerRef.current.setSize(w, h); },
     renameSelected, handleTransformChange, toggleSnap, setSnapValue, duplicateSelected,
     selectObject,
-    // sculpt API (real implementations)
     startSculpting: (mesh = null, opts = {}) => {
       const target = mesh || selectedInternal;
       if (!target) {
@@ -1738,6 +1878,9 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     },
     getSceneVersion: () => sceneVersionRef.current,
     get scene() { return sceneRef.current; },
+    // new helpers
+    applyTextureToSelection,
+    loadEnvironmentFromHDR,
   }));
 
   try {
@@ -1761,7 +1904,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
         setItems(list);
       };
 
-      // initial
       scanOnce();
 
       const iv = setInterval(() => {
@@ -1775,9 +1917,9 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       return () => { mounted = false; clearInterval(iv); };
     }, []);
 
-    const toggleVisibility = (obj) => { obj.visible = !obj.visible; commitHistory('vis-toggle'); bumpSceneVersion('visibility'); };
-    const removeObject = (obj) => { try { disposeObject(obj); } catch (e) {} if (obj.parent) obj.parent.remove(obj); commitHistory('delete'); bumpSceneVersion('removeObject'); };
-    const renameObject = (obj) => { const nv = prompt('Rename object', obj.name || ''); if (nv && nv !== obj.name) { obj.name = nv; commitHistory('rename'); bumpSceneVersion('renameObject'); } };
+    const toggleVisibility = (obj) => { obj.visible = !obj.visible; commitHistory('vis-toggle'); bumpSceneVersion('visibility'); needsRenderRef.current = true; };
+    const removeObject = (obj) => { try { disposeObject(obj); } catch (e) {} if (obj.parent) obj.parent.remove(obj); commitHistory('delete'); bumpSceneVersion('removeObject'); needsRenderRef.current = true; };
+    const renameObject = (obj) => { const nv = prompt('Rename object', obj.name || ''); if (nv && nv !== obj.name) { obj.name = nv; commitHistory('rename'); bumpSceneVersion('renameObject'); needsRenderRef.current = true; } };
 
     return (
       <div style={{ overflowY: 'auto', padding: 8, height: '100%' }}>
@@ -1823,7 +1965,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       if (foundCol) setColor(foundCol);
     }, [selected]);
 
-    const applyName = (v) => { if (!selected) return; selected.name = v; commitHistory('rename'); bumpSceneVersion('renameProp'); };
+    const applyName = (v) => { if (!selected) return; selected.name = v; commitHistory('rename'); bumpSceneVersion('renameProp'); needsRenderRef.current = true; };
     const applyColor = (hex) => {
       if (!selected) return;
       selected.traverse((n) => {
@@ -1836,6 +1978,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       });
       commitHistory('material-color');
       bumpSceneVersion('materialColor');
+      needsRenderRef.current = true;
     };
     const applyRoughMetal = (r, m) => {
       if (!selected) return;
@@ -1852,6 +1995,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       });
       commitHistory('material-prop');
       bumpSceneVersion('materialProp');
+      needsRenderRef.current = true;
     };
 
     if (!selected) return <div style={{ padding: 12 }}>No selection</div>;
@@ -1881,14 +2025,13 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
         </div>
 
         <div style={{ marginTop: 12 }}>
-          <button onClick={() => { selected.visible = !selected.visible; commitHistory('vis-toggle'); bumpSceneVersion('propVisibility'); }}>{selected.visible ? 'Hide' : 'Show'}</button>
+          <button onClick={() => { selected.visible = !selected.visible; commitHistory('vis-toggle'); bumpSceneVersion('propVisibility'); needsRenderRef.current = true; }}>{selected.visible ? 'Hide' : 'Show'}</button>
           <button style={{ marginLeft: 8 }} onClick={() => { if (confirm('Delete selection?')) { try { disposeObject(selected); } catch (e) {} if (selected.parent) selected.parent.remove(selected); clearSelection(); commitHistory('delete'); bumpSceneVersion('propDelete'); } }}>Delete</button>
         </div>
       </div>
     );
   };
 
-  // Panel container uses panelTopOffset prop so host (Studio) can reserve toolbar space
   const PanelContainerInner = () => {
     const [tab, setTab] = useState('outliner');
     const topValue = typeof panelTopOffset === 'number' ? panelTopOffset : 12;
