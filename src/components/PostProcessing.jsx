@@ -1,96 +1,62 @@
-// src/components/CameraControls.jsx
+// src/components/PostProcessing.jsx
 import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass";
 
 /**
- * initCameraControls({ camera, domElement, autoRotate=false })
- * returns { controls, dispose, resetView, frameObject }
- *
- * Usage:
- *   const { controls, resetView, frameObject, dispose } = initCameraControls({ camera, domElement });
+ * setupPostProcessing({ renderer, scene, camera, width, height, options })
+ * returns { composer, render(delta), setSize(w,h), dispose() }
  */
-export function initCameraControls({ camera, domElement, autoRotate = false, damping = 0.08 }) {
-  if (!camera || !domElement) throw new Error("camera and domElement required");
+export function setupPostProcessing({ renderer, scene, camera, width = 800, height = 600, options = {} } = {}) {
+  if (!renderer || !scene || !camera) throw new Error("renderer, scene, camera required");
 
-  const controls = new OrbitControls(camera, domElement);
-  controls.enableDamping = true;
-  controls.dampingFactor = damping;
-  controls.enablePan = true;
-  controls.screenSpacePanning = false;
-  controls.minDistance = 0.1;
-  controls.maxDistance = 1000;
-  controls.target.set(0, 0.7, 0);
-  controls.update();
-  controls.autoRotate = !!autoRotate;
+  let composer;
+  try {
+    composer = new EffectComposer(renderer);
+    composer.setSize(width, height);
 
-  // convenience: store initial state for reset
-  const initial = {
-    position: camera.position.clone(),
-    target: controls.target.clone(),
-    zoom: camera.zoom,
-  };
+    const renderPass = new RenderPass(scene, camera);
+    composer.addPass(renderPass);
 
-  function resetView({ position = null, target = null } = {}) {
-    try {
-      if (position && position.isVector3) camera.position.copy(position);
-      else camera.position.copy(initial.position);
+    // bloom params
+    const strength = options.bloomStrength ?? 0.8;
+    const radius = options.bloomRadius ?? 0.5;
+    const threshold = options.bloomThreshold ?? 0.9;
 
-      if (target && target.isVector3) controls.target.copy(target);
-      else controls.target.copy(initial.target);
+    // UnrealBloomPass expects a Vector2 resolution first arg
+    const bloomPass = new UnrealBloomPass(new THREE.Vector2(width, height), strength, radius, threshold);
+    composer.addPass(bloomPass);
 
-      camera.updateProjectionMatrix();
-      controls.update();
-    } catch (e) { console.warn("resetView failed", e); }
+  } catch (err) {
+    // If any import/constructor fails, return a noop wrapper so app continues
+    console.warn("PostProcessing init failed:", err);
+    return {
+      composer: null,
+      render: () => {},
+      setSize: () => {},
+      dispose: () => {},
+    };
   }
 
-  // frameObject: move camera to fit an object (object3D)
-  function frameObject(object3D, { padding = 1.2, duration = 0 } = {}) {
-    if (!object3D) return;
-    // compute world bbox
-    const box = new THREE.Box3().setFromObject(object3D);
-    const size = box.getSize(new THREE.Vector3());
-    const center = box.getCenter(new THREE.Vector3());
+  function render(delta) {
+    composer.render(delta);
+  }
 
-    // If object is a single point/empty, fallback
-    const maxDim = Math.max(size.x, size.y, size.z, 0.0001);
-    const fov = camera.fov * (Math.PI / 180);
-    // distance from center needed to frame object
-    const distance = Math.abs((maxDim * padding) / Math.sin(fov / 2));
-
-    // move camera back along its forward vector
-    const dir = new THREE.Vector3();
-    camera.getWorldDirection(dir); // points -Z
-    // position the camera so it's 'distance' units from center along -dir
-    const newPos = center.clone().addScaledVector(dir, -distance);
-
-    // apply
-    if (duration > 0) {
-      // small smooth interpolation (vanilla, no tween lib)
-      const fromPos = camera.position.clone();
-      const fromTarget = controls.target.clone();
-      const start = performance.now();
-      const tick = () => {
-        const t = Math.min(1, (performance.now() - start) / duration);
-        camera.position.lerpVectors(fromPos, newPos, t);
-        controls.target.lerpVectors(fromTarget, center, t);
-        controls.update();
-        if (t < 1) requestAnimationFrame(tick);
-      };
-      tick();
-    } else {
-      camera.position.copy(newPos);
-      controls.target.copy(center);
-      controls.update();
-    }
+  function setSize(w, h) {
+    composer.setSize(w, h);
+    // some passes may need their own resize
+    try { if (composer.passes) composer.passes.forEach(p => p.setSize && p.setSize(w, h)); } catch (e) {}
   }
 
   function dispose() {
     try {
-      controls.dispose();
+      composer.passes?.forEach(p => { try { p.dispose && p.dispose(); } catch(e) {} });
+      composer?.dispose && composer.dispose();
     } catch (e) {}
   }
 
-  return { controls, resetView, frameObject, dispose };
+  return { composer, render, setSize, dispose };
 }
 
-export default initCameraControls;
+export default setupPostProcessing;
