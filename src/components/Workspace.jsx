@@ -1,30 +1,40 @@
 // src/components/Workspace.jsx
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState, useCallback } from "react";
 import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
-import { TransformControls } from "three/examples/jsm/controls/TransformControls";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
-import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader";
-import { KTX2Loader } from "three/examples/jsm/loaders/KTX2Loader";
-import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader";
-import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter";
+
+// three/examples imports MUST include .js for Vite
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js"; // (kept for safety in some code paths)
+import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
+import { KTX2Loader } from "three/examples/jsm/loaders/KTX2Loader.js";
+import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
+import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { MeshBVH, acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "three-mesh-bvh";
-import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer";
-import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass";
-import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass";
-import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass";
-import { FXAAShader } from "three/examples/jsm/shaders/FXAAShader";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
+import { FXAAShader } from "three/examples/jsm/shaders/FXAAShader.js";
+
 import { useDrop } from "react-dnd";
 import { PALETTE_TYPE } from "./Palette";
 import EventBus from "../utils/EventBus";
 import { SceneGraphStore } from "../store/SceneGraphStore";
 
+// ----- new component helpers you provided -----
+import initCameraControls from "../components/CameraControls"; // initCameraControls({ camera, domElement, autoRotate, damping })
+import setupEnvironment from "../components/EnvironmentSetup"; // setupEnvironment({ scene, renderer })
+import initGLBImporter from "../components/GLBImporter"; // initGLBImporter({ scene, domElement, onLoad })
+import setupDefaultLighting from "../components/LightingSetup"; // setupDefaultLighting(scene, renderer, opts)
+import createMaterialEditor from "../components/MaterialEditor"; // createMaterialEditor({ container, getSelectedMesh })
+import setupPostProcessing from "../components/PostProcessing"; // setupPostProcessing({ renderer, scene, camera, width, height, options })
+
 /*
-  Workspace.jsx — updated
-  - reused GLTF/DRACO/KTX2 loaders
-  - composer (bloom + FXAA) + render-on-demand
-  - applyTextureToSelection and loadEnvironmentFromHDR helpers
-  - preserves your sculpting, BVH, history, multi-select, outliner, etc.
+  Workspace.jsx — integrated version
+  - Original workspace logic (sculpting, BVH, history, transform, selection, GLTF import/export) preserved
+  - Hooked up external components/utilities provided by you:
+    CameraControls, EnvironmentSetup, GLBImporter, LightingSetup, MaterialEditor, PostProcessing
 */
 
 const HISTORY_LIMIT = 200;
@@ -41,6 +51,14 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   const rendererRef = useRef(null);
   const orbitRef = useRef(null);
   const transformRef = useRef(null);
+
+  // new helpers refs
+  const cameraControlsApiRef = useRef(null);
+  const lightingApiRef = useRef(null);
+  const envApiRef = useRef(null);
+  const glbImporterApiRef = useRef(null);
+  const materialEditorApiRef = useRef(null);
+  const postfxApiRef = useRef(null);
 
   const composerRef = useRef(null);
   const gltfLoaderRef = useRef(null);
@@ -74,12 +92,14 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
   // command history (preferred for undo/redo)
   class Cmd {
-    constructor(redoFn, undoFn, label = "") {
-      this.redo = redoFn;
-      this.undo = undoFn;
-      this.label = label;
-    }
+    constructor(redoFn, undoFn, label = "") { 
+    this.redo = redoFn;
+    this.undo = undoFn;
+    this.label = label;
+}
+ // placeholder to satisfy linter? we'll implement below
   }
+  
   class HistoryManager {
     constructor(limit = HISTORY_LIMIT) {
       this.limit = limit;
@@ -205,7 +225,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-  // --- Sculpting integration (same as you provided) ---
+  // --- Sculpting integration (kept from your code) ---
   const sculptStateRef = useRef({
     active: false,
     target: null,
@@ -459,19 +479,18 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   };
 
   useEffect(() => {
-    const el = () => rendererRef.current?.domElement;
-    const dom = rendererRef.current?.domElement;
-    if (!dom) return;
-    dom.addEventListener('pointerdown', onSculptPointerDown);
-    dom.addEventListener('pointermove', onSculptPointerMove);
+    const dom = () => rendererRef.current?.domElement;
+    const elem = rendererRef.current?.domElement;
+    if (!elem) return;
+    elem.addEventListener('pointerdown', onSculptPointerDown);
+    elem.addEventListener('pointermove', onSculptPointerMove);
     window.addEventListener('pointerup', onSculptPointerUp);
     return () => {
-      dom.removeEventListener('pointerdown', onSculptPointerDown);
-      dom.removeEventListener('pointermove', onSculptPointerMove);
+      elem.removeEventListener('pointerdown', onSculptPointerDown);
+      elem.removeEventListener('pointermove', onSculptPointerMove);
       window.removeEventListener('pointerup', onSculptPointerUp);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // attach once (dom will be present after mount)
+  }, []); // attach once
 
   const setSculptRadius = (r) => { sculptStateRef.current.radius = r; };
   const setSculptStrength = (s) => { sculptStateRef.current.strength = s; };
@@ -549,16 +568,25 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     if (THREE.sRGBEncoding) renderer.outputEncoding = THREE.sRGBEncoding;
     rendererRef.current = renderer;
 
-    // Orbit
-    const orbit = new OrbitControls(camera, renderer.domElement);
-    orbit.enableDamping = true;
-    orbitRef.current = orbit;
-    orbit.addEventListener('change', () => { needsRenderRef.current = true; });
+    // Camera controls (from your CameraControls helper)
+    try {
+      const camApi = initCameraControls({ camera, domElement: renderer.domElement, autoRotate: false, damping: 0.08 });
+      cameraControlsApiRef.current = camApi;
+      orbitRef.current = camApi.controls;
+      // listen to controls change to request render
+      camApi.controls.addEventListener && camApi.controls.addEventListener('change', () => { needsRenderRef.current = true; });
+    } catch (e) {
+      // fallback to OrbitControls
+      const orbit = new OrbitControls(camera, renderer.domElement);
+      orbit.enableDamping = true;
+      orbitRef.current = orbit;
+      orbit.addEventListener('change', () => { needsRenderRef.current = true; });
+    }
 
     // Transform
     const transform = new TransformControls(camera, renderer.domElement);
     transform.addEventListener("dragging-changed", (e) => {
-      orbit.enabled = !e.value;
+      orbitRef.current && (orbitRef.current.enabled = !e.value);
       transformDirtyRef.current = e.value;
       if (e.value) {
         try {
@@ -671,22 +699,23 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     selectionBox.visible = false;
     editorGroup.add(selectionBox);
 
-    // --- composer/postprocessing setup (bloom + fxaa)
+    // --- composer/postprocessing setup via helper
     try {
-      const composer = new EffectComposer(renderer);
-      composer.setSize(containerRef.current ? containerRef.current.clientWidth : 800, containerRef.current ? containerRef.current.clientHeight : 600);
-      const rp = new RenderPass(sceneRef.current, cameraRef.current);
-      composer.addPass(rp);
-      const bloom = new UnrealBloomPass(new THREE.Vector2(containerRef.current ? containerRef.current.clientWidth : 800, containerRef.current ? containerRef.current.clientHeight : 600), 0.35, 0.6, 0.9);
-      bloom.threshold = 0.9; bloom.strength = 0.55; bloom.radius = 0.3;
-      composer.addPass(bloom);
-      const fxaa = new ShaderPass(FXAAShader);
-      const pr = Math.max(1, window.devicePixelRatio || 1);
-      fxaa.material.uniforms['resolution'].value.x = 1 / ((containerRef.current ? containerRef.current.clientWidth : 800) * pr);
-      fxaa.material.uniforms['resolution'].value.y = 1 / ((containerRef.current ? containerRef.current.clientHeight : 600) * pr);
-      composer.addPass(fxaa);
-      composerRef.current = composer;
-    } catch (e) { console.warn('Composer init failed', e); composerRef.current = null; }
+      const postfx = setupPostProcessing({
+        renderer,
+        scene,
+        camera,
+        width: containerRef.current ? containerRef.current.clientWidth : 800,
+        height: containerRef.current ? containerRef.current.clientHeight : 600,
+        options: { bloomStrength: 0.55, bloomRadius: 0.3, bloomThreshold: 0.9 }
+      });
+      postfxApiRef.current = postfx;
+      composerRef.current = postfx.composer;
+    } catch (e) {
+      console.warn('Composer init failed', e);
+      composerRef.current = null;
+      postfxApiRef.current = null;
+    }
 
     // --- shared loaders (DRACO/KTX2/GLTF) for reuse ---
     try {
@@ -706,6 +735,67 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       console.warn("Shared loader init failed", e);
       gltfLoaderRef.current = null;
     }
+
+    // --- lighting + environment helpers
+    try {
+      lightingApiRef.current = setupDefaultLighting(scene, renderer, { addHelpers: false });
+      envApiRef.current = setupEnvironment({ scene, renderer });
+    } catch (e) {
+      console.warn('Lighting/Environment init failed', e);
+    }
+
+    // --- material editor UI
+    try {
+      if (containerRef.current) {
+        materialEditorApiRef.current = createMaterialEditor({
+          container: containerRef.current,
+          getSelectedMesh: () => {
+            // return first mesh found in selection
+            const sel = selectedInternal || null;
+            if (!sel) return null;
+            let found = null;
+            sel.traverse((n) => { if (!found && n.isMesh) found = n; });
+            return found;
+          }
+        });
+      }
+    } catch (e) { console.warn('Material editor init failed', e); }
+
+    // --- GLB importer helper (drag/drop + file input)
+    try {
+      if (containerRef.current) {
+        glbImporterApiRef.current = initGLBImporter({
+          scene,
+          domElement: containerRef.current,
+          onLoad: (gltf, meta) => {
+            try {
+              const root = gltf.scene || gltf.scenes?.[0] || gltf;
+              // simple add logic mirroring addGLTF's intent (scale/orient/center)
+              const box = new THREE.Box3().setFromObject(root);
+              const size = box.getSize(new THREE.Vector3());
+              const center = box.getCenter(new THREE.Vector3());
+              const maxDim = Math.max(size.x, size.y, size.z, 1);
+              if (maxDim > 0) {
+                const s = 2 / maxDim;
+                root.scale.setScalar(s);
+              }
+              root.traverse((child) => {
+                if (!child.userData) child.userData = {};
+                child.userData.__objekta = true;
+                if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
+              });
+              root.position.sub(center);
+              const ug = getUserGroup();
+              if (ug) ug.add(root); else scene.add(root);
+              try { root.traverse(n => { SceneGraphStore.addObject?.(n.uuid, n, { name: n.name, type: n.type }); }); } catch (e) {}
+              ensureBVHForObject(root);
+              selectObject(root);
+              bumpSceneVersion('import-glb-helper');
+            } catch (err) { console.warn('glb importer onLoad failed', err); }
+          }
+        });
+      }
+    } catch (e) { console.warn('GLB importer init failed', e); }
 
     // Pointer selection / hover / dblclick + render loop
     const onPointerDown = (event) => {
@@ -806,7 +896,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
         const cam = cameraRef.current;
         const offset = new THREE.Vector3(0, 1.8, 3).applyQuaternion(cam.quaternion);
         cam.position.copy(pos).add(offset);
-        orbitRef.current.target.copy(pos);
+        cameraControlsApiRef.current?.controls && (cameraControlsApiRef.current.controls.target.copy(pos));
         needsRenderRef.current = true;
       }
     };
@@ -817,7 +907,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     const tick = () => {
       if (!mounted) return;
       requestAnimationFrame(tick);
-      orbitRef.current?.update();
+      cameraControlsApiRef.current?.controls?.update?.() ?? orbitRef.current?.update?.();
 
       // update selection box
       try {
@@ -835,7 +925,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
       if (needsRenderRef.current) {
         try {
-          if (composerRef.current) composerRef.current.render();
+          if (postfxApiRef.current && typeof postfxApiRef.current.render === 'function') postfxApiRef.current.render();
+          else if (composerRef.current) composerRef.current.render();
           else rendererRef.current.render(sceneRef.current, cameraRef.current);
         } catch (e) { console.warn("Render failed:", e); }
         needsRenderRef.current = false;
@@ -856,7 +947,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       renderer.setSize(w, h, false);
       cameraRef.current.aspect = w / h;
       cameraRef.current.updateProjectionMatrix();
-      if (composerRef.current) composerRef.current.setSize(w, h);
+      if (postfxApiRef.current) postfxApiRef.current.setSize && postfxApiRef.current.setSize(w, h);
+      if (composerRef.current) composerRef.current.setSize && composerRef.current.setSize(w, h);
       needsRenderRef.current = true;
     };
     window.addEventListener("resize", doResize);
@@ -925,8 +1017,10 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
       try { transformRef.current?.dispose?.(); } catch (e) {}
       try { orbitRef.current?.dispose?.(); } catch (e) {}
+      try { cameraControlsApiRef.current?.dispose?.(); } catch (e) {}
       try { rendererRef.current?.dispose?.(); } catch (e) {}
 
+      // remove user objects
       try {
         const ug = getUserGroup();
         const toRemove = ug ? Array.from(ug.children) : [];
@@ -935,11 +1029,14 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
         });
       } catch (err) {}
 
-      // dispose DRACOLoader instance if created
+      // dispose helper APIs
       try { dracoRef.current?.dispose?.(); dracoRef.current = null; } catch (e) {}
       try { ktx2Ref.current?.dispose?.(); ktx2Ref.current = null; } catch (e) {}
-
-      // dispose composer
+      try { glbImporterApiRef.current?.dispose?.(); glbImporterApiRef.current = null; } catch (e) {}
+      try { materialEditorApiRef.current?.dispose?.(); materialEditorApiRef.current = null; } catch (e) {}
+      try { lightingApiRef.current?.dispose?.(); lightingApiRef.current = null; } catch (e) {}
+      try { envApiRef.current?.dispose?.(); envApiRef.current = null; } catch (e) {}
+      try { postfxApiRef.current?.dispose?.(); postfxApiRef.current = null; } catch (e) {}
       try { composerRef.current?.dispose?.(); composerRef.current = null; } catch (e) {}
 
       // revoke any created blob URLs (GLTF loads / exports / textures)
@@ -1248,7 +1345,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     try { if (node && typeof dropRef === "function") dropRef(node); } catch (err) {}
   };
 
-  // ---------- Local GLB Drop ----------
+  // ---------- Local GLB Drop ---------- (the helper importer also handles this; keep this as fallback)
   useEffect(() => {
     const handleDrop = (e) => {
       e.preventDefault(); e.stopPropagation();
@@ -1855,7 +1952,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     addItem, addGLTF, exportGLTF, undo, redo, deleteSelected,
     setTransformMode: (mode) => setTransformModeState(mode),
     serializeScene, loadFromData, resetScene,
-    onResize: () => { if (!containerRef.current || !rendererRef.current || !cameraRef.current) return; const w = containerRef.current.clientWidth; const h = containerRef.current.clientHeight; rendererRef.current.setSize(w, h, false); cameraRef.current.aspect = w / h; cameraRef.current.updateProjectionMatrix(); if (composerRef.current) composerRef.current.setSize(w, h); },
+    onResize: () => { if (!containerRef.current || !rendererRef.current || !cameraRef.current) return; const w = containerRef.current.clientWidth; const h = containerRef.current.clientHeight; rendererRef.current.setSize(w, h, false); cameraRef.current.aspect = w / h; cameraRef.current.updateProjectionMatrix(); if (postfxApiRef.current) postfxApiRef.current.setSize && postfxApiRef.current.setSize(w, h); if (composerRef.current) composerRef.current.setSize && composerRef.current.setSize(w, h); },
     renameSelected, handleTransformChange, toggleSnap, setSnapValue, duplicateSelected,
     selectObject,
     startSculpting: (mesh = null, opts = {}) => {
@@ -1881,6 +1978,11 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     // new helpers
     applyTextureToSelection,
     loadEnvironmentFromHDR,
+    // exposures for helper apis (if needed)
+    getLightingApi: () => lightingApiRef.current,
+    getEnvApi: () => envApiRef.current,
+    getPostfxApi: () => postfxApiRef.current,
+    getCameraControlsApi: () => cameraControlsApiRef.current,
   }));
 
   try {

@@ -1,7 +1,9 @@
 // src/components/EnvironmentSetup.jsx
 import * as THREE from "three";
-import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader";
-import { PMREMGenerator } from "three/examples/jsm/pmrem/PMREMGenerator";
+import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js"; // note the .js extension
+// PMREMGenerator is part of three core
+// no need to import from examples
+// import { PMREMGenerator } from "three"; // optional, already in THREE
 
 /**
  * setupEnvironment({ scene, renderer })
@@ -10,16 +12,23 @@ import { PMREMGenerator } from "three/examples/jsm/pmrem/PMREMGenerator";
 export function setupEnvironment({ scene, renderer }) {
   if (!scene || !renderer) throw new Error("scene and renderer required");
 
-  const pmremGen = new PMREMGenerator(renderer);
+  const pmremGen = new THREE.PMREMGenerator(renderer);
   pmremGen.compileEquirectangularShader && pmremGen.compileEquirectangularShader();
+
   const rgbe = new RGBELoader();
   let currentEnv = null;
 
   async function setHDR(url) {
     if (!url) {
-      if (currentEnv) { try { currentEnv.dispose(); } catch (e) {} currentEnv = null; scene.environment = null; scene.background = null; }
+      if (currentEnv) {
+        try { currentEnv.dispose(); } catch (e) {}
+        currentEnv = null;
+        scene.environment = null;
+        scene.background = null;
+      }
       return null;
     }
+
     return new Promise((resolve, reject) => {
       rgbe.load(url, (hdr) => {
         try {
@@ -38,7 +47,9 @@ export function setupEnvironment({ scene, renderer }) {
   function setBackgroundColor(hexOrColor) {
     try {
       scene.background = new THREE.Color(hexOrColor);
-    } catch (e) { console.warn("setBackgroundColor failed", e); }
+    } catch (e) {
+      console.warn("setBackgroundColor failed", e);
+    }
   }
 
   function dispose() {
