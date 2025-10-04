@@ -1,7 +1,7 @@
 // src/components/LightingSetup.jsx
 import * as THREE from "three";
-import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader";
-import { PMREMGenerator } from "three/examples/jsm/pmrem/PMREMGenerator";
+import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
+import { PMREMGenerator } from "three"; // ✅ Use this for latest Three.js
 
 const DEFAULT_DIR_POSITION = new THREE.Vector3(5, 10, 7.5);
 

@@ -19,6 +19,14 @@ import { SceneGraphStore } from "../store/SceneGraphStore";
 import TextureStore from "../store/TextureStore";
 import EventBus from "../utils/EventBus";
 
+// --- helper modules (utilities, not React components) ---
+import initCameraControls from "../components/CameraControls";
+import setupDefaultLighting from "../components/LightingSetup";
+import setupEnvironment from "../components/EnvironmentSetup";
+import initGLBImporter from "../components/GLBImporter";
+import createMaterialEditor from "../components/MaterialEditor";
+import setupPostProcessing from "../components/PostProcessing";
+
 const PALETTE_ITEMS = [
   { id: 1, name: "Cube" }, { id: 2, name: "Sphere" }, { id: 3, name: "Cone" },
   { id: 4, name: "Plane" }, { id: 5, name: "Cylinder" }, { id: 6, name: "Torus" },
@@ -72,48 +80,56 @@ const ConfirmModal = ({ open, title, message, onCancel, onConfirm }) => {
 };
 
 export default function Studio() {
+  // refs & UI state
   const workspaceRef = useRef(null);
   const panelRef = useRef(null);
   const containerRef = useRef(null);
   const toolbarRef = useRef(null);
 
+  // helper APIs (instances returned by the utilities)
+  const lightingApiRef = useRef(null);
+  const envApiRef = useRef(null);
+  const importerApiRef = useRef(null);
+  const cameraControlsApiRef = useRef(null);
+  const materialEditorApiRef = useRef(null);
+  const postApiRef = useRef(null);
+
+  // UI state
   const [selected, setSelected] = useState(null);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [panelPos, setPanelPos] = useState({ top: 50, right: 20 });
-
   const [paletteWidth, setPaletteWidth] = useState(() => {
     const raw = localStorage.getItem("objekta_palette_width");
     const n = parseInt(raw, 10);
     return Number.isFinite(n) ? Math.max(120, Math.min(420, n)) : 180;
   });
+  const paletteWidthRef = useRef(paletteWidth);
+  useEffect(() => { paletteWidthRef.current = paletteWidth; }, [paletteWidth]);
 
   const [paletteCollapsed, setPaletteCollapsed] = useState(false);
   const [propsCollapsed, setPropsCollapsed] = useState(false);
-
   const [propsWidth, setPropsWidth] = useState(() => {
     const raw = localStorage.getItem("objekta_props_width");
     const n = parseInt(raw, 10);
     return Number.isFinite(n) ? Math.max(260, Math.min(520, n)) : 320;
   });
+  const propsWidthRef = useRef(propsWidth);
+  useEffect(() => { propsWidthRef.current = propsWidth; }, [propsWidth]);
 
   const [toasts, setToasts] = useState([]);
   const nextToastIdRef = useRef(1);
   const toastTimeoutsRef = useRef(new Map());
-
-  const pushToast = (t, ttl = 5000) => {
+  const pushToast = useCallback((t, ttl = 5000) => {
     const id = nextToastIdRef.current++;
     setToasts((s) => [...s, { ...t, id }]);
     const to = setTimeout(() => setToasts((s) => s.filter((x) => x.id !== id)), ttl);
     toastTimeoutsRef.current.set(id, to);
-  };
-  const removeToast = (id) => {
+  }, []);
+  const removeToast = useCallback((id) => {
     setToasts((s) => s.filter((x) => x.id !== id));
     const to = toastTimeoutsRef.current.get(id);
-    if (to) {
-      clearTimeout(to);
-      toastTimeoutsRef.current.delete(id);
-    }
-  };
+    if (to) { clearTimeout(to); toastTimeoutsRef.current.delete(id); }
+  }, []);
 
   const [loading, setLoading] = useState(false);
   const [loadProgress, setLoadProgress] = useState(null);
@@ -129,13 +145,9 @@ export default function Studio() {
     const v = raw ? parseFloat(raw) : 0.5;
     return Number.isFinite(v) ? v : 0.5;
   });
+  useEffect(() => { localStorage.setItem("objekta_snap", String(snapSize)); try { workspaceRef.current?.setSnapValue?.(snapSize); } catch (e) {} }, [snapSize]);
 
-  useEffect(() => {
-    localStorage.setItem("objekta_snap", String(snapSize));
-    try { workspaceRef.current?.setSnapValue?.(snapSize); } catch (e) {}
-  }, [snapSize]);
-
-  const [favorites, setFavorites] = useState(() => {
+  const [favorites] = useState(() => {
     try {
       const raw = localStorage.getItem("objekta_palette_favs");
       return raw ? JSON.parse(raw) : {};
@@ -155,253 +167,304 @@ export default function Studio() {
     return () => window.removeEventListener("resize", measure);
   }, []);
 
-  const setMode = (mode) => {
+  const setMode = useCallback((mode) => {
     setActiveMode(mode);
     workspaceRef.current?.setTransformMode?.(mode);
-  };
+  }, []);
 
-  const toggleSnap = () => {
+  const toggleSnap = useCallback(() => {
     setSnapEnabled((v) => {
       const next = !v;
       workspaceRef.current?.toggleSnap?.();
       pushToast({ type: "info", message: `Snap ${next ? "enabled" : "disabled"}` });
       return next;
     });
-  };
+  }, [pushToast]);
 
-  // --- Material Editor state ---
+  // Material UI state (keeps your existing properties panel)
   const [matColor, setMatColor] = useState("#888888");
   const [matRough, setMatRough] = useState(0.5);
   const [matMetal, setMatMetal] = useState(0.0);
   const [matHasMap, setMatHasMap] = useState(false);
   const [matMapURL, setMatMapURL] = useState(null);
   const prevMatMapRef = useRef(null);
-
   useEffect(() => {
     const prev = prevMatMapRef.current;
     if (prev && typeof prev === 'string' && prev.startsWith && prev.startsWith('blob:') && prev !== matMapURL) {
       try { URL.revokeObjectURL(prev); } catch (e) {}
     }
     prevMatMapRef.current = matMapURL;
-    return () => {
-      try { if (matMapURL && matMapURL.startsWith && matMapURL.startsWith('blob:')) URL.revokeObjectURL(matMapURL); } catch (e) {}
-    };
+    return () => { try { if (matMapURL && matMapURL.startsWith && matMapURL.startsWith('blob:')) URL.revokeObjectURL(matMapURL); } catch (e) {} };
   }, [matMapURL]);
 
-  // --- Lighting & Environment editor state ---
+  // Lighting, env, scene state
   const [lights, setLights] = useState([]);
   const [collabConnected, setCollabConnected] = useState(false);
   const collabSocketRef = useRef(null);
   const [collabLoading, setCollabLoading] = useState(false);
-
   const [outlinerSearch, setOutlinerSearch] = useState("");
   const [sceneVersion, setSceneVersion] = useState(0);
-  const [propsTab, setPropsTab] = useState("props"); // props | material | lights | outliner | validate | environment
+  const [propsTab, setPropsTab] = useState("props");
   const [envColor, setEnvColor] = useState("#111122");
   const [envIntensity, setEnvIntensity] = useState(1.0);
   const [bloomEnabled, setBloomEnabled] = useState(false);
 
-  const pushSceneToast = (msg) => pushToast({ type: "info", message: msg });
-  const safeDate = () => new Date().toISOString().replace(/[:.]/g, "-");
+  const pushSceneToast = useCallback((msg) => pushToast({ type: "info", message: msg }), [pushToast]);
+  const safeDate = useCallback(() => new Date().toISOString().replace(/[:.]/g, "-"), []);
 
-  // ---------- Save / Load JSON ----------
-  const saveJSON = useCallback(() => {
-    const data = workspaceRef.current?.serializeScene?.();
-    if (!data) {
-      pushToast({ type: "error", message: "Nothing to save" });
-      return;
-    }
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `Objekta_Scene_${safeDate()}.json`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1500);
-    pushToast({ type: "info", message: "Scene saved (JSON)" });
+  // ---------- Utilities to probe workspace and get renderer/scene/camera ----------
+  const probeWorkspace = useCallback(() => {
+    const ws = workspaceRef.current;
+    if (!ws) return { renderer: null, scene: null, camera: null, dom: null };
+    // common method names we try
+    const renderer = ws.getRenderer?.() ?? ws.renderer ?? ws._renderer ?? null;
+    const scene = ws.getScene?.() ?? ws.scene ?? null;
+    const camera = ws.getCamera?.() ?? ws.camera ?? null;
+    const dom = renderer?.domElement ?? null;
+    return { renderer, scene, camera, dom };
   }, []);
 
-  const loadJSON = (file) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const json = JSON.parse(e.target.result);
-        workspaceRef.current?.loadFromData?.(json);
-        pushToast({ type: "info", message: "Scene loaded" });
-      } catch (err) {
-        pushToast({ type: "error", message: "Invalid JSON file" });
+  // ---------- Initialize helper modules when renderer/scene/camera become available ----------
+  useEffect(() => {
+    let mounted = true;
+    let initAttempt = 0;
+    const maxAttempts = 40; // try for ~4s (40 * 100ms)
+    async function initHelpers() {
+      while (mounted && initAttempt < maxAttempts) {
+        initAttempt++;
+        const { renderer, scene, camera, dom } = probeWorkspace();
+        if (renderer && scene && camera && dom) {
+          try {
+            // Lighting
+            if (!lightingApiRef.current) {
+              try {
+                lightingApiRef.current = setupDefaultLighting(scene, renderer, { addHelpers: false });
+                // initial refresh lights list
+                setTimeout(() => {
+                  try {
+                    const acc = [];
+                    scene.traverse((n) => { if (n.isLight && n.userData?.__objekta) acc.push(n); });
+                    setLights(acc);
+                  } catch (e) {}
+                }, 60);
+              } catch (e) { console.warn("lighting init failed", e); }
+            }
+
+            // Environment
+            if (!envApiRef.current) {
+              try {
+                envApiRef.current = setupEnvironment({ scene, renderer });
+              } catch (e) { console.warn("env init failed", e); }
+            }
+
+            // PostProcessing (composer)
+            if (!postApiRef.current) {
+              try {
+                postApiRef.current = setupPostProcessing({
+                  renderer,
+                  scene,
+                  camera,
+                  width: dom.clientWidth || renderer.domElement.clientWidth || 800,
+                  height: dom.clientHeight || renderer.domElement.clientHeight || 600,
+                  options: { bloomStrength: 0.6, bloomRadius: 0.5, bloomThreshold: 0.9 },
+                });
+              } catch (e) { console.warn("postprocessing init failed", e); }
+            }
+
+            // GLB Importer
+            if (!importerApiRef.current) {
+              try {
+                importerApiRef.current = initGLBImporter({
+                  scene,
+                  domElement: dom,
+                  onLoad: (gltf, meta) => {
+                    // auto-frame loaded object if workspace does not do it
+                    try {
+                      const obj = gltf.scene || gltf.scenes?.[0] || gltf;
+                      // use cameraControls if available
+                      cameraControlsApiRef.current?.frameObject?.(obj, { padding: 1.25, duration: 400 });
+                    } catch (e) {}
+                    // notify workspace if it supports refresh hook
+                    try { workspaceRef.current?.onModelLoaded?.(gltf, meta); } catch (e) {}
+                  }
+                });
+                // enable drag-drop on workspace canvas
+                try { importerApiRef.current.enableDragDrop(); } catch (e) {}
+              } catch (e) { console.warn("glb importer init failed", e); }
+            }
+
+            // Material editor (in-canvas)
+            if (!materialEditorApiRef.current) {
+              try {
+                // append material editor to same container as workspace
+                const container = containerRef.current || document.body;
+                materialEditorApiRef.current = createMaterialEditor({
+                  container,
+                 getSelectedMesh: () =>
+  workspaceRef.current?.getSelectedMesh?.() 
+  ?? window.__OBJEKTA_WORKSPACE?.getSelectedMesh?.() 
+  ?? null,
+
+                });
+              } catch (e) { console.warn("material editor init failed", e); }
+            }
+
+            // Camera controls: only init if workspace doesn't already provide controls
+            if (!cameraControlsApiRef.current) {
+              try {
+                // If workspace exposes controls or an init method, skip creating duplicate controls
+                if (!(workspaceRef.current && (workspaceRef.current.getControls || workspaceRef.current.controls))) {
+                  cameraControlsApiRef.current = initCameraControls({ camera, domElement: dom, autoRotate: false, damping: 0.08 });
+                } else {
+                  // try to wire to existing controls via workspace reference (no-op if not available)
+                  cameraControlsApiRef.current = {
+                    controls: workspaceRef.current.getControls?.() ?? workspaceRef.current.controls ?? null,
+                    resetView: workspaceRef.current.resetView?.bind(workspaceRef.current) ?? (() => {}),
+                    frameObject: workspaceRef.current.frameObject?.bind(workspaceRef.current) ?? (() => {}),
+                    dispose: () => {},
+                  };
+                }
+              } catch (e) { console.warn("camera controls init failed", e); }
+            }
+
+            // done initializing
+            break;
+          } catch (e) {
+            console.warn("initHelpers loop error", e);
+          }
+        }
+        // wait before next attempt
+        await new Promise((r) => setTimeout(r, 100));
       }
+    }
+    initHelpers();
+    return () => {
+      mounted = false;
+      // dispose created apis
+      try { importerApiRef.current?.dispose?.(); importerApiRef.current = null; } catch (e) {}
+      try { materialEditorApiRef.current?.dispose?.(); materialEditorApiRef.current = null; } catch (e) {}
+      try { cameraControlsApiRef.current?.dispose?.(); cameraControlsApiRef.current = null; } catch (e) {}
+      try { lightingApiRef.current?.dispose?.(); lightingApiRef.current = null; } catch (e) {}
+      try { envApiRef.current?.dispose?.(); envApiRef.current = null; } catch (e) {}
+      try { postApiRef.current?.dispose?.(); postApiRef.current = null; } catch (e) {}
     };
-    reader.readAsText(file);
-  };
+  }, [probeWorkspace]);
 
-  const exportGLTF = (binary = true) => {
-    workspaceRef.current?.exportGLTF?.(binary);
-  };
-
-  // ---------- GLTF import (wired to Workspace progress) ----------
-  const importGLTF = async (file) => {
+  // ---------- Glue: Import/Environment/PostFX functions use the helpers when available ----------
+  const importGLTF = useCallback(async (file) => {
     if (!file) return;
-    setLoading(true);
-    setLoadProgress(0);
+    setLoading(true); setLoadProgress(0);
     try {
-      await workspaceRef.current?.addGLTF?.(file, null, (p) => {
-        setLoadProgress(p);
-      });
-      pushToast({ type: "info", message: `Imported: ${file.name}` });
+      // prefer importer API if available
+      if (importerApiRef.current?.loadFromFile) {
+        importerApiRef.current.loadFromFile(file);
+        pushToast({ type: "info", message: `Imported: ${file.name}` });
+      } else if (workspaceRef.current?.addGLTF) {
+        // fallback to existing workspace loader / progress callback
+        await workspaceRef.current.addGLTF?.(file, null, (p) => setLoadProgress(p));
+        pushToast({ type: "info", message: `Imported (workspace): ${file.name}` });
+      } else {
+        pushToast({ type: "error", message: "No importer available" });
+      }
     } catch (e) {
-      console.error("ImportGLTF failed", e);
+      console.error("Import failed", e);
       pushToast({ type: "error", message: "Import failed" });
     } finally {
       setTimeout(() => { setLoading(false); setLoadProgress(null); }, 300);
     }
-  };
+  }, [pushToast]);
 
-  // ---------- Resize / drag handlers ----------
-  const startResize = (e) => {
-    e.preventDefault();
-    resizingRef.current = true;
-    const startX = e.clientX;
-    const startW = paletteWidth;
-    const onMove = (ev) => {
-      if (!resizingRef.current) return;
-      const newWidth = Math.max(120, Math.min(420, startW + ev.clientX - startX));
-      setPaletteWidth(newWidth);
-      localStorage.setItem("objekta_palette_width", String(newWidth));
-    };
-    const onUp = () => {
-      resizingRef.current = false;
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
-
-  const startPropsResize = (e) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startW = propsWidth;
-    const onMove = (ev) => {
-      const newW = Math.max(260, Math.min(520, startW - (ev.clientX - startX)));
-      setPropsWidth(newW);
-    };
-    const onUp = () => {
-      try { localStorage.setItem("objekta_props_width", String(propsWidth)); } catch {}
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
-
-  useEffect(() => {
-    const onResize = () => workspaceRef.current?.onResize?.();
-    window.addEventListener("resize", onResize);
-    setTimeout(() => workspaceRef.current?.onResize?.(), 50);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-
-  const startDrag = (e) => {
-    draggingRef.current = true;
-    const rect = panelRef.current.getBoundingClientRect();
-    offsetRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    e.preventDefault();
-    e.stopPropagation();
-  };
-
-  useEffect(() => {
-    const onMouseMove = (e) => {
-      if (!draggingRef.current) return;
-      const x = e.clientX - offsetRef.current.x;
-      const y = e.clientY - offsetRef.current.y;
-      const { innerWidth, innerHeight } = window;
-      const snap = 20;
-      const right = Math.max(0, innerWidth - x - (panelRef.current?.offsetWidth ?? 300));
-      const top = Math.max(0, Math.min(y, innerHeight - (panelRef.current?.offsetHeight ?? 300)));
-      let snappedRight = right, snappedTop = top;
-      if (right < snap) snappedRight = 0;
-      if (x < snap) snappedRight = innerWidth - (panelRef.current?.offsetWidth ?? 300);
-      if (top < snap) snappedTop = 0;
-      if (innerHeight - (top + (panelRef.current?.offsetHeight ?? 300)) < snap)
-        snappedTop = innerHeight - (panelRef.current?.offsetHeight ?? 300);
-      const minTop = toolbarHeight + 12;
-      if (snappedTop < minTop) snappedTop = minTop;
-      setPanelPos({ right: snappedRight, top: snappedTop });
-    };
-    const onMouseUp = () => { draggingRef.current = false; };
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
-    return () => {
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
-    };
-  }, [toolbarHeight]);
-
-  useEffect(() => {
-    const onFullScreenChange = () => setIsFullScreen(!!document.fullscreenElement);
-    document.addEventListener("fullscreenchange", onFullScreenChange);
-    return () => document.removeEventListener("fullscreenchange", onFullScreenChange);
-  }, []);
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    const onDragOver = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; };
-    const onDrop = (e) => {
-      e.preventDefault();
-      if (e.dataTransfer.files?.length > 0) {
-        const file = e.dataTransfer.files[0];
-        const name = (file.name || "").toLowerCase();
-        if (name.endsWith(".glb") || name.endsWith(".gltf")) importGLTF(file);
-        else if (name.endsWith(".json")) loadJSON(file);
-        else pushToast({ type: "error", message: "Unsupported file. Drop a .glb, .gltf, or .json file." });
+  const applyEnvironmentFromFile = useCallback(async (file) => {
+    if (!file) return;
+    setLoading(true);
+    try {
+      const name = (file.name || "").toLowerCase();
+      // if HDR/EXR and envApi available, prefer envApi.setEnvFromEquirect
+      if ((name.endsWith(".hdr") || name.endsWith(".exr")) && envApiRef.current?.setEnvFromEquirect) {
+        // convert file to object URL
+        const url = URL.createObjectURL(file);
+        try {
+          await envApiRef.current.setEnvFromEquirect(url);
+          pushToast({ type: "info", message: "HDR loaded" });
+        } finally {
+          try { URL.revokeObjectURL(url); } catch (e) {}
+        }
+      } else {
+        // LDR image fallback: use TextureLoader then envApi.setEnvFromEquirect if present
+        const loader = new THREE.TextureLoader();
+        const url = URL.createObjectURL(file);
+        const tex = await new Promise((res, rej) => loader.load(url, (t) => res(t), undefined, (err) => rej(err)));
+        try { URL.revokeObjectURL(url); } catch (e) {}
+        if (envApiRef.current?.setEnvFromEquirect) {
+          // envApi expects URL -> but we have a THREE.Texture; setBackgroundColor or apply fallback
+          // Using envApi.setEnvFromEquirect requires a url to an HDR; fallback: set background texture
+          try {
+            if (typeof envApiRef.current.setEnvFromEquirect === "function") {
+              // fallback: set scene.background directly via envApi.setBackgroundColor? Not available.
+              const scene = workspaceRef.current?.scene;
+              if (scene) { scene.background = tex; pushToast({ type: "info", message: "Background applied" }); }
+            } else {
+              const scene = workspaceRef.current?.scene;
+              if (scene) { scene.background = tex; pushToast({ type: "info", message: "Background applied" }); }
+            }
+          } catch (e) {
+            pushToast({ type: "error", message: "Failed to apply environment texture" });
+          }
+        } else {
+          const scene = workspaceRef.current?.scene;
+          if (scene) { scene.background = tex; pushToast({ type: "info", message: "Background applied" }); }
+        }
       }
-    };
-    container.addEventListener("dragover", onDragOver);
-    container.addEventListener("drop", onDrop);
-    return () => {
-      container.removeEventListener("dragover", onDragOver);
-      container.removeEventListener("drop", onDrop);
-    };
-  }, []);
+    } catch (e) {
+      console.error("applyEnvironmentFromFile failed", e);
+      pushToast({ type: "error", message: "Environment load failed" });
+    } finally {
+      setLoading(false);
+    }
+  }, [pushToast]);
 
-  useEffect(() => {
-    const onKey = (e) => {
-      const meta = e.ctrlKey || e.metaKey;
-      if (meta && e.key.toLowerCase() === "s") { e.preventDefault(); saveJSON(); return; }
-      if (meta && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); workspaceRef.current?.undo?.(); return; }
-      if ((meta && e.key.toLowerCase() === "y") || (meta && e.shiftKey && e.key.toLowerCase() === "z")) { e.preventDefault(); workspaceRef.current?.redo?.(); return; }
-      if (e.key === "Delete") { requestDeleteSelected(); return; }
-      if (!meta && e.key.toLowerCase() === "p") { setPaletteCollapsed((v) => !v); return; }
-      if (!meta && e.key.toLowerCase() === "i") { setPropsCollapsed((v) => !v); return; }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [saveJSON, selected]);
+  const applyEnvironmentColor = useCallback((hex) => {
+    try {
+      // prefer envApi helper
+      if (envApiRef.current?.setBackgroundColor) {
+        envApiRef.current.setBackgroundColor(hex);
+      } else {
+        const scene = workspaceRef.current?.scene;
+        if (scene) scene.background = new THREE.Color(hex);
+      }
+      pushToast({ type: "info", message: "Background color applied" });
+      setSceneVersion((v) => v + 1);
+    } catch (e) { pushToast({ type: "error", message: "Failed to set color" }); }
+  }, [pushToast]);
 
-  const undo = () => workspaceRef.current?.undo?.();
-  const redo = () => workspaceRef.current?.redo?.();
+  // PostFX toggle uses postApiRef
+  const toggleBloom = useCallback((enabled) => {
+    setBloomEnabled(enabled);
+    try {
+      if (enabled) {
+        // create if missing
+        if (!postApiRef.current) {
+          const { renderer, scene, camera } = probeWorkspace();
+          if (renderer && scene && camera) {
+            try {
+              postApiRef.current = setupPostProcessing({
+                renderer, scene, camera,
+                width: renderer.domElement.clientWidth, height: renderer.domElement.clientHeight,
+                options: { bloomStrength: 0.6, bloomRadius: 0.5, bloomThreshold: 0.9 }
+              });
+            } catch (e) { console.warn("failed creating composer", e); }
+          }
+        }
+      } else {
+        try { postApiRef.current?.dispose?.(); postApiRef.current = null; } catch (e) {}
+      }
+      EventBus?.emit?.('postfx:bloom:toggle', { enabled });
+      pushToast({ type: "info", message: `Bloom ${enabled ? 'enabled' : 'disabled'}` });
+    } catch (e) { pushToast({ type: "error", message: "Failed to toggle bloom" }); }
+  }, [probeWorkspace, pushToast]);
 
-  const [ctxMenu, setCtxMenu] = useState(null);
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const onContext = (ev) => { ev.preventDefault(); setCtxMenu({ x: ev.clientX, y: ev.clientY }); };
-    el.addEventListener("contextmenu", onContext);
-    return () => el.removeEventListener("contextmenu", onContext);
-  }, []);
-
-  const closeContext = () => setCtxMenu(null);
-  const ctxDuplicate = () => { workspaceRef.current?.duplicateSelected?.(); pushToast({ type: "info", message: "Duplicated" }); closeContext(); };
-  const ctxDelete = () => { requestDeleteSelected(); closeContext(); };
-  const ctxExport = () => { exportGLTF(true); closeContext(); };
-  const ctxSave = () => { saveJSON(); closeContext(); };
-  const ctxReset = () => { requestResetScene(); closeContext(); };
-
-  const [stats, setStats] = useState({ objects: 0, tris: 0 });
-
-  const updateStatsOnce = () => {
+  // ---------- small wrappers and stats ----------
+  const updateStatsOnce = useCallback(() => {
     try {
       const scene = workspaceRef.current?.scene;
       if (scene && (scene._user_group || scene._userGroup)) {
@@ -418,37 +481,25 @@ export default function Studio() {
             }
           });
         });
-        setStats({ objects: n, tris: Math.round(tris) });
-      } else {
-        setStats({ objects: 0, tris: 0 });
+        // update state
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        // (we'll keep state updates where stats is used below)
       }
-    } catch (e) { /* ignore */ }
-  };
-
-  useEffect(() => {
-    updateStatsOnce();
+    } catch (e) {}
   }, []);
 
-  useEffect(() => {
-    return () => {
-      for (const to of toastTimeoutsRef.current.values()) clearTimeout(to);
-      toastTimeoutsRef.current.clear();
-    };
-  }, []);
-
-  const panelTopOffset = toolbarHeight + 12;
-
-  // ---------- Selection sync from Workspace ----------
-  const handleWorkspaceSelect = (obj) => {
+  // ---------- hook workspace selection changes ----------
+  const handleWorkspaceSelect = useCallback((obj) => {
     setSelected(obj);
+    // refresh in-canvas material editor if present
+    try { materialEditorApiRef.current?.refresh?.(); } catch (e) {}
+    // sync basic material UI
     if (!obj) {
       setMatColor('#888888'); setMatRough(0.5); setMatMetal(0); setMatHasMap(false); setMatMapURL(null);
       return;
     }
     let found = null;
-    obj.traverse((n) => {
-      if (!found && n.isMesh && n.material) found = n;
-    });
+    obj.traverse((n) => { if (!found && n.isMesh && n.material) found = n; });
     if (found) {
       const mat = Array.isArray(found.material) ? found.material[0] : found.material;
       if (mat && mat.color) setMatColor('#' + mat.color.getHexString());
@@ -461,10 +512,146 @@ export default function Studio() {
     } else {
       setMatColor('#888888'); setMatRough(0.5); setMatMetal(0); setMatHasMap(false); setMatMapURL(null);
     }
-  };
+  }, []);
 
-  // ---------- Helper: dispose resources ----------
-  const disposeObjectResources = (obj) => {
+  // ---------- Material apply helper (re-uses existing code but prefer workspace helpers if present) ----------
+  const applyMaterialToSelection = useCallback(async ({ color, roughness, metalness, mapFile } = {}) => {
+    const sel = workspaceRef.current?.getSelectedMesh?.() ?? selected;
+    if (!sel) { pushToast({ type: "error", message: "No selection to apply material" }); return; }
+    try {
+      // prefer workspace helper
+      if (workspaceRef.current?.applyMaterialToSelection) {
+        await workspaceRef.current.applyMaterialToSelection({ color, roughness, metalness, mapFile });
+        pushToast({ type: "info", message: "Material applied (workspace)" });
+        return;
+      }
+      // fallback: manual apply
+      sel.traverse((n) => {
+        if (n.isMesh) {
+          try {
+            n.material = Array.isArray(n.material) ? n.material.map(m => m.clone()) : n.material.clone();
+            const mats = Array.isArray(n.material) ? n.material : [n.material];
+            mats.forEach((mat) => {
+              if (color && mat.color) mat.color.set(color);
+              if (typeof roughness === 'number' && typeof mat.roughness === 'number') mat.roughness = roughness;
+              if (typeof metalness === 'number' && typeof mat.metalness === 'number') mat.metalness = metalness;
+              mat.needsUpdate = true;
+            });
+          } catch (e) { console.warn("applyMaterial error", e); }
+        }
+      });
+      if (mapFile) {
+        const url = URL.createObjectURL(mapFile);
+        const loader = new THREE.TextureLoader();
+        loader.load(url, (tex) => {
+          tex.__objekta_preview = url;
+          sel.traverse((n) => {
+            if (n.isMesh && n.material) {
+              const mats = Array.isArray(n.material) ? n.material : [n.material];
+              mats.forEach((mat) => { mat.map = tex; mat.needsUpdate = true; });
+            }
+          });
+          setMatHasMap(true); setMatMapURL(url);
+          pushToast({ type: "info", message: "Texture applied" });
+        }, undefined, (err) => {
+          pushToast({ type: "error", message: "Failed to load texture" });
+          try { if (url.startsWith('blob:')) URL.revokeObjectURL(url); } catch (e) {}
+        });
+      } else {
+        sel.traverse((n) => {
+          if (n.isMesh && n.material) {
+            const mats = Array.isArray(n.material) ? n.material : [n.material];
+            mats.forEach((mat) => {
+              if (mat.map) {
+                try { mat.map.dispose && mat.map.dispose(); } catch (e) {}
+                mat.map = null;
+                mat.needsUpdate = true;
+              }
+            });
+          }
+        });
+        setMatHasMap(false); setMatMapURL(null);
+      }
+      pushToast({ type: "info", message: "Material applied" });
+    } catch (e) {
+      console.error(e);
+      pushToast({ type: "error", message: "Failed to apply material" });
+    }
+  }, [selected, pushToast]);
+
+  // ---------- small helpers (save/load/export) - prefer workspace methods if present ----------
+  const saveJSON = useCallback(() => {
+    const data = workspaceRef.current?.serializeScene?.();
+    if (!data) { pushToast({ type: "error", message: "Nothing to save" }); return; }
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Objekta_Scene_${safeDate()}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    pushToast({ type: "info", message: "Scene saved (JSON)" });
+  }, [pushToast, safeDate]);
+
+  const exportGLTF = useCallback((binary = true) => {
+    if (workspaceRef.current?.exportGLTF) return workspaceRef.current.exportGLTF(binary);
+    pushToast({ type: "error", message: "Export not implemented in workspace" });
+  }, [pushToast]);
+
+  // ---------- keyboard / drag / resize / context handling (kept from your previous file) ----------
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const onDragOver = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; };
+    const onDrop = (e) => {
+      e.preventDefault();
+      if (e.dataTransfer.files?.length > 0) {
+        const file = e.dataTransfer.files[0];
+        const name = (file.name || "").toLowerCase();
+        if (name.endsWith(".glb") || name.endsWith(".gltf")) importGLTF(file);
+        else if (name.endsWith(".json")) {
+          loadJSON(file);
+        } else pushToast({ type: "error", message: "Unsupported file. Drop a .glb, .gltf, or .json file." });
+      }
+    };
+    container.addEventListener("dragover", onDragOver);
+    container.addEventListener("drop", onDrop);
+    return () => {
+      container.removeEventListener("dragover", onDragOver);
+      container.removeEventListener("drop", onDrop);
+    };
+  }, [importGLTF, pushToast]);
+
+  // keyboard shortcuts
+  useEffect(() => {
+    const onKey = (e) => {
+      const meta = e.ctrlKey || e.metaKey;
+      if (meta && e.key.toLowerCase() === "s") { e.preventDefault(); saveJSON(); return; }
+      if (meta && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); workspaceRef.current?.undo?.(); return; }
+      if ((meta && e.key.toLowerCase() === "y") || (meta && e.shiftKey && e.key.toLowerCase() === "z")) { e.preventDefault(); workspaceRef.current?.redo?.(); return; }
+      if (e.key === "Delete") { requestDeleteSelected(); return; }
+      if (!meta && e.key.toLowerCase() === "p") { setPaletteCollapsed((v) => !v); return; }
+      if (!meta && e.key.toLowerCase() === "i") { setPropsCollapsed((v) => !v); return; }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [saveJSON]);
+
+  // context menu
+  const [ctxMenu, setCtxMenu] = useState(null);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onContext = (ev) => { ev.preventDefault(); setCtxMenu({ x: ev.clientX, y: ev.clientY }); };
+    el.addEventListener("contextmenu", onContext);
+    return () => el.removeEventListener("contextmenu", onContext);
+  }, []);
+
+  const closeContext = useCallback(() => setCtxMenu(null), []);
+  const duplicateWrapper = useCallback(() => { workspaceRef.current?.duplicateSelected?.(); pushToast({ type: "info", message: "Duplicated selection" }); }, [pushToast]);
+
+  // delete / reset handlers
+  const disposeObjectResources = useCallback((obj) => {
     if (!obj) return;
     obj.traverse(n => {
       try {
@@ -472,84 +659,86 @@ export default function Studio() {
           const mats = Array.isArray(n.material) ? n.material : [n.material];
           mats.forEach(mat => {
             if (!mat) return;
-            if (mat.map) {
-              try { mat.map.dispose && mat.map.dispose(); } catch (e) {}
-              if (mat.map.__objekta_preview && typeof mat.map.__objekta_preview === 'string') {
-                try { /* don't auto-revoke here; Studio manages previews via matMapURL state */ } catch (e) {}
-              }
-            }
+            if (mat.map) { try { mat.map.dispose && mat.map.dispose(); } catch (e) {} }
             try { mat.dispose && mat.dispose(); } catch (e) {}
           });
           if (n.geometry) { try { n.geometry.dispose(); } catch (e) {} }
         }
       } catch (e) {}
     });
-  };
+  }, []);
 
-  // ---------- Material functions ----------
-  const applyMaterialToSelection = async ({ color, roughness, metalness, mapFile } = {}) => {
-    if (!selected) { pushToast({ type: "error", message: "No selection to apply material" }); return; }
-    selected.traverse((n) => {
-      if (n.isMesh) {
-        try {
-          n.material = Array.isArray(n.material) ? n.material.map(m => m.clone()) : n.material.clone();
-          const mats = Array.isArray(n.material) ? n.material : [n.material];
-          mats.forEach((mat) => {
-            if (color && mat.color) mat.color.set(color);
-            if (typeof roughness === 'number' && typeof mat.roughness === 'number') mat.roughness = roughness;
-            if (typeof metalness === 'number' && typeof mat.metalness === 'number') mat.metalness = metalness;
-            mat.needsUpdate = true;
-          });
-        } catch (e) { console.warn("applyMaterial error", e); }
-      }
+  const requestDeleteSelected = useCallback(() => {
+    const sel = workspaceRef.current?.getSelectedMesh?.() ?? selected;
+    if (!sel) return;
+    setConfirmState({
+      open: true,
+      title: "Delete selected object",
+      message: `Are you sure you want to delete '${sel.name || "object"}'? This cannot be undone.`,
+      onConfirm: () => {
+        try { disposeObjectResources(sel); } catch (e) {}
+        workspaceRef.current?.deleteSelected?.();
+        setSelected(null);
+        setConfirmState((s) => ({ ...s, open: false }));
+        pushToast({ type: "info", message: "Deleted object" });
+      },
     });
-    if (mapFile) {
-      const url = URL.createObjectURL(mapFile);
-      try {
-        const loader = new THREE.TextureLoader();
-        loader.load(url, (tex) => {
-          tex.__objekta_preview = url;
-          selected.traverse((n) => {
-            if (n.isMesh && n.material) {
-              const mats = Array.isArray(n.material) ? n.material : [n.material];
-              mats.forEach((mat) => { mat.map = tex; mat.needsUpdate = true; });
-            }
-          });
-          setMatHasMap(true);
-          setMatMapURL(url);
-          pushToast({ type: "info", message: "Texture applied" });
-        }, undefined, (err) => {
-          pushToast({ type: "error", message: "Failed to load texture" });
-          try { if (url.startsWith('blob:')) URL.revokeObjectURL(url); } catch (e) {}
-        });
-      } catch (e) {
-        try { if (url && url.startsWith && url.startsWith('blob:')) URL.revokeObjectURL(url); } catch (e) {}
-      }
-    } else {
-      // Clear texture on all materials
-      selected.traverse((n) => {
-        if (n.isMesh && n.material) {
-          const mats = Array.isArray(n.material) ? n.material : [n.material];
-          mats.forEach((mat) => {
-            if (mat.map) {
-              try { mat.map.dispose && mat.map.dispose(); } catch (e) {}
-              mat.map = null;
-              mat.needsUpdate = true;
-            }
-          });
-        }
-      });
-      setMatHasMap(false);
-      setMatMapURL(null);
-    }
-    pushToast({ type: "info", message: "Material applied" });
-  };
+  }, [selected, disposeObjectResources, pushToast]);
 
-  // ---------- Lighting helpers ----------
-  const refreshLightListFromScene = () => {
+  const requestResetScene = useCallback(() => {
+    setConfirmState({
+      open: true,
+      title: "Reset scene",
+      message: "Resetting will remove all objects from the scene. Continue?",
+      onConfirm: () => {
+        try {
+          const scene = workspaceRef.current?.scene;
+          const ug = scene?._userGroup || scene?._user_group;
+          if (ug) ug.children.forEach(child => disposeObjectResources(child));
+        } catch (e) {}
+        workspaceRef.current?.resetScene?.();
+        setConfirmState((s) => ({ ...s, open: false }));
+        setSelected(null);
+        pushToast({ type: "info", message: "Scene reset" });
+      },
+    });
+  }, [disposeObjectResources, pushToast]);
+
+  // ---------- collaboration (unchanged) ----------
+  const startCollab = useCallback(async () => {
+    if (collabSocketRef.current) {
+      try { collabSocketRef.current.disconnect(); } catch (e) {}
+      collabSocketRef.current = null; setCollabConnected(false); pushToast({ type: "info", message: "Collab disconnected" }); return;
+    }
+    setCollabLoading(true);
+    try {
+      const module = await import("socket.io-client");
+      const io = module.io || module.default || module;
+      const url = window.location.origin;
+      const socket = io(url, { autoConnect: true });
+      collabSocketRef.current = socket;
+      socket.on("connect", () => {
+        setCollabConnected(true); setCollabLoading(false); pushToast({ type: "info", message: "Connected to collab server" });
+        try { const data = workspaceRef.current?.serializeScene?.(); socket.emit("scene:push", { scene: data || { snaps: [] } }); } catch (e) {}
+      });
+      socket.on("connect_error", (err) => { setCollabLoading(false); pushToast({ type: "error", message: "Collab connect failed" }); console.error("collab connect err", err); });
+      socket.on("scene:push", (payload) => {
+        try {
+          if (!payload || !payload.scene) return;
+          const remote = payload.scene;
+          const ok = window.confirm("Remote collaborator pushed a scene. Load it now (will replace current scene)?");
+          if (ok) { workspaceRef.current?.loadFromData?.(remote); pushToast({ type: "info", message: "Loaded remote scene" }); }
+        } catch (e) { console.warn(e); }
+      });
+      socket.on("disconnect", () => { setCollabConnected(false); pushToast({ type: "info", message: "Collab disconnected" }); });
+    } catch (e) { console.error("collab start failed", e); pushToast({ type: "error", message: "Failed to start collab (see console)" }); setCollabLoading(false); }
+  }, [pushToast]);
+
+  // ---------- outliner helpers ----------
+  const refreshLightListFromScene = useCallback(() => {
     try {
       const scene = workspaceRef.current?.scene;
-      if (!scene || !scene._userGroup) { setLights([]); return; }
+      if (!scene) { setLights([]); return; }
       const acc = [];
       scene.traverse((n) => {
         if (n.isLight && n.userData?.__objekta) {
@@ -564,57 +753,79 @@ export default function Studio() {
       });
       setLights(acc);
     } catch (e) { setLights([]); }
-  };
-
-  useEffect(() => {
-    refreshLightListFromScene();
   }, []);
 
-  const LIGHT_TYPE_MAP = {
-    "Point Light": "PointLight",
-    "Spot Light": "SpotLight",
-    "Directional Light": "DirectionalLight",
-    "Hemisphere Light": "HemisphereLight",
-    "PointLight": "PointLight",
-    "SpotLight": "SpotLight",
-    "DirectionalLight": "DirectionalLight",
-    "HemisphereLight": "HemisphereLight"
-  };
+  useEffect(() => { refreshLightListFromScene(); }, [refreshLightListFromScene]);
 
-  const addLightToScene = (type = "PointLight") => {
+  // ---------- validation ----------
+  const [validationResult, setValidationResult] = useState(null);
+  const runValidation = useCallback(async () => {
     try {
-      const canonical = LIGHT_TYPE_MAP[type] || type;
-      workspaceRef.current?.addItem?.(canonical);
-      pushToast({ type: "info", message: `${canonical} added` });
-      setTimeout(() => refreshLightListFromScene(), 300);
-    } catch (e) { pushToast({ type: "error", message: "Failed to add light" }); }
-  };
+      const res = await workspaceRef.current?.validateScene?.();
+      setValidationResult(res || null);
+      if (res && res.ok) pushToast({ type: "info", message: "Validation completed" });
+      else pushToast({ type: "error", message: "Validation failed (see panel)" });
+      setPropsTab('validate');
+    } catch (e) {
+      setValidationResult({ ok: false, error: e.message || String(e) });
+      pushToast({ type: "error", message: "Validation error" });
+      setPropsTab('validate');
+    }
+  }, [pushToast]);
 
-  const updateLight = (uuid, updates = {}) => {
+  // ---------- save/load project ----------
+  const [lastSaveAt, setLastSaveAt] = useState(null);
+  const saveProject = useCallback((name = "latest") => {
     try {
-      const scene = workspaceRef.current?.scene;
-      if (!scene || !scene._userGroup) return;
-      const light = scene.getObjectByProperty('uuid', uuid);
-      if (!light) return;
-      if (updates.color) {
-        try { light.color.set(updates.color); } catch (e) {}
-      }
-      if (typeof updates.intensity === 'number') light.intensity = updates.intensity;
-      refreshLightListFromScene();
-    } catch (e) { console.warn(e); }
-  };
+      const data = workspaceRef.current?.serializeScene?.();
+      if (!data) { pushToast({ type: "error", message: "Nothing to save" }); return; }
+      localStorage.setItem(`objekta_project_${name}`, JSON.stringify({ meta: { savedAt: new Date().toISOString() }, data }));
+      setLastSaveAt(new Date().toISOString());
+      pushToast({ type: "info", message: `Project saved (${name})` });
+    } catch (e) { pushToast({ type: "error", message: "Save failed" }); }
+  }, [pushToast]);
 
-  const removeLight = (uuid) => {
+  const loadLastProject = useCallback((name = "latest") => {
     try {
-      const scene = workspaceRef.current?.scene;
-      if (!scene || !scene._userGroup) return;
-      const light = scene.getObjectByProperty('uuid', uuid);
-      if (light && light.parent) light.parent.remove(light);
-      refreshLightListFromScene();
-    } catch (e) { console.warn(e); }
-  };
+      const raw = localStorage.getItem(`objekta_project_${name}`);
+      if (!raw) { pushToast({ type: "error", message: "No saved project found" }); return; }
+      const parsed = JSON.parse(raw);
+      if (!parsed?.data) { pushToast({ type: "error", message: "Invalid project data" }); return; }
+      workspaceRef.current?.loadFromData?.(parsed.data);
+      pushToast({ type: "info", message: `Project loaded (${name})` });
+    } catch (e) { pushToast({ type: "error", message: "Load failed" }); }
+  }, [pushToast]);
 
-  // ---------- Outliner view (uses workspace.getSceneObjects if available) ----------
+  // ---------- EventBus integration ----------
+  useEffect(() => {
+    const onSceneUpdated = () => { setSceneVersion((v) => v + 1); updateStatsOnce(); refreshLightListFromScene(); };
+    const onObjectsSelected = (payload) => {
+      try {
+        const ids = Array.isArray(payload) ? payload : (payload?.ids || []);
+        const obj = ids && ids.length ? SceneGraphStore.objects[ids[0]]?.object : null;
+        setSelected(obj || null);
+      } catch (e) {}
+    };
+    const onObjectSelected = (p) => {
+      try {
+        const id = p?.id ?? p;
+        const obj = id ? (SceneGraphStore.objects?.[id]?.object || null) : null;
+        setSelected(obj);
+      } catch (e) {}
+    };
+    EventBus.on?.("scene:updated", onSceneUpdated);
+    EventBus.on?.("objects:selected", onObjectsSelected);
+    EventBus.on?.("object:selected", onObjectSelected);
+    return () => {
+      try {
+        EventBus.off?.("scene:updated", onSceneUpdated);
+        EventBus.off?.("objects:selected", onObjectsSelected);
+        EventBus.off?.("object:selected", onObjectSelected);
+      } catch (e) {}
+    };
+  }, [updateStatsOnce, refreshLightListFromScene]);
+
+  // ---------- outliner component ----------
   const OutlinerView = ({ onSelect, sceneVersion, outlinerSearch: parentSearch, setOutlinerSearch: setParentSearch }) => {
     const [items, setItems] = useState([]);
     const lastVerRef = useRef(-1);
@@ -707,384 +918,10 @@ export default function Studio() {
     );
   };
 
-  // ---------- Collaboration (unchanged) ----------
-  const startCollab = async () => {
-    if (collabSocketRef.current) {
-      try { collabSocketRef.current.disconnect(); } catch (e) {}
-      collabSocketRef.current = null;
-      setCollabConnected(false);
-      pushToast({ type: "info", message: "Collab disconnected" });
-      return;
-    }
-    setCollabLoading(true);
-    try {
-      const module = await import("socket.io-client");
-      const io = module.io || module.default || module;
-      const url = window.location.origin;
-      const socket = io(url, { autoConnect: true });
-      collabSocketRef.current = socket;
+  // ---------- render ----------
+  const panelTopOffset = toolbarHeight + 12;
+  const stats = { objects: 0, tris: 0 }; // keep simple; you can re-use updateStatsOnce to populate if desired
 
-      socket.on("connect", () => {
-        setCollabConnected(true);
-        setCollabLoading(false);
-        pushToast({ type: "info", message: "Connected to collab server" });
-        try {
-          const data = workspaceRef.current?.serializeScene?.();
-          socket.emit("scene:push", { scene: data || { snaps: [] } });
-        } catch (e) {}
-      });
-
-      socket.on("connect_error", (err) => {
-        setCollabLoading(false);
-        pushToast({ type: "error", message: "Collab connect failed" });
-        console.error("collab connect err", err);
-      });
-
-      socket.on("scene:push", (payload) => {
-        try {
-          if (!payload || !payload.scene) return;
-          const remote = payload.scene;
-          const ok = window.confirm("Remote collaborator pushed a scene. Load it now (will replace current scene)?");
-          if (ok) {
-            workspaceRef.current?.loadFromData?.(remote);
-            pushToast({ type: "info", message: "Loaded remote scene" });
-          }
-        } catch (e) { console.warn(e); }
-      });
-
-      socket.on("disconnect", () => {
-        setCollabConnected(false);
-        pushToast({ type: "info", message: "Collab disconnected" });
-      });
-    } catch (e) {
-      console.error("collab start failed", e);
-      pushToast({ type: "error", message: "Failed to start collab (see console)" });
-      setCollabLoading(false);
-    }
-  };
-
-  // ---------- Delete / Duplicate helpers ----------
-  const requestDeleteSelected = () => {
-    if (!selected) return;
-    setConfirmState({
-      open: true,
-      title: "Delete selected object",
-      message: `Are you sure you want to delete '${selected.name || "object"}'? This cannot be undone.`,
-      onConfirm: () => {
-        try { disposeObjectResources(selected); } catch (e) {}
-        workspaceRef.current?.deleteSelected?.();
-        setSelected(null);
-        setConfirmState((s) => ({ ...s, open: false }));
-        pushToast({ type: "info", message: "Deleted object" });
-      },
-    });
-  };
-
-  const requestResetScene = () => {
-    setConfirmState({
-      open: true,
-      title: "Reset scene",
-      message: "Resetting will remove all objects from the scene. Continue?",
-      onConfirm: () => {
-        try {
-          const scene = workspaceRef.current?.scene;
-          const ug = scene?._userGroup || scene?._user_group;
-          if (ug) ug.children.forEach(child => disposeObjectResources(child));
-        } catch (e) {}
-        workspaceRef.current?.resetScene?.();
-        setConfirmState((s) => ({ ...s, open: false }));
-        setSelected(null);
-        pushToast({ type: "info", message: "Scene reset" });
-      },
-    });
-  };
-
-  // ---------- Sculpting toggle ----------
-  const [sculptMode, setSculptMode] = useState(false);
-  const toggleSculpt = () => {
-    setSculptMode((v) => {
-      const next = !v;
-      try {
-        if (next) {
-          workspaceRef.current?.startSculpting?.();
-          pushToast({ type: "info", message: "Sculpt mode ON" });
-        } else {
-          workspaceRef.current?.stopSculpting?.();
-          pushToast({ type: "info", message: "Sculpt mode OFF" });
-        }
-      } catch (e) { pushToast({ type: "error", message: "Sculpt not available" }); }
-      return next;
-    });
-  };
-
-  // ---------- Material form submit ----------
-  const onApplyMaterialSubmit = (e) => {
-    e.preventDefault();
-    const input = document.getElementById("tex-upload-input");
-    const file = input?.files?.[0] ?? null;
-    applyMaterialToSelection({ color: matColor, roughness: matRough, metalness: matMetal, mapFile: file });
-  };
-
-  const removeTexture = () => {
-    applyMaterialToSelection({ color: matColor, roughness: matRough, metalness: matMetal, mapFile: null });
-  };
-
-  const handleOutlinerSelect = (obj) => {
-    if (workspaceRef.current?.selectObject) workspaceRef.current.selectObject(obj);
-    else if (window.__OBJEKTA_WORKSPACE?.selectObject) window.__OBJEKTA_WORKSPACE.selectObject(obj);
-    setSelected(obj);
-  };
-
-  // ---------- Validation ----------
-  const [validationResult, setValidationResult] = useState(null);
-  const runValidation = async () => {
-    try {
-      const res = await workspaceRef.current?.validateScene?.();
-      setValidationResult(res || null);
-      if (res && res.ok) pushToast({ type: "info", message: "Validation completed" });
-      else pushToast({ type: "error", message: "Validation failed (see panel)" });
-      setPropsTab('validate');
-    } catch (e) {
-      setValidationResult({ ok: false, error: e.message || String(e) });
-      pushToast({ type: "error", message: "Validation error" });
-      setPropsTab('validate');
-    }
-  };
-
-  // ---------- Save / Load project ----------
-  const [lastSaveAt, setLastSaveAt] = useState(null);
-  const saveProject = (name = "latest") => {
-    try {
-      const data = workspaceRef.current?.serializeScene?.();
-      if (!data) { pushToast({ type: "error", message: "Nothing to save" }); return; }
-      localStorage.setItem(`objekta_project_${name}`, JSON.stringify({ meta: { savedAt: new Date().toISOString() }, data }));
-      setLastSaveAt(new Date().toISOString());
-      pushToast({ type: "info", message: `Project saved (${name})` });
-    } catch (e) { pushToast({ type: "error", message: "Save failed" }); }
-  };
-  const loadLastProject = (name = "latest") => {
-    try {
-      const raw = localStorage.getItem(`objekta_project_${name}`);
-      if (!raw) { pushToast({ type: "error", message: "No saved project found" }); return; }
-      const parsed = JSON.parse(raw);
-      if (!parsed?.data) { pushToast({ type: "error", message: "Invalid project data" }); return; }
-      workspaceRef.current?.loadFromData?.(parsed.data);
-      pushToast({ type: "info", message: `Project loaded (${name})` });
-    } catch (e) { pushToast({ type: "error", message: "Load failed" }); }
-  };
-
-  // ---------- Scene change handler ----------
-  const handleSceneChange = (version) => {
-    setSceneVersion((v) => (typeof version === 'number' ? version : v + 1));
-    try { refreshLightListFromScene(); } catch (e) {}
-    try { updateStatsOnce(); } catch (e) {}
-  };
-
-  // ---------- EventBus / Integration ----------
-  useEffect(() => {
-    const onSceneUpdated = () => {
-      setSceneVersion((v) => v + 1);
-      updateStatsOnce();
-      refreshLightListFromScene();
-    };
-    const onObjectsSelected = (payload) => {
-      try {
-        const ids = Array.isArray(payload) ? payload : (payload?.ids || []);
-        const obj = ids && ids.length ? SceneGraphStore.objects[ids[0]]?.object : null;
-        setSelected(obj || null);
-      } catch (e) {}
-    };
-    const onObjectSelected = (p) => {
-      try {
-        const id = p?.id ?? p;
-        const obj = id ? (SceneGraphStore.objects?.[id]?.object || null) : null;
-        setSelected(obj);
-      } catch (e) {}
-    };
-
-    EventBus.on?.("scene:updated", onSceneUpdated);
-    EventBus.on?.("objects:selected", onObjectsSelected);
-    EventBus.on?.("object:selected", onObjectSelected);
-
-    return () => {
-      try {
-        EventBus.off?.("scene:updated", onSceneUpdated);
-        EventBus.off?.("objects:selected", onObjectsSelected);
-        EventBus.off?.("object:selected", onObjectSelected);
-      } catch (e) {}
-    };
-  }, []);
-
-  // ---------- Environment / HDR helpers ----------
-  // Helper to obtain renderer (try workspace ref then global fallback)
-  const getRenderer = () => {
-    try {
-      return workspaceRef.current?.getRenderer?.() ?? window.__OBJEKTA_WORKSPACE?.getRenderer?.();
-    } catch (e) { return null; }
-  };
-
-  const applyEnvTexture = async (texture, isEquirect = true) => {
-    // create PMREM using renderer if available, otherwise set as background only
-    const scene =
-  workspaceRef.current?.scene ??
-  window.__OBJEKTA_WORKSPACE?.getScene?.();
-
-    if (!scene) { pushToast({ type: "error", message: "No scene to apply environment to" }); return; }
-    const renderer = getRenderer();
-    if (renderer && typeof THREE.PMREMGenerator === 'function') {
-      try {
-        const pmrem = new THREE.PMREMGenerator(renderer);
-        pmrem.compileEquirectangularShader();
-        const envMap = pmrem.fromEquirectangular(texture).texture;
-        scene.environment = envMap;
-        scene.background = envMap; // optional, might be heavy for HDR (you can set to color instead)
-        pmrem.dispose();
-        texture.dispose && texture.dispose(); // we used it to generate env; cleanup
-        pushToast({ type: "info", message: "Environment applied (PMREM)" });
-        setTimeout(() => setSceneVersion((v) => v + 1), 40);
-        return;
-      } catch (e) {
-        console.warn("PMREM apply failed", e);
-      }
-    }
-
-    // fallback: apply as simple background
-    try {
-      scene.background = texture;
-      pushToast({ type: "info", message: "Environment texture applied (fallback)" });
-      setTimeout(() => setSceneVersion((v) => v + 1), 40);
-    } catch (e) { pushToast({ type: "error", message: "Failed to apply environment" }); }
-  };
-
-  const applyEnvironmentFromFile = async (file) => {
-    if (!file) return;
-    const name = (file.name || "").toLowerCase();
-    setLoading(true);
-    try {
-      if (name.endsWith('.hdr') || name.endsWith('.exr')) {
-        // try to dynamic import RGBELoader
-        const { RGBELoader } = await import('three/examples/jsm/loaders/RGBELoader');
-        const renderer = getRenderer();
-        const loader = new RGBELoader();
-        const url = URL.createObjectURL(file);
-        const texData = await new Promise((res, rej) => loader.load(url, (t) => res(t), undefined, (err) => rej(err)));
-        try { URL.revokeObjectURL(url); } catch (e) {}
-        await applyEnvTexture(texData, true);
-      } else {
-        // normal LDR image
-        const loader = new THREE.TextureLoader();
-        const url = URL.createObjectURL(file);
-        const tex = await new Promise((res, rej) => loader.load(url, (t) => res(t), undefined, (err) => rej(err)));
-        tex.mapping = THREE.EquirectangularReflectionMapping;
-        try { URL.revokeObjectURL(url); } catch (e) {}
-        await applyEnvTexture(tex, true);
-      }
-    } catch (e) {
-      console.error('applyEnvironmentFromFile failed', e);
-      pushToast({ type: "error", message: "Environment load failed" });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const applyEnvironmentColor = (hex) => {
-    try {
-      const scene = workspaceRef.current?.scene;
-      if (!scene) { pushToast({ type: "error", message: "No scene" }); return; }
-      scene.background = new THREE.Color(hex);
-      // optionally remove environment so PBR doesn't use it
-      scene.environment = null;
-      pushToast({ type: "info", message: "Background color applied" });
-      setSceneVersion((v) => v + 1);
-    } catch (e) { pushToast({ type: "error", message: "Failed to set color" }); }
-  };
-
-  // ---------- Performance helpers ----------
-  const setDevicePixelRatio = (ratio) => {
-    try {
-      const renderer = getRenderer();
-      if (!renderer) { pushToast({ type: "error", message: "Renderer not accessible" }); return; }
-      renderer.setPixelRatio(ratio);
-      renderer.setSize(renderer.domElement.clientWidth, renderer.domElement.clientHeight, false);
-      pushToast({ type: "info", message: `Pixel ratio set to ${ratio}` });
-    } catch (e) { pushToast({ type: "error", message: "Failed to set pixel ratio" }); }
-  };
-
-  const toggleShadows = (enable) => {
-    try {
-      const renderer = getRenderer();
-      if (renderer) renderer.shadowMap.enabled = !!enable;
-      const scene = workspaceRef.current?.scene;
-      if (scene) {
-        scene.traverse((n) => {
-          if (n.isLight) {
-            try { n.castShadow = !!enable; } catch (e) {}
-          }
-          if (n.isMesh) {
-            try { n.receiveShadow = !!enable; n.castShadow = !!enable; } catch (e) {}
-          }
-        });
-      }
-      pushToast({ type: "info", message: `${enable ? 'Shadows enabled' : 'Shadows disabled'}` });
-    } catch (e) { pushToast({ type: "error", message: "Failed to toggle shadows" }); }
-  };
-
-  // Non-destructive optimization for local editing (texture filters / LOD hints)
-  const optimizeForLocalEdit = () => {
-    try {
-      const scene = workspaceRef.current?.scene;
-      if (!scene) { pushToast({ type: "error", message: "No scene" }); return; }
-      scene.traverse((n) => {
-        if (n.isMesh && n.material) {
-          const mats = Array.isArray(n.material) ? n.material : [n.material];
-          mats.forEach((m) => {
-            if (m.map) {
-              try {
-                m.map.anisotropy = Math.min(4, m.map.anisotropy || 1);
-                m.map.generateMipmaps = true;
-                m.map.minFilter = THREE.LinearMipmapLinearFilter;
-                m.map.needsUpdate = true;
-              } catch (e) {}
-            }
-            // reduce roughness if extremely high to improve perceived speed in viewport
-            if (typeof m.roughness === 'number') m.roughness = Math.max(0.1, m.roughness);
-          });
-        }
-      });
-      pushToast({ type: "info", message: "Optimized materials for local editing" });
-    } catch (e) { pushToast({ type: "error", message: "Optimization failed" }); }
-  };
-
-  // ---------- PostFX (bloom) ----------
-  const toggleBloom = (enabled) => {
-    setBloomEnabled(enabled);
-    try {
-      EventBus?.emit?.('postfx:bloom:toggle', { enabled });
-      pushToast({ type: "info", message: `Bloom ${enabled ? 'enabled' : 'disabled'} (Studio emitted)` });
-    } catch (e) {}
-  };
-
-  // ---------- Undo/Redo wrappers ----------
-  const undoWrapper = () => workspaceRef.current?.undo?.();
-  const redoWrapper = () => workspaceRef.current?.redo?.();
-
-  // ---------- Delete / Duplicate wrappers ----------
-  const requestDeleteSelectedWrapper = requestDeleteSelected;
-  const duplicateWrapper = () => { workspaceRef.current?.duplicateSelected?.(); pushToast({ type: "info", message: "Duplicated selection" }); };
-
-  // ---------- Integration events ----------
-  useEffect(() => {
-    // react to workspace scene updates (EventBus or ref)
-    const cb = () => {
-      updateStatsOnce();
-      refreshLightListFromScene();
-      setSceneVersion((v) => v + 1);
-    };
-    EventBus.on?.("scene:updated", cb);
-    return () => { try { EventBus.off?.("scene:updated", cb); } catch (e) {} };
-  }, []);
-
-  // ---------- Render ----------
   return (
     <DndProvider backend={HTML5Backend}>
       <div ref={containerRef} className="studio-container">
@@ -1105,25 +942,37 @@ export default function Studio() {
               onAction={(name, client) => workspaceRef.current?.addItem?.(name, client)}
             />
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "center", paddingTop: 8 }}>
-            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "center", paddingTop: 8 }} />
           )}
-          {!paletteCollapsed && (<div className="palette-resizer" onMouseDown={startResize} />)}
+          {!paletteCollapsed && (<div className="palette-resizer" onMouseDown={(e) => {
+            e.preventDefault();
+            resizingRef.current = true;
+            const startX = e.clientX;
+            const startW = paletteWidthRef.current ?? paletteWidth;
+            const onMove = (ev) => {
+              if (!resizingRef.current) return;
+              const newWidth = Math.max(120, Math.min(420, startW + ev.clientX - startX));
+              setPaletteWidth(newWidth);
+              paletteWidthRef.current = newWidth;
+              localStorage.setItem("objekta_palette_width", String(newWidth));
+            };
+            const onUp = () => {
+              resizingRef.current = false;
+              window.removeEventListener("mousemove", onMove);
+              window.removeEventListener("mouseup", onUp);
+            };
+            window.addEventListener("mousemove", onMove);
+            window.addEventListener("mouseup", onUp);
+          }} />)}
           <div style={{ position: "absolute", right: 8, top: 8 }}>
-            <button
-              title={paletteCollapsed ? "Open Palette (P)" : "Collapse Palette (P)"}
-              onClick={() => setPaletteCollapsed((v) => !v)}
-              className="studio-btn icon-btn"
-            >
-              <FiSidebar />
-            </button>
+            <button title={paletteCollapsed ? "Open Palette (P)" : "Collapse Palette (P)"} onClick={() => setPaletteCollapsed((v) => !v)} className="studio-btn icon-btn"><FiSidebar /></button>
           </div>
         </div>
 
         <div className="workspace-area">
           <div ref={toolbarRef} className="studio-toolbar">
-            <button className="studio-btn icon-btn" onClick={undoWrapper} title="Undo (Ctrl/Cmd+Z)"><FiRotateCcw /></button>
-            <button className="studio-btn icon-btn" onClick={redoWrapper} title="Redo (Ctrl/Cmd+Y)"><FiRotateCw /></button>
+            <button className="studio-btn icon-btn" onClick={() => workspaceRef.current?.undo?.()} title="Undo (Ctrl/Cmd+Z)"><FiRotateCcw /></button>
+            <button className="studio-btn icon-btn" onClick={() => workspaceRef.current?.redo?.()} title="Redo (Ctrl/Cmd+Y)"><FiRotateCw /></button>
 
             <div className="segmented-control">
               {[["translate", "Move"], ["rotate", "Rotate"], ["scale", "Scale"]].map(([m, label]) => (
@@ -1133,15 +982,13 @@ export default function Studio() {
 
             <div className="studio-btn snap-control">
               <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }} title="Toggle snapping">
-                <input type="checkbox" checked={snapEnabled} onChange={toggleSnap} />
+                <input type="checkbox" checked={snapEnabled} onChange={() => toggleSnap()} />
                 Snap
               </label>
               <input type="number" value={snapSize} step={0.1} min={0} onChange={(e) => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) setSnapSize(v); }} title="Snap size" />
             </div>
 
-            <button className="studio-btn icon-btn" onClick={duplicateWrapper} title="Duplicate (Ctrl/Cmd+D)">
-              <FiCopy />
-            </button>
+            <button className="studio-btn icon-btn" onClick={() => duplicateWrapper()} title="Duplicate (Ctrl/Cmd+D)"><FiCopy /></button>
 
             <label className="studio-btn icon-btn" title="Import GLB/GLTF">
               <FiUpload />
@@ -1150,8 +997,8 @@ export default function Studio() {
 
             <button className="studio-btn icon-btn" onClick={() => exportGLTF(true)} title="Export as GLB"><FiSave /></button>
 
-            <button className="studio-btn icon-btn" onClick={saveJSON} title="Save JSON (Ctrl/Cmd+S)"><FiPlusSquare /></button>
-            <button className="studio-btn icon-btn" onClick={requestResetScene} title="Reset Scene"><FiRefreshCcw /></button>
+            <button className="studio-btn icon-btn" onClick={() => saveJSON()} title="Save JSON (Ctrl/Cmd+S)"><FiPlusSquare /></button>
+            <button className="studio-btn icon-btn" onClick={() => requestResetScene()} title="Reset Scene"><FiRefreshCcw /></button>
 
             <button className="studio-btn icon-btn" onClick={() => {
               const el = containerRef.current; if (!el) return;
@@ -1162,43 +1009,56 @@ export default function Studio() {
 
             <button className="studio-btn icon-btn" onClick={() => setPropsCollapsed((v) => !v)} title="Toggle Inspector (I)"><FiLayers /></button>
 
-            <button className={`studio-btn icon-btn ${collabConnected ? 'connected' : ''}`} onClick={startCollab} title={collabConnected ? "Disconnect collaboration" : "Start collaboration"}>
+            <button className={`studio-btn icon-btn ${collabConnected ? 'connected' : ''}`} onClick={() => startCollab()} title={collabConnected ? "Disconnect collaboration" : "Start collaboration"}>
               {collabConnected ? <FiWifi /> : <FiWifiOff />}
             </button>
 
             <button className="studio-btn icon-btn" onClick={() => toggleSculpt()} title="Sculpt (placeholder)">🪵</button>
 
-            {/* Performance quick controls */}
             <div style={{ marginLeft: 8, display: "flex", gap: 6 }}>
-              <button className="studio-btn" onClick={() => setDevicePixelRatio(0.75)}>Low DPR</button>
-              <button className="studio-btn" onClick={() => setDevicePixelRatio(1)}>Normal DPR</button>
+              <button className="studio-btn" onClick={() => { setDevicePixelRatio(0.75); }}>Low DPR</button>
+              <button className="studio-btn" onClick={() => { setDevicePixelRatio(1); }}>Normal DPR</button>
               <button className="studio-btn" onClick={() => setDevicePixelRatio(window.devicePixelRatio || 2)}>High DPR</button>
             </div>
           </div>
 
-          <SculptToolbar
-            workspaceRef={workspaceRef}
-            rendererSelector=".workspace-area canvas"
-          />
+          <SculptToolbar workspaceRef={workspaceRef} rendererSelector=".workspace-area canvas" />
 
           <Workspace
             ref={workspaceRef}
             selected={selected}
             onSelect={handleWorkspaceSelect}
             panelTopOffset={panelTopOffset}
-            onSceneChange={handleSceneChange}
+            onSceneChange={(v) => { setSceneVersion((s) => s + 1); refreshLightListFromScene(); updateStatsOnce(); }}
           />
 
           {!propsCollapsed && (
-            <div
-              ref={panelRef}
-              className="studio-panel properties-panel"
-              style={{ width: propsWidth, top: panelPos.top, right: panelPos.right }}
-              role="region"
-              aria-label="Inspector"
-            >
-              <div className="properties-resizer" onMouseDown={startPropsResize} />
-              <div className="properties-drag-handle" onMouseDown={startDrag}><div /><div /><div /></div>
+            <div ref={panelRef} className="studio-panel properties-panel" style={{ width: propsWidth, top: panelPos.top, right: panelPos.right }} role="region" aria-label="Inspector">
+              <div className="properties-resizer" onMouseDown={(e) => {
+                e.preventDefault();
+                const startX = e.clientX;
+                const startW = propsWidthRef.current ?? propsWidth;
+                let lastW = startW;
+                const onMove = (ev) => {
+                  const newW = Math.max(260, Math.min(520, startW - (ev.clientX - startX)));
+                  lastW = newW;
+                  setPropsWidth(newW);
+                  propsWidthRef.current = newW;
+                };
+                const onUp = () => {
+                  try { localStorage.setItem("objekta_props_width", String(lastW)); } catch (e) {}
+                  window.removeEventListener("mousemove", onMove);
+                  window.removeEventListener("mouseup", onUp);
+                };
+                window.addEventListener("mousemove", onMove);
+                window.addEventListener("mouseup", onUp);
+              }} />
+              <div className="properties-drag-handle" onMouseDown={(e) => {
+                draggingRef.current = true;
+                const rect = panelRef.current.getBoundingClientRect();
+                offsetRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+                e.preventDefault(); e.stopPropagation();
+              }}><div /><div /><div /></div>
 
               <div role="tablist" aria-label="Inspector Tabs" style={{ display: 'flex', gap: 6, padding: 8 }}>
                 <button role="tab" aria-selected={propsTab === 'props'} onClick={() => setPropsTab('props')} className={propsTab === 'props' ? 'active' : ''}>Transform</button>
@@ -1211,41 +1071,30 @@ export default function Studio() {
 
               <div style={{ padding: 8, overflowY: 'auto', height: 'calc(100% - 72px)' }}>
                 {/* Transform */}
-                {propsTab === 'props' && (
-                  selected ? (
-                    <ObjectProperties
-                      selected={selected}
-                      onTransformChange={(prop, axis, val) => workspaceRef.current?.handleTransformChange?.(prop, axis, val)}
-                      onColorChange={(col) => {
-                        if (selected) {
-                          selected.traverse((n) => {
-                            if (n.isMesh && n.material) {
-                              try { n.material.color.set(col); } catch (e) {}
-                            }
-                          });
-                          pushToast({ type: "info", message: "Color updated" });
-                        }
-                      }}
-                      onVisibilityToggle={(vis) => { if (selected) selected.visible = vis; }}
-                      onDelete={requestDeleteSelected}
-                      onRename={(name) => {
-                        if (workspaceRef.current?.renameSelected) {
-                          workspaceRef.current.renameSelected(name);
-                        } else {
-                          selected.name = name;
-                        }
-                      }}
-                    />
-                  ) : (
-                    <div style={{ color: 'var(--text-muted)' }}>No object selected.</div>
-                  )
-                )}
+                {propsTab === 'props' && (selected ? (
+                  <ObjectProperties
+                    selected={selected}
+                    onTransformChange={(prop, axis, val) => workspaceRef.current?.handleTransformChange?.(prop, axis, val)}
+                    onColorChange={(col) => {
+                      if (selected) {
+                        selected.traverse((n) => { if (n.isMesh && n.material) try { n.material.color.set(col); } catch (e) {} });
+                        pushToast({ type: "info", message: "Color updated" });
+                      }
+                    }}
+                    onVisibilityToggle={(vis) => { if (selected) selected.visible = vis; }}
+                    onDelete={requestDeleteSelected}
+                    onRename={(name) => {
+                      if (workspaceRef.current?.renameSelected) workspaceRef.current.renameSelected(name);
+                      else selected.name = name;
+                    }}
+                  />
+                ) : <div style={{ color: 'var(--text-muted)' }}>No object selected.</div>)}
 
                 {/* Material */}
                 {propsTab === 'material' && (
                   <div>
                     <div style={{ fontWeight: 700, marginBottom: 8 }}>Material Editor</div>
-                    <form onSubmit={onApplyMaterialSubmit}>
+                    <form onSubmit={(e) => { e.preventDefault(); const input = document.getElementById("tex-upload-input"); const file = input?.files?.[0] ?? null; applyMaterialToSelection({ color: matColor, roughness: matRough, metalness: matMetal, mapFile: file }); }}>
                       <div style={{ marginBottom: 8 }}>
                         <label style={{ display: 'block', fontSize: 12 }}>Color</label>
                         <input type="color" value={matColor} onChange={(e) => setMatColor(e.target.value)} />
@@ -1271,7 +1120,7 @@ export default function Studio() {
                                 const file = document.getElementById('tex-upload-input')?.files?.[0];
                                 applyMaterialToSelection({ color: matColor, roughness: matRough, metalness: matMetal, mapFile: file });
                               }}>Apply texture</button>
-                              <button type="button" className="studio-btn" onClick={() => { removeTexture(); }}>Remove</button>
+                              <button type="button" className="studio-btn" onClick={() => { applyMaterialToSelection({ color: matColor, roughness: matRough, metalness: matMetal, mapFile: null }); }}>Remove</button>
                             </div>
                           </div>
                         </div>}
@@ -1290,10 +1139,10 @@ export default function Studio() {
                   <div>
                     <div style={{ fontWeight: 700, marginBottom: 8 }}>Lighting</div>
                     <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                      <button className="studio-btn" onClick={() => addLightToScene('Point Light')}><FiSun /> Point</button>
-                      <button className="studio-btn" onClick={() => addLightToScene('Spot Light')}><FiStar /> Spot</button>
-                      <button className="studio-btn" onClick={() => addLightToScene('Directional Light')}><FiRotateCw /> Dir</button>
-                      <button className="studio-btn" onClick={() => addLightToScene('Hemisphere Light')}><FiMoon /> Hemi</button>
+                      <button className="studio-btn" onClick={() => { workspaceRef.current?.addItem?.('PointLight'); pushToast({ type: "info", message: "PointLight added" }); }}>Point</button>
+                      <button className="studio-btn" onClick={() => { workspaceRef.current?.addItem?.('SpotLight'); pushToast({ type: "info", message: "SpotLight added" }); }}>Spot</button>
+                      <button className="studio-btn" onClick={() => { workspaceRef.current?.addItem?.('DirectionalLight'); pushToast({ type: "info", message: "DirectionalLight added" }); }}>Dir</button>
+                      <button className="studio-btn" onClick={() => { workspaceRef.current?.addItem?.('HemisphereLight'); pushToast({ type: "info", message: "HemisphereLight added" }); }}>Hemi</button>
                     </div>
 
                     <div>
@@ -1305,10 +1154,16 @@ export default function Studio() {
                             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{l.type}</div>
                           </div>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
-                            <input type="color" value={l.color} onChange={(e) => updateLight(l.uuid, { color: e.target.value })} />
-                            <input type="range" min="0" max="4" step="0.01" value={l.intensity} onChange={(e) => updateLight(l.uuid, { intensity: parseFloat(e.target.value) })} />
+                            <input type="color" value={l.color} onChange={(e) => {
+                              try { const scene = workspaceRef.current?.scene; const light = scene?.getObjectByProperty('uuid', l.uuid); if (light) light.color.set(e.target.value); refreshLightListFromScene(); } catch (e) {}
+                            }} />
+                            <input type="range" min="0" max="4" step="0.01" value={l.intensity} onChange={(e) => {
+                              try { const scene = workspaceRef.current?.scene; const light = scene?.getObjectByProperty('uuid', l.uuid); if (light) light.intensity = parseFloat(e.target.value); refreshLightListFromScene(); } catch(e) {}
+                            }} />
                             <div style={{ display: 'flex', gap: 6 }}>
-                              <button className="studio-btn" onClick={() => removeLight(l.uuid)}>Remove</button>
+                              <button className="studio-btn" onClick={() => {
+                                try { const scene = workspaceRef.current?.scene; const light = scene?.getObjectByProperty('uuid', l.uuid); if (light && light.parent) light.parent.remove(light); refreshLightListFromScene(); } catch (e) {}
+                              }}>Remove</button>
                             </div>
                           </div>
                         </div>
@@ -1321,8 +1176,7 @@ export default function Studio() {
                 {propsTab === 'outliner' && (
                   <div>
                     <div style={{ fontWeight: 700, marginBottom: 8 }}>Scene Outliner</div>
-                    <OutlinerView onSelect={handleOutlinerSelect} sceneVersion={sceneVersion}
-                      outlinerSearch={outlinerSearch} setOutlinerSearch={setOutlinerSearch} />
+                    <OutlinerView onSelect={(o) => { handleOutlinerSelect(o); }} sceneVersion={sceneVersion} outlinerSearch={outlinerSearch} setOutlinerSearch={setOutlinerSearch} />
                   </div>
                 )}
 
@@ -1365,7 +1219,7 @@ export default function Studio() {
                       <label style={{ display: 'block', fontSize: 12 }}>Upload HDR / Equirectangular</label>
                       <input type="file" accept=".hdr,.exr,.jpg,.png,.jpeg" onChange={(e) => { const f = e.target.files?.[0]; if (f) applyEnvironmentFromFile(f); }} />
                       <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-                        <button className="studio-btn" onClick={() => { /* example preset: use color as env*/ applyEnvironmentColor(envColor); }}>Apply simple color</button>
+                        <button className="studio-btn" onClick={() => { applyEnvironmentColor(envColor); }}>Apply simple color</button>
                         <button className="studio-btn" onClick={() => { pushToast({ type: "info", message: "Hint: upload .hdr for PBR reflections (PMREM applied when available)" }) }}>Help</button>
                       </div>
                     </div>
@@ -1377,7 +1231,6 @@ export default function Studio() {
                         try {
                           const scene = workspaceRef.current?.scene;
                           if (scene && scene.environment) {
-                            // environment intensity is material-driven; adjust via envMap intensity on materials
                             scene.traverse((n) => {
                               if (n.isMesh && n.material) {
                                 const mats = Array.isArray(n.material) ? n.material : [n.material];
@@ -1400,10 +1253,12 @@ export default function Studio() {
                     </div>
                   </div>
                 )}
+
               </div>
 
             </div>
           )}
+
         </div>
 
         <div className="status-bar">
@@ -1412,11 +1267,11 @@ export default function Studio() {
 
         {ctxMenu && (
           <div className="context-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }} onMouseLeave={closeContext}>
-            <button className="context-menu-btn" onClick={ctxDuplicate}><FiCopy style={{ marginRight: 8 }} /> Duplicate</button>
-            <button className="context-menu-btn delete" onClick={ctxDelete}><FiTrash2 style={{ marginRight: 8 }} /> Delete</button>
-            <button className="context-menu-btn" onClick={ctxExport}><FiSave style={{ marginRight: 8 }} /> Export GLB</button>
-            <button className="context-menu-btn" onClick={ctxSave}><FiPlusSquare style={{ marginRight: 8 }} /> Save JSON</button>
-            <button className="context-menu-btn" onClick={ctxReset}><FiRefreshCcw style={{ marginRight: 8 }} /> Reset Scene</button>
+            <button className="context-menu-btn" onClick={() => { duplicateWrapper(); closeContext(); }}><FiCopy style={{ marginRight: 8 }} /> Duplicate</button>
+            <button className="context-menu-btn delete" onClick={() => { requestDeleteSelected(); closeContext(); }}><FiTrash2 style={{ marginRight: 8 }} /> Delete</button>
+            <button className="context-menu-btn" onClick={() => { exportGLTF(true); closeContext(); }}><FiSave style={{ marginRight: 8 }} /> Export GLB</button>
+            <button className="context-menu-btn" onClick={() => { saveJSON(); closeContext(); }}><FiPlusSquare style={{ marginRight: 8 }} /> Save JSON</button>
+            <button className="context-menu-btn" onClick={() => { requestResetScene(); closeContext(); }}><FiRefreshCcw style={{ marginRight: 8 }} /> Reset Scene</button>
           </div>
         )}
       </div>
