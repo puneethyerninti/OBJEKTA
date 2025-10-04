@@ -1,4 +1,8 @@
 /* src/index.css */
+
+/* Use Google Fonts as a safe fallback to avoid 404s for missing local font files */
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Space+Grotesk:wght@400;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -20,22 +24,6 @@
   --z-canvas: 1;
   --z-content: 50;
   --z-navbar: 100;
-}
-
-/* -------------------------
-   Fonts
-------------------------- */
-@font-face {
-  font-family: 'Orbitron';
-  src: url('/fonts/Orbitron-VariableFont_wght.ttf') format('truetype');
-  font-weight: 400 900;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Space Grotesk';
-  src: url('/fonts/SpaceGrotesk-VariableFont_wght.ttf') format('truetype');
-  font-weight: 400 700;
-  font-display: swap;
 }
 
 /* -------------------------
@@ -78,7 +66,8 @@ body {
   width: 100%;
   height: 100%;
   z-index: var(--z-canvas);
-  pointer-events: none;
+  pointer-events: none; /* let UI receive clicks */
+  display: block;
 }
 
 /* -------------------------
@@ -311,7 +300,6 @@ body {
 
 .features-section, .showcase-section { padding: 3rem 1rem; }
 
-/* Mini-cards */
 .features-grid {
   display: grid;
   gap: 1.25rem;
@@ -359,16 +347,18 @@ body {
 }
 .feature-card:hover { transform: translateY(-10px); box-shadow: 0 22px 60px rgba(0,0,0,0.64); }
 
+/* Make card-visual a positioned container for overlays */
 .card-visual {
+  position: relative; /* required for loading overlay to be positioned correctly */
   height: 260px;
   width: 100%;
-  position: relative;
   cursor: pointer;
   overflow: hidden;
   background: var(--bg-darker);
   display: flex;
   align-items: center;
   justify-content: center;
+  pointer-events: auto; /* ensure cards receive clicks while canvas lets clicks through */
 }
 .card-visual:focus { outline: 3px solid rgba(127,90,240,0.18); outline-offset: 6px; }
 
@@ -395,6 +385,7 @@ body {
   font-size: 0.75rem;
   opacity: 0;
   transition: opacity 0.15s, transform 0.15s;
+  z-index: 5;
 }
 .card-visual:hover .fullscreen-hint,
 .card-visual:focus .fullscreen-hint { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -435,3 +426,58 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
 /* Small utilities */
 .container { padding: 0 1rem; margin: 0 auto; max-width: 1200px; }
 .text-muted { color: var(--text-muted); }
+
+/* Loading overlay for model cards */
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: linear-gradient(180deg, rgba(2,6,12,0.55), rgba(2,6,12,0.35));
+  -webkit-backdrop-filter: blur(6px); /* Safari/iOS fallback */
+  backdrop-filter: blur(6px);
+  z-index: 60; /* ensure it's above model-viewer */
+  color: var(--text-light);
+  pointer-events: all; /* block clicks while loading */
+  transition: opacity 0.18s ease;
+}
+
+/* Optional: simple fade-in animation for smoother effect */
+.loading-overlay.fade-in {
+  opacity: 0;
+  animation: fadeIn 0.36s forwards;
+}
+
+@keyframes fadeIn {
+  to { opacity: 1; }
+}
+
+/* Spinner */
+.spinner {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 3px solid rgba(255,255,255,0.08);
+  border-top-color: var(--brand-teal);
+  animation: spin 1s linear infinite;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.45);
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Progress text under spinner */
+.progress-text {
+  font-size: 13px;
+  color: var(--text-light);
+  background: rgba(0,0,0,0.25);
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+/* Slightly dim placeholder while loading */
+.card-visual .model-placeholder { opacity: 0.88; filter: saturate(0.95); }

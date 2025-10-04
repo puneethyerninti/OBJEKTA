@@ -6,11 +6,11 @@ import Navbar from "../components/Navbar";
 import "../index.css";
 
 /**
- * Home page
- * - Single Navbar usage (controlled via isNavOpen / onToggleNav)
- * - Canvas ref for Three.js
- * - Lazy model-viewer import
- * - Low-power toggle persisted to localStorage
+ * Home page:
+ * - Three.js background
+ * - features section
+ * - showcase with GLB preloader + per-card loading overlays & progress
+ * - lazy model-viewer import
  */
 
 export default function Home() {
@@ -18,6 +18,11 @@ export default function Home() {
   const showcaseRef = useRef(null);
   const [isNavOpen, setIsNavOpen] = useState(false);
   const [modelViewerLoaded, setModelViewerLoaded] = useState(false);
+
+  // Per-model preload state
+  const [modelProgress, setModelProgress] = useState([0, 0, 0]);
+  const [modelReady, setModelReady] = useState([false, false, false]);
+  const [modelBlobUrls, setModelBlobUrls] = useState([null, null, null]);
 
   const [lowPower, setLowPower] = useState(() => {
     try {
@@ -37,7 +42,168 @@ export default function Home() {
     });
   }, []);
 
+  // models list (we preload these)
+  const models = [
+    { src: "/models/laptop_free.glb", alt: "Laptop", title: "Sculpt Reality", desc: "Craft stunning 3D models with intuitive tools and real-time feedback." },
+    { src: "/models/cyberpunk_desk.glb", alt: "Cyberpunk Desk", title: "Animate Your Vision", desc: "Bring your creations to life with a powerful, timeline-based animation system." },
+    { src: "/models/porsche.glb", alt: "Porsche 911 Turbo", title: "Sell & Showcase", desc: "Monetize your assets on a built-in marketplace and share them seamlessly." },
+  ];
+
+  const featureItems = [
+    {
+      icon: (
+        <svg className="icon" viewBox="0 0 24 24" fill="none" width="36" height="36" aria-hidden>
+          <path d="M12 2l8 4.5v10L12 21l-8-4.5v-10L12 2z" stroke="currentColor" strokeWidth="1.3" />
+          <path d="M12 2v19" stroke="currentColor" strokeWidth="1.3" opacity=".7" />
+          <path d="M4 6.5l8 4.5 8-4.5" stroke="currentColor" strokeWidth="1.3" opacity=".7" />
+        </svg>
+      ),
+      title: "Real-time collaboration",
+      desc: "Work on projects with your team simultaneously, no matter where you are.",
+    },
+    {
+      icon: (
+        <svg className="icon" viewBox="0 0 24 24" fill="none" width="36" height="36" aria-hidden>
+          <path d="M8 12a4 4 0 100 8 4 4 0 000-8zM16 4a4 4 0 100 8 4 4 0 000-8z" stroke="currentColor" strokeWidth="1.3" />
+          <path d="M10.5 14.5l3-5" stroke="currentColor" strokeWidth="1.3" opacity=".8" />
+        </svg>
+      ),
+      title: "AI-powered assets",
+      desc: "Generate and enhance models and textures using cutting-edge AI features.",
+    },
+    {
+      icon: (
+        <svg className="icon" viewBox="0 0 24 24" fill="none" width="36" height="36" aria-hidden>
+          <path d="M14 4l6 6-6 6-6-6 6-6z" stroke="currentColor" strokeWidth="1.3" />
+          <path d="M4 20l4-4" stroke="currentColor" strokeWidth="1.3" opacity=".7" />
+        </svg>
+      ),
+      title: "Marketplace integration",
+      desc: "Instantly buy and sell 3D models directly within the platform.",
+    },
+  ];
+
+  // -------------------------
+  // Preload GLB using streaming fetch so we can show progress
+  // -------------------------
+  useEffect(() => {
+    let cancelled = false;
+    const controllers = [];
+
+    async function preloadModel(index, url) {
+      try {
+        const controller = new AbortController();
+        controllers.push(controller);
+
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const contentLength = res.headers.get("content-length");
+        const total = contentLength ? parseInt(contentLength, 10) : 0;
+
+        if (!res.body || typeof res.body.getReader !== "function") {
+          // fallback to blob if streaming not supported
+          const blob = await res.blob();
+          if (cancelled) return;
+          const blobUrl = URL.createObjectURL(blob);
+          setModelBlobUrls((prev) => {
+            const next = [...prev];
+            next[index] = blobUrl;
+            return next;
+          });
+          setModelProgress((prev) => {
+            const next = [...prev];
+            next[index] = 100;
+            return next;
+          });
+          setModelReady((prev) => {
+            const next = [...prev];
+            next[index] = true;
+            return next;
+          });
+          return;
+        }
+
+        const reader = res.body.getReader();
+        const chunks = [];
+        let received = 0;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length || value.byteLength || (value instanceof Uint8Array ? value.length : 0);
+          if (cancelled) {
+            try { controller.abort(); } catch {}
+            return;
+          }
+          if (total) {
+            const percent = Math.min(100, Math.round((received / total) * 100));
+            setModelProgress((prev) => {
+              const next = [...prev];
+              next[index] = percent;
+              return next;
+            });
+          } else {
+            // indeterminate: increase to show activity (cap at 95)
+            setModelProgress((prev) => {
+              const next = [...prev];
+              next[index] = Math.min(95, (prev[index] || 0) + 5);
+              return next;
+            });
+          }
+        }
+
+        const blob = new Blob(chunks, { type: "model/gltf-binary" });
+        if (cancelled) return;
+        const blobUrl = URL.createObjectURL(blob);
+
+        setModelBlobUrls((prev) => {
+          const next = [...prev];
+          next[index] = blobUrl;
+          return next;
+        });
+        setModelProgress((prev) => {
+          const next = [...prev];
+          next[index] = 100;
+          return next;
+        });
+        // mark as ready — the model's binary is available. We'll also listen to model-viewer 'load' event.
+        setModelReady((prev) => {
+          const next = [...prev];
+          next[index] = true;
+          return next;
+        });
+      } catch (err) {
+        if (cancelled) return;
+        console.warn("Preload failed for", url, err);
+        setModelProgress((prev) => {
+          const next = [...prev];
+          next[index] = 0;
+          return next;
+        });
+      }
+    }
+
+    models.forEach((m, i) => preloadModel(i, m.src));
+
+    return () => {
+      cancelled = true;
+      controllers.forEach((c) => {
+        try { c.abort(); } catch {}
+      });
+      // revoke blob URLs on unmount
+      setTimeout(() => {
+        setModelBlobUrls((prev) => {
+          prev.forEach((u) => { if (u) URL.revokeObjectURL(u); });
+          return [null, null, null];
+        });
+      }, 0);
+    };
+  }, []); // run once
+
+  // -------------------------
   // lazy-load model-viewer when showcase scrolls into view
+  // -------------------------
   useEffect(() => {
     if (!showcaseRef.current || modelViewerLoaded) return;
     const ob = new IntersectionObserver(
@@ -57,7 +223,43 @@ export default function Home() {
     return () => ob.disconnect();
   }, [modelViewerLoaded]);
 
+  // -------------------------
+  // Attach listeners to model-viewer elements to be sure overlays hide when viewer finishes loading
+  // -------------------------
+  useEffect(() => {
+    if (!modelViewerLoaded) return;
+    // find all model-viewer elements that we render (we set data-model-idx)
+    const viewers = Array.from(document.querySelectorAll('model-viewer[data-model-idx]'));
+    const removeFns = [];
+
+    viewers.forEach((v) => {
+      const idx = Number(v.dataset.modelIdx);
+      if (Number.isNaN(idx)) return;
+
+      const onLoad = () => {
+        // mark complete and ensure progress shows 100
+        setModelReady((prev) => {
+          const next = [...prev];
+          next[idx] = true;
+          return next;
+        });
+        setModelProgress((prev) => {
+          const next = [...prev];
+          next[idx] = 100;
+          return next;
+        });
+      };
+
+      v.addEventListener("load", onLoad);
+      removeFns.push(() => v.removeEventListener("load", onLoad));
+    });
+
+    return () => removeFns.forEach((fn) => fn());
+  }, [modelViewerLoaded, modelBlobUrls]);
+
+  // -------------------------
   // reveal observer (animate once)
+  // -------------------------
   useEffect(() => {
     const revealEls = document.querySelectorAll(".reveal, .mini-card, .feature-card");
     if (!revealEls.length) return;
@@ -76,7 +278,9 @@ export default function Home() {
     return () => obs.disconnect();
   }, []);
 
-  // Three.js background
+  // -------------------------
+  // Three.js background (kept robust)
+  // -------------------------
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -84,18 +288,35 @@ export default function Home() {
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
     let dpr = lowPower ? Math.min(window.devicePixelRatio || 1, 1) : Math.min(window.devicePixelRatio || 1, 2);
     renderer.setPixelRatio(dpr);
-    renderer.setSize(window.innerWidth, window.innerHeight, false);
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x0b0b14, 0.0004);
+    const camera = new THREE.PerspectiveCamera(
+      55,
+      (canvas.clientWidth || window.innerWidth) / (canvas.clientHeight || window.innerHeight),
+      0.1,
+      5000
+    );
+    camera.position.set(0, 120, 1500);
+    scene.add(camera);
+
+    const resizeRendererToDisplaySize = () => {
+      const w = Math.max(1, canvas.clientWidth || window.innerWidth);
+      const h = Math.max(1, canvas.clientHeight || window.innerHeight);
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      dpr = lowPower ? Math.min(window.devicePixelRatio || 1, 1) : Math.min(window.devicePixelRatio || 1, 2);
+    };
+
+    resizeRendererToDisplaySize();
+
     try {
       if ("outputColorSpace" in renderer) renderer.outputColorSpace = THREE.SRGBColorSpace;
       else if ("outputEncoding" in renderer) renderer.outputEncoding = THREE.sRGBEncoding;
     } catch (e) {}
-    renderer.setClearColor(0x0e0e1f, 0);
 
-    const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x0b0b14, 0.0004);
-    const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 5000);
-    camera.position.set(0, 120, 1500);
-    scene.add(camera);
+    renderer.setClearColor(0x0e0e1f, 0);
 
     const baseLayers = [
       { count: 900, radius: 300, size: 1.2, speed: 0.06, hue: 250 },
@@ -154,7 +375,6 @@ export default function Home() {
 
     layers.forEach((layer) => starGroups.push(createStarLayer(layer)));
 
-    // Neon grid (shader) — skip if lowPower
     let gridMesh = null;
     let gridUniforms = null;
     if (!lowPower) {
@@ -236,7 +456,15 @@ export default function Home() {
     const targetFPS = lowPower ? 20 : 60;
     const frameMs = 1000 / targetFPS;
 
-    const onVisibility = () => {};
+    const onVisibility = () => {
+      if (document.hidden) {
+        if (rafId) cancelAnimationFrame(rafId);
+        rafId = null;
+      } else {
+        prevTime = performance.now();
+        if (!rafId) rafId = requestAnimationFrame(frame);
+      }
+    };
     document.addEventListener("visibilitychange", onVisibility);
 
     function frame(now) {
@@ -276,15 +504,24 @@ export default function Home() {
     function onResize() {
       if (resizeRaf) cancelAnimationFrame(resizeRaf);
       resizeRaf = requestAnimationFrame(() => {
-        dpr = lowPower ? Math.min(window.devicePixelRatio || 1, 1) : Math.min(window.devicePixelRatio || 1, 2);
-        renderer.setPixelRatio(dpr);
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight, false);
+        resizeRendererToDisplaySize();
+        starGroups.forEach((grp) => {
+          try {
+            grp.material.size = Math.max(0.06 * dpr, grp.baseSize);
+          } catch (e) {}
+        });
         resizeRaf = null;
       });
     }
     window.addEventListener("resize", onResize);
+
+    // WebGL context sanity
+    try {
+      const gl = renderer.getContext();
+      if (!gl) console.warn("WebGL context is null - WebGL might be unavailable");
+    } catch (err) {
+      console.warn("Error checking WebGL context", err);
+    }
 
     // Cleanup
     return () => {
@@ -352,45 +589,15 @@ export default function Home() {
     else if (element.msRequestFullscreen) element.msRequestFullscreen();
   };
 
-  const models = [
-    { src: "/models/laptop_free.glb", alt: "Laptop", title: "Sculpt Reality", desc: "Craft stunning 3D models with intuitive tools and real-time feedback." },
-    { src: "/models/cyberpunk_desk.glb", alt: "Cyberpunk Desk", title: "Animate Your Vision", desc: "Bring your creations to life with a powerful, timeline-based animation system." },
-    { src: "/models/porsche.glb", alt: "Porsche 911 Turbo", title: "Sell & Showcase", desc: "Monetize your assets on a built-in marketplace and share them seamlessly." },
-  ];
-
-  const featureItems = [
-    {
-      icon: (
-        <svg className="icon" viewBox="0 0 24 24" fill="none" width="36" height="36" aria-hidden>
-          <path d="M12 2l8 4.5v10L12 21l-8-4.5v-10L12 2z" stroke="currentColor" strokeWidth="1.3" />
-          <path d="M12 2v19" stroke="currentColor" strokeWidth="1.3" opacity=".7" />
-          <path d="M4 6.5l8 4.5 8-4.5" stroke="currentColor" strokeWidth="1.3" opacity=".7" />
-        </svg>
-      ),
-      title: "Real-time collaboration",
-      desc: "Work on projects with your team simultaneously, no matter where you are.",
-    },
-    {
-      icon: (
-        <svg className="icon" viewBox="0 0 24 24" fill="none" width="36" height="36" aria-hidden>
-          <path d="M8 12a4 4 0 100 8 4 4 0 000-8zM16 4a4 4 0 100 8 4 4 0 000-8z" stroke="currentColor" strokeWidth="1.3" />
-          <path d="M10.5 14.5l3-5" stroke="currentColor" strokeWidth="1.3" opacity=".8" />
-        </svg>
-      ),
-      title: "AI-powered assets",
-      desc: "Generate and enhance models and textures using cutting-edge AI features.",
-    },
-    {
-      icon: (
-        <svg className="icon" viewBox="0 0 24 24" fill="none" width="36" height="36" aria-hidden>
-          <path d="M14 4l6 6-6 6-6-6 6-6z" stroke="currentColor" strokeWidth="1.3" />
-          <path d="M4 20l4-4" stroke="currentColor" strokeWidth="1.3" opacity=".7" />
-        </svg>
-      ),
-      title: "Marketplace integration",
-      desc: "Instantly buy and sell 3D models directly within the platform.",
-    },
-  ];
+  // click handler (uses blob URL if available)
+  const handleVisualClick = (e, idx) => {
+    const mv = e.currentTarget.querySelector("model-viewer");
+    if (!mv) {
+      console.warn("model-viewer not loaded yet — try again after scrolling to showcase.");
+      return;
+    }
+    goFullScreen(mv);
+  };
 
   return (
     <>
@@ -421,6 +628,7 @@ export default function Home() {
           </div>
         </header>
 
+        {/* FEATURES SECTION */}
         <section className="features-section reveal">
           <h2 className="section-title">A New Dimension of Workflow</h2>
           <div className="features-grid">
@@ -434,49 +642,70 @@ export default function Home() {
           </div>
         </section>
 
+        {/* SHOWCASE WITH PRELOAD + OVERLAYS */}
         <section className="showcase-section reveal" ref={showcaseRef}>
           <h2 className="section-title">Built on the Future of Tech</h2>
           <p className="section-subtitle">A showcase of assets created and shared on OBJEKTA.</p>
 
           <div className="showcase-grid">
-            {models.map((model, idx) => (
-              <div key={idx} className="feature-card">
-                <div
-                  className="card-visual"
-                  onClick={(e) => goFullScreen(e.currentTarget.querySelector("model-viewer"))}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      goFullScreen(e.currentTarget.querySelector("model-viewer"));
-                    }
-                  }}
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`Open ${model.title}`}
-                >
-                  {modelViewerLoaded ? (
-                    <model-viewer
-                      src={model.src}
-                      alt={model.alt}
-                      auto-rotate
-                      camera-controls
-                      interaction-prompt="none"
-                      style={{ width: "100%", height: "100%" }}
-                    />
-                  ) : (
-                    <div className="model-placeholder" aria-hidden>
-                      <div className="placeholder-icon" />
-                    </div>
-                  )}
-                  <span className="fullscreen-hint">Click to View</span>
-                </div>
+            {models.map((model, idx) => {
+              const blobUrl = modelBlobUrls[idx];
+              const ready = modelReady[idx];
+              const progress = modelProgress[idx] ?? 0;
+              return (
+                <div key={idx} className="feature-card">
+                  <div
+                    className="card-visual"
+                    onClick={(e) => handleVisualClick(e, idx)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        handleVisualClick(e, idx);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open ${model.title}`}
+                  >
+                    {/* model-viewer or placeholder (viewer first so overlay sits after it in DOM) */}
+                    {modelViewerLoaded && (blobUrl || model.src) ? (
+                      <model-viewer
+                        data-model-idx={idx}
+                        src={blobUrl || model.src}
+                        alt={model.alt}
+                        auto-rotate
+                        camera-controls
+                        interaction-prompt="none"
+                        style={{ width: "100%", height: "100%" }}
+                      />
+                    ) : (
+                      <div className="model-placeholder" aria-hidden>
+                        <div className="placeholder-icon" />
+                      </div>
+                    )}
 
-                <div className="card-content">
-                  <h3>{model.title}</h3>
-                  <p>{model.desc}</p>
+                    {/* loading overlay (last child -> sits on top) */}
+                    {!ready && (
+                      <div className="loading-overlay fade-in" aria-hidden>
+                        <div className="spinner" />
+                        {progress > 0 ? (
+                          <div className="progress-text">{progress}%</div>
+                        ) : (
+                          <div className="progress-text">loading…</div>
+                        )}
+                      </div>
+                    )}
+
+                    <span className="fullscreen-hint">Click to View</span>
+                  </div>
+
+                  <div className="card-content">
+                    <h3>{model.title}</h3>
+                    <p>{model.desc}</p>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       </div>

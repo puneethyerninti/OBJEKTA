@@ -1,12 +1,12 @@
 // src/pages/Studio.jsx
 import React, { useRef, useState, useEffect, useCallback, useLayoutEffect } from "react";
 import * as THREE from "three";
+import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { DndProvider } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
 import {
   FiSave, FiUpload, FiRefreshCcw, FiMaximize, FiMinimize, FiRotateCcw,
-  FiRotateCw, FiSidebar, FiLayers, FiStar, FiPlusSquare, FiTrash2, FiCopy,
-  FiWifi, FiWifiOff, FiSun, FiMoon, FiSearch
+  FiRotateCw, FiSidebar, FiLayers, FiPlusSquare, FiCopy, FiWifi, FiWifiOff, FiSearch
 } from "react-icons/fi";
 
 import Palette from "../components/Palette";
@@ -19,7 +19,6 @@ import { SceneGraphStore } from "../store/SceneGraphStore";
 import TextureStore from "../store/TextureStore";
 import EventBus from "../utils/EventBus";
 
-// --- helper modules (utilities, not React components) ---
 import initCameraControls from "../components/CameraControls";
 import setupDefaultLighting from "../components/LightingSetup";
 import setupEnvironment from "../components/EnvironmentSetup";
@@ -27,6 +26,9 @@ import initGLBImporter from "../components/GLBImporter";
 import createMaterialEditor from "../components/MaterialEditor";
 import setupPostProcessing from "../components/PostProcessing";
 
+/* -------------------
+   Small UI subcomponents (ToastList, Loader, ConfirmModal)
+   ------------------- */
 const PALETTE_ITEMS = [
   { id: 1, name: "Cube" }, { id: 2, name: "Sphere" }, { id: 3, name: "Cone" },
   { id: 4, name: "Plane" }, { id: 5, name: "Cylinder" }, { id: 6, name: "Torus" },
@@ -34,8 +36,11 @@ const PALETTE_ITEMS = [
   { id: 10, name: "Spot Light" }, { id: 11, name: "Directional Light" }, { id: 12, name: "Camera" },
 ];
 
-const Toast = ({ t, onClose }) => (
-  <div role="status" aria-live="polite" className="toast-item" style={{ background: t.type === 'error' ? 'rgba(255, 60, 80, 0.85)' : '' }}>
+const ToastItem = ({ t, onClose }) => (
+  <div role="status" aria-live="polite" className="toast-item" style={{
+    background: t.type === 'error' ? 'rgba(255, 60, 80, 0.9)' : 'rgba(20,20,30,0.9)',
+    color: 'var(--text-light)'
+  }}>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: 'center', gap: 8 }}>
       <div style={{ fontWeight: 700 }}>{t.title || (t.type === "error" ? "Error" : "Info")}</div>
       <button onClick={onClose} style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 16 }}>✕</button>
@@ -44,14 +49,16 @@ const Toast = ({ t, onClose }) => (
   </div>
 );
 
-const ToastContainer = ({ toasts, remove }) => (
-  <div className="toast-container">{toasts.map((t) => <Toast key={t.id} t={t} onClose={() => remove(t.id)} />)}</div>
+const ToastList = ({ toasts, remove }) => (
+  <div className="toast-container">
+    {toasts.map((t) => <ToastItem key={t.id} t={t} onClose={() => remove(t.id)} />)}
+  </div>
 );
 
 const Loader = ({ active, message, progress }) => {
   if (!active) return null;
   return (
-    <div className="loader-container">
+    <div className="loader-container" role="status" aria-live="polite">
       <div className="loader-content">
         <div style={{ marginBottom: 8, fontWeight: 700 }}>{message || "Loading..."}</div>
         <div style={{ height: 8, background: "rgba(255,255,255,0.08)", borderRadius: 6, overflow: "hidden", width: 240 }}>
@@ -79,6 +86,101 @@ const ConfirmModal = ({ open, title, message, onCancel, onConfirm }) => {
   );
 };
 
+/* -------------------
+   OutlinerView component
+   ------------------- */
+const OutlinerView = ({ onSelect, sceneVersion, outlinerSearch: parentSearch, setOutlinerSearch: setParentSearch, pushToast, workspaceRef, disposeObjectResources }) => {
+  const [items, setItems] = useState([]);
+  const lastVerRef = useRef(-1);
+
+  useEffect(() => {
+    let mounted = true;
+    const scanIfNeeded = async () => {
+      try {
+        const ws = workspaceRef.current ?? workspaceRef; // may be ref or object
+        if (!ws) return;
+        const ver = typeof ws.getSceneVersion === 'function' ? ws.getSceneVersion() : null;
+        if (typeof sceneVersion === 'number' && sceneVersion === lastVerRef.current) return;
+        let list = [];
+        if (typeof ws.getSceneObjects === 'function') {
+          list = ws.getSceneObjects();
+        } else {
+          const scene = ws.scene;
+          list = scene && scene._userGroup ? Array.from(scene._userGroup.children) : [];
+        }
+        if (!mounted) return;
+        lastVerRef.current = ver;
+        const filtered = parentSearch ? list.filter(i => (i.name || '').toLowerCase().includes(parentSearch.toLowerCase())) : list;
+        setItems(filtered);
+      } catch (e) { /* ignore */ }
+    };
+
+    scanIfNeeded();
+    const t = setInterval(scanIfNeeded, 800);
+    return () => { mounted = false; clearInterval(t); };
+  }, [parentSearch, sceneVersion, workspaceRef]);
+
+  const toggleVisibility = (obj) => { obj.visible = !obj.visible; pushToast?.({ type: "info", message: `${obj.name} ${obj.visible ? "shown" : "hidden"}` }); };
+  const renameObject = (obj) => {
+    const nv = prompt('Rename object', obj.name || '');
+    if (nv && nv !== obj.name) {
+      try {
+        if (workspaceRef.current?.selectObject) {
+          workspaceRef.current?.selectObject(obj);
+          workspaceRef.current?.renameSelected?.(nv);
+        } else obj.name = nv;
+        pushToast?.({ type: "info", message: "Renamed" });
+      } catch (e) { obj.name = nv; pushToast?.({ type: "error", message: "Rename failed" }); }
+    }
+  };
+
+  const deleteObject = (obj) => {
+    if (!confirm('Delete object?')) return;
+    try {
+      if (workspaceRef.current?.selectObject) {
+        workspaceRef.current.selectObject(obj);
+        disposeObjectResources(obj);
+        workspaceRef.current.deleteSelected?.();
+      } else {
+        const scene = workspaceRef.current?.scene;
+        const found = scene?.getObjectByProperty('uuid', obj.uuid);
+        if (found && found.parent) {
+          disposeObjectResources(found);
+          found.parent.remove(found);
+        }
+      }
+      pushToast?.({ type: "info", message: "Deleted" });
+    } catch (e) { pushToast?.({ type: "error", message: "Delete failed" }); }
+  };
+
+  return (
+    <div style={{ padding: 8, overflowY: 'auto', height: '100%' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+        <input placeholder="Filter..." value={parentSearch} onChange={e => setParentSearch(e.target.value)} style={{ flex: 1, padding: 6 }} />
+        <button onClick={() => { setParentSearch(''); }} className="studio-btn icon-btn"><FiSearch /></button>
+      </div>
+      {items.map((it) => (
+        <div key={it.uuid} style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '6px 8px', borderRadius: 8,
+          background: it.userData?.__selected ? 'rgba(127,90,240,0.12)' : 'transparent',
+          marginBottom: 6
+        }}>
+          <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => { if (workspaceRef.current?.selectObject) workspaceRef.current.selectObject(it); else onSelect?.(it); onSelect?.(it); }}>
+            {it.name || it.type || it.uuid}
+          </div>
+          <button title="Rename" onClick={() => renameObject(it)}>✎</button>
+          <button title="Toggle visibility" onClick={() => toggleVisibility(it)}>{it.visible ? '👁' : '🚫'}</button>
+          <button title="Delete" onClick={() => deleteObject(it)}>🗑</button>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+/* -------------------
+   Main Studio component
+   ------------------- */
 export default function Studio() {
   // refs & UI state
   const workspaceRef = useRef(null);
@@ -86,13 +188,16 @@ export default function Studio() {
   const containerRef = useRef(null);
   const toolbarRef = useRef(null);
 
-  // helper APIs (instances returned by the utilities)
+  // helper apis
   const lightingApiRef = useRef(null);
   const envApiRef = useRef(null);
   const importerApiRef = useRef(null);
   const cameraControlsApiRef = useRef(null);
   const materialEditorApiRef = useRef(null);
   const postApiRef = useRef(null);
+
+  // TransformControls fallback
+  const transformControlsRef = useRef(null);
 
   // UI state
   const [selected, setSelected] = useState(null);
@@ -116,6 +221,7 @@ export default function Studio() {
   const propsWidthRef = useRef(propsWidth);
   useEffect(() => { propsWidthRef.current = propsWidth; }, [propsWidth]);
 
+  // toasts
   const [toasts, setToasts] = useState([]);
   const nextToastIdRef = useRef(1);
   const toastTimeoutsRef = useRef(new Map());
@@ -139,6 +245,7 @@ export default function Studio() {
   const offsetRef = useRef({ x: 0, y: 0 });
   const [activeMode, setActiveMode] = useState("translate");
 
+  // snapping
   const [snapEnabled, setSnapEnabled] = useState(false);
   const [snapSize, setSnapSize] = useState(() => {
     const raw = localStorage.getItem("objekta_snap");
@@ -147,41 +254,7 @@ export default function Studio() {
   });
   useEffect(() => { localStorage.setItem("objekta_snap", String(snapSize)); try { workspaceRef.current?.setSnapValue?.(snapSize); } catch (e) {} }, [snapSize]);
 
-  const [favorites] = useState(() => {
-    try {
-      const raw = localStorage.getItem("objekta_palette_favs");
-      return raw ? JSON.parse(raw) : {};
-    } catch { return {}; }
-  });
-
-  const [toolbarHeight, setToolbarHeight] = useState(64);
-  useLayoutEffect(() => {
-    const measure = () => {
-      try {
-        const rect = toolbarRef.current?.getBoundingClientRect();
-        if (rect && rect.height) setToolbarHeight(Math.ceil(rect.height));
-      } catch (e) {}
-    };
-    measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, []);
-
-  const setMode = useCallback((mode) => {
-    setActiveMode(mode);
-    workspaceRef.current?.setTransformMode?.(mode);
-  }, []);
-
-  const toggleSnap = useCallback(() => {
-    setSnapEnabled((v) => {
-      const next = !v;
-      workspaceRef.current?.toggleSnap?.();
-      pushToast({ type: "info", message: `Snap ${next ? "enabled" : "disabled"}` });
-      return next;
-    });
-  }, [pushToast]);
-
-  // Material UI state (keeps your existing properties panel)
+  // material state
   const [matColor, setMatColor] = useState("#888888");
   const [matRough, setMatRough] = useState(0.5);
   const [matMetal, setMatMetal] = useState(0.0);
@@ -197,7 +270,7 @@ export default function Studio() {
     return () => { try { if (matMapURL && matMapURL.startsWith && matMapURL.startsWith('blob:')) URL.revokeObjectURL(matMapURL); } catch (e) {} };
   }, [matMapURL]);
 
-  // Lighting, env, scene state
+  // lights / collab / outliner / validation state
   const [lights, setLights] = useState([]);
   const [collabConnected, setCollabConnected] = useState(false);
   const collabSocketRef = useRef(null);
@@ -212,11 +285,10 @@ export default function Studio() {
   const pushSceneToast = useCallback((msg) => pushToast({ type: "info", message: msg }), [pushToast]);
   const safeDate = useCallback(() => new Date().toISOString().replace(/[:.]/g, "-"), []);
 
-  // ---------- Utilities to probe workspace and get renderer/scene/camera ----------
+  /* ---------- probe workspace helper ---------- */
   const probeWorkspace = useCallback(() => {
     const ws = workspaceRef.current;
     if (!ws) return { renderer: null, scene: null, camera: null, dom: null };
-    // common method names we try
     const renderer = ws.getRenderer?.() ?? ws.renderer ?? ws._renderer ?? null;
     const scene = ws.getScene?.() ?? ws.scene ?? null;
     const camera = ws.getCamera?.() ?? ws.camera ?? null;
@@ -224,11 +296,12 @@ export default function Studio() {
     return { renderer, scene, camera, dom };
   }, []);
 
-  // ---------- Initialize helper modules when renderer/scene/camera become available ----------
+  /* ---------- init helpers (lighting, env, importer, camera controls, transform controls, post) ---------- */
   useEffect(() => {
     let mounted = true;
     let initAttempt = 0;
-    const maxAttempts = 40; // try for ~4s (40 * 100ms)
+    const maxAttempts = 60;
+
     async function initHelpers() {
       while (mounted && initAttempt < maxAttempts) {
         initAttempt++;
@@ -239,7 +312,6 @@ export default function Studio() {
             if (!lightingApiRef.current) {
               try {
                 lightingApiRef.current = setupDefaultLighting(scene, renderer, { addHelpers: false });
-                // initial refresh lights list
                 setTimeout(() => {
                   try {
                     const acc = [];
@@ -252,12 +324,10 @@ export default function Studio() {
 
             // Environment
             if (!envApiRef.current) {
-              try {
-                envApiRef.current = setupEnvironment({ scene, renderer });
-              } catch (e) { console.warn("env init failed", e); }
+              try { envApiRef.current = setupEnvironment({ scene, renderer }); } catch (e) { console.warn("env init failed", e); }
             }
 
-            // PostProcessing (composer)
+            // PostProcessing
             if (!postApiRef.current) {
               try {
                 postApiRef.current = setupPostProcessing({
@@ -271,52 +341,43 @@ export default function Studio() {
               } catch (e) { console.warn("postprocessing init failed", e); }
             }
 
-            // GLB Importer
+            // GLB importer
             if (!importerApiRef.current) {
               try {
                 importerApiRef.current = initGLBImporter({
                   scene,
                   domElement: dom,
                   onLoad: (gltf, meta) => {
-                    // auto-frame loaded object if workspace does not do it
                     try {
                       const obj = gltf.scene || gltf.scenes?.[0] || gltf;
-                      // use cameraControls if available
                       cameraControlsApiRef.current?.frameObject?.(obj, { padding: 1.25, duration: 400 });
                     } catch (e) {}
-                    // notify workspace if it supports refresh hook
                     try { workspaceRef.current?.onModelLoaded?.(gltf, meta); } catch (e) {}
-                  }
+                  },
+                  onProgress: (p) => { setLoadProgress(p); },
                 });
-                // enable drag-drop on workspace canvas
                 try { importerApiRef.current.enableDragDrop(); } catch (e) {}
               } catch (e) { console.warn("glb importer init failed", e); }
             }
 
-            // Material editor (in-canvas)
+            // Material editor
             if (!materialEditorApiRef.current) {
               try {
-                // append material editor to same container as workspace
                 const container = containerRef.current || document.body;
                 materialEditorApiRef.current = createMaterialEditor({
                   container,
-                 getSelectedMesh: () =>
-  workspaceRef.current?.getSelectedMesh?.() 
-  ?? window.__OBJEKTA_WORKSPACE?.getSelectedMesh?.() 
-  ?? null,
-
+                  getSelectedMesh: () =>
+                    workspaceRef.current?.getSelectedMesh?.() ?? window.__OBJEKTA_WORKSPACE?.getSelectedMesh?.() ?? null,
                 });
               } catch (e) { console.warn("material editor init failed", e); }
             }
 
-            // Camera controls: only init if workspace doesn't already provide controls
+            // Camera controls: avoid double-init
             if (!cameraControlsApiRef.current) {
               try {
-                // If workspace exposes controls or an init method, skip creating duplicate controls
                 if (!(workspaceRef.current && (workspaceRef.current.getControls || workspaceRef.current.controls))) {
                   cameraControlsApiRef.current = initCameraControls({ camera, domElement: dom, autoRotate: false, damping: 0.08 });
                 } else {
-                  // try to wire to existing controls via workspace reference (no-op if not available)
                   cameraControlsApiRef.current = {
                     controls: workspaceRef.current.getControls?.() ?? workspaceRef.current.controls ?? null,
                     resetView: workspaceRef.current.resetView?.bind(workspaceRef.current) ?? (() => {}),
@@ -327,40 +388,110 @@ export default function Studio() {
               } catch (e) { console.warn("camera controls init failed", e); }
             }
 
-            // done initializing
+            // TransformControls fallback (attach to scene root)
+            if (!transformControlsRef.current) {
+              try {
+                const tc = new TransformControls(camera, dom);
+                tc.addEventListener("dragging-changed", (event) => {
+                  try {
+                    const orbit = cameraControlsApiRef.current?.controls;
+                    if (orbit) orbit.enabled = !event.value;
+                  } catch (e) {}
+                });
+                tc.addEventListener("objectChange", () => {
+                  const obj = tc.object;
+                  try { workspaceRef.current?.onObjectTransformed?.(obj); } catch (e) {}
+                  // notify React state (selected may be same object reference; updating will nudge UI)
+                  setSelected((s) => (s === obj ? s : s));
+                });
+                scene.add(tc);
+                transformControlsRef.current = tc;
+              } catch (e) { console.warn("transformcontrols init failed", e); }
+            }
+
+            // done
             break;
           } catch (e) {
             console.warn("initHelpers loop error", e);
           }
         }
-        // wait before next attempt
         await new Promise((r) => setTimeout(r, 100));
       }
     }
+
     initHelpers();
+
     return () => {
-      mounted = false;
-      // dispose created apis
       try { importerApiRef.current?.dispose?.(); importerApiRef.current = null; } catch (e) {}
       try { materialEditorApiRef.current?.dispose?.(); materialEditorApiRef.current = null; } catch (e) {}
       try { cameraControlsApiRef.current?.dispose?.(); cameraControlsApiRef.current = null; } catch (e) {}
       try { lightingApiRef.current?.dispose?.(); lightingApiRef.current = null; } catch (e) {}
       try { envApiRef.current?.dispose?.(); envApiRef.current = null; } catch (e) {}
       try { postApiRef.current?.dispose?.(); postApiRef.current = null; } catch (e) {}
+      try { if (transformControlsRef.current && transformControlsRef.current.parent) transformControlsRef.current.parent.remove(transformControlsRef.current); transformControlsRef.current = null; } catch (e) {}
+      mounted = false;
     };
   }, [probeWorkspace]);
 
-  // ---------- Glue: Import/Environment/PostFX functions use the helpers when available ----------
+  /* ---------- Transform mode & snapping sync ---------- */
+  useEffect(() => {
+    try { if (workspaceRef.current?.setTransformMode) workspaceRef.current.setTransformMode(activeMode); } catch (e) {}
+    try {
+      if (transformControlsRef.current) {
+        transformControlsRef.current.setMode(activeMode === "translate" ? "translate" : activeMode === "rotate" ? "rotate" : "scale");
+      }
+    } catch (e) {}
+  }, [activeMode]);
+
+  useEffect(() => {
+    try {
+      if (workspaceRef.current?.setSnapValue) workspaceRef.current.setSnapValue(snapSize);
+      if (transformControlsRef.current) {
+        transformControlsRef.current.setTranslationSnap(snapEnabled ? snapSize : null);
+        // rotation snap (deg -> rad)
+        transformControlsRef.current.setRotationSnap(snapEnabled ? (Math.PI / 180) * 15 : null);
+      }
+    } catch (e) {}
+  }, [snapEnabled, snapSize]);
+
+  /* ---------- attach/detach transform controls on selection change ---------- */
+  useEffect(() => {
+    try {
+      const attachTo = selected ?? null;
+      if (transformControlsRef.current) {
+        if (attachTo) transformControlsRef.current.attach(attachTo);
+        else transformControlsRef.current.detach();
+      } else {
+        if (workspaceRef.current?.attachTransformToSelection) workspaceRef.current.attachTransformToSelection(selected);
+      }
+    } catch (e) {}
+  }, [selected]);
+
+  /* ---------- reveal observer to prevent everything popping at once ---------- */
+  useEffect(() => {
+    const revealEls = containerRef.current ? containerRef.current.querySelectorAll(".reveal, .studio-panel, .studio-toolbar, .palette-panel") : [];
+    if (!revealEls || revealEls.length === 0) return;
+    const obs = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("is-visible");
+          obs.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.08 });
+    revealEls.forEach((el) => obs.observe(el));
+    return () => obs.disconnect();
+  }, []);
+
+  /* ---------- importGLTF wrapper ---------- */
   const importGLTF = useCallback(async (file) => {
     if (!file) return;
     setLoading(true); setLoadProgress(0);
     try {
-      // prefer importer API if available
       if (importerApiRef.current?.loadFromFile) {
-        importerApiRef.current.loadFromFile(file);
+        await importerApiRef.current.loadFromFile(file);
         pushToast({ type: "info", message: `Imported: ${file.name}` });
       } else if (workspaceRef.current?.addGLTF) {
-        // fallback to existing workspace loader / progress callback
         await workspaceRef.current.addGLTF?.(file, null, (p) => setLoadProgress(p));
         pushToast({ type: "info", message: `Imported (workspace): ${file.name}` });
       } else {
@@ -374,61 +505,36 @@ export default function Studio() {
     }
   }, [pushToast]);
 
+  /* ---------- applyEnvironmentFromFile ---------- */
   const applyEnvironmentFromFile = useCallback(async (file) => {
     if (!file) return;
     setLoading(true);
     try {
       const name = (file.name || "").toLowerCase();
-      // if HDR/EXR and envApi available, prefer envApi.setEnvFromEquirect
       if ((name.endsWith(".hdr") || name.endsWith(".exr")) && envApiRef.current?.setEnvFromEquirect) {
-        // convert file to object URL
         const url = URL.createObjectURL(file);
         try {
           await envApiRef.current.setEnvFromEquirect(url);
           pushToast({ type: "info", message: "HDR loaded" });
-        } finally {
-          try { URL.revokeObjectURL(url); } catch (e) {}
-        }
+        } finally { try { URL.revokeObjectURL(url); } catch (e) {} }
       } else {
-        // LDR image fallback: use TextureLoader then envApi.setEnvFromEquirect if present
         const loader = new THREE.TextureLoader();
         const url = URL.createObjectURL(file);
         const tex = await new Promise((res, rej) => loader.load(url, (t) => res(t), undefined, (err) => rej(err)));
         try { URL.revokeObjectURL(url); } catch (e) {}
-        if (envApiRef.current?.setEnvFromEquirect) {
-          // envApi expects URL -> but we have a THREE.Texture; setBackgroundColor or apply fallback
-          // Using envApi.setEnvFromEquirect requires a url to an HDR; fallback: set background texture
-          try {
-            if (typeof envApiRef.current.setEnvFromEquirect === "function") {
-              // fallback: set scene.background directly via envApi.setBackgroundColor? Not available.
-              const scene = workspaceRef.current?.scene;
-              if (scene) { scene.background = tex; pushToast({ type: "info", message: "Background applied" }); }
-            } else {
-              const scene = workspaceRef.current?.scene;
-              if (scene) { scene.background = tex; pushToast({ type: "info", message: "Background applied" }); }
-            }
-          } catch (e) {
-            pushToast({ type: "error", message: "Failed to apply environment texture" });
-          }
-        } else {
-          const scene = workspaceRef.current?.scene;
-          if (scene) { scene.background = tex; pushToast({ type: "info", message: "Background applied" }); }
-        }
+        const scene = workspaceRef.current?.scene;
+        if (scene) { scene.background = tex; pushToast({ type: "info", message: "Background applied" }); }
       }
     } catch (e) {
       console.error("applyEnvironmentFromFile failed", e);
       pushToast({ type: "error", message: "Environment load failed" });
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }, [pushToast]);
 
   const applyEnvironmentColor = useCallback((hex) => {
     try {
-      // prefer envApi helper
-      if (envApiRef.current?.setBackgroundColor) {
-        envApiRef.current.setBackgroundColor(hex);
-      } else {
+      if (envApiRef.current?.setBackgroundColor) envApiRef.current.setBackgroundColor(hex);
+      else {
         const scene = workspaceRef.current?.scene;
         if (scene) scene.background = new THREE.Color(hex);
       }
@@ -437,12 +543,11 @@ export default function Studio() {
     } catch (e) { pushToast({ type: "error", message: "Failed to set color" }); }
   }, [pushToast]);
 
-  // PostFX toggle uses postApiRef
+  /* ---------- toggle bloom ---------- */
   const toggleBloom = useCallback((enabled) => {
     setBloomEnabled(enabled);
     try {
       if (enabled) {
-        // create if missing
         if (!postApiRef.current) {
           const { renderer, scene, camera } = probeWorkspace();
           if (renderer && scene && camera) {
@@ -463,37 +568,20 @@ export default function Studio() {
     } catch (e) { pushToast({ type: "error", message: "Failed to toggle bloom" }); }
   }, [probeWorkspace, pushToast]);
 
-  // ---------- small wrappers and stats ----------
+  /* ---------- quick stats (placeholder) ---------- */
   const updateStatsOnce = useCallback(() => {
     try {
       const scene = workspaceRef.current?.scene;
       if (scene && (scene._user_group || scene._userGroup)) {
-        const ug = scene._userGroup || scene._user_group;
-        const n = Array.from(ug.children).filter((c) => c.userData?.__objekta).length;
-        let tris = 0;
-        Array.from(ug.children).forEach(c => {
-          c.traverse(n => {
-            if (n.isMesh && n.geometry) {
-              try {
-                if (n.geometry.index) tris += n.geometry.index.count / 3;
-                else if (n.geometry.attributes && n.geometry.attributes.position) tris += n.geometry.attributes.position.count / 3;
-              } catch (e) {}
-            }
-          });
-        });
-        // update state
-        // eslint-disable-next-line react-hooks/rules-of-hooks
-        // (we'll keep state updates where stats is used below)
+        // compute stats if wanted
       }
     } catch (e) {}
   }, []);
 
-  // ---------- hook workspace selection changes ----------
+  /* ---------- selection handler ---------- */
   const handleWorkspaceSelect = useCallback((obj) => {
     setSelected(obj);
-    // refresh in-canvas material editor if present
     try { materialEditorApiRef.current?.refresh?.(); } catch (e) {}
-    // sync basic material UI
     if (!obj) {
       setMatColor('#888888'); setMatRough(0.5); setMatMetal(0); setMatHasMap(false); setMatMapURL(null);
       return;
@@ -514,18 +602,16 @@ export default function Studio() {
     }
   }, []);
 
-  // ---------- Material apply helper (re-uses existing code but prefer workspace helpers if present) ----------
+  /* ---------- applyMaterialToSelection ---------- */
   const applyMaterialToSelection = useCallback(async ({ color, roughness, metalness, mapFile } = {}) => {
     const sel = workspaceRef.current?.getSelectedMesh?.() ?? selected;
     if (!sel) { pushToast({ type: "error", message: "No selection to apply material" }); return; }
     try {
-      // prefer workspace helper
       if (workspaceRef.current?.applyMaterialToSelection) {
         await workspaceRef.current.applyMaterialToSelection({ color, roughness, metalness, mapFile });
         pushToast({ type: "info", message: "Material applied (workspace)" });
         return;
       }
-      // fallback: manual apply
       sel.traverse((n) => {
         if (n.isMesh) {
           try {
@@ -579,7 +665,7 @@ export default function Studio() {
     }
   }, [selected, pushToast]);
 
-  // ---------- small helpers (save/load/export) - prefer workspace methods if present ----------
+  /* ---------- save/export ---------- */
   const saveJSON = useCallback(() => {
     const data = workspaceRef.current?.serializeScene?.();
     if (!data) { pushToast({ type: "error", message: "Nothing to save" }); return; }
@@ -598,7 +684,7 @@ export default function Studio() {
     pushToast({ type: "error", message: "Export not implemented in workspace" });
   }, [pushToast]);
 
-  // ---------- keyboard / drag / resize / context handling (kept from your previous file) ----------
+  /* ---------- drag/drop on container ---------- */
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -609,9 +695,8 @@ export default function Studio() {
         const file = e.dataTransfer.files[0];
         const name = (file.name || "").toLowerCase();
         if (name.endsWith(".glb") || name.endsWith(".gltf")) importGLTF(file);
-        else if (name.endsWith(".json")) {
-          loadJSON(file);
-        } else pushToast({ type: "error", message: "Unsupported file. Drop a .glb, .gltf, or .json file." });
+        else if (name.endsWith(".json")) loadJSON(file);
+        else pushToast({ type: "error", message: "Unsupported file. Drop a .glb, .gltf, or .json file." });
       }
     };
     container.addEventListener("dragover", onDragOver);
@@ -622,7 +707,27 @@ export default function Studio() {
     };
   }, [importGLTF, pushToast]);
 
-  // keyboard shortcuts
+  /* ---------- loadJSON implementation ---------- */
+  const loadJSON = useCallback(async (file) => {
+    if (!file) return;
+    setLoading(true);
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (!parsed) { pushToast({ type: "error", message: "Invalid JSON" }); return; }
+      if (workspaceRef.current?.loadFromData) {
+        workspaceRef.current.loadFromData(parsed);
+        pushToast({ type: "info", message: `Loaded JSON: ${file.name}` });
+      } else {
+        pushToast({ type: "error", message: "Workspace does not support loading JSON directly" });
+      }
+    } catch (e) {
+      console.error("loadJSON failed", e);
+      pushToast({ type: "error", message: "Failed to load JSON" });
+    } finally { setLoading(false); }
+  }, [pushToast]);
+
+  /* ---------- keyboard shortcuts ---------- */
   useEffect(() => {
     const onKey = (e) => {
       const meta = e.ctrlKey || e.metaKey;
@@ -637,7 +742,7 @@ export default function Studio() {
     return () => window.removeEventListener("keydown", onKey);
   }, [saveJSON]);
 
-  // context menu
+  /* ---------- context menu ---------- */
   const [ctxMenu, setCtxMenu] = useState(null);
   useEffect(() => {
     const el = containerRef.current;
@@ -650,7 +755,7 @@ export default function Studio() {
   const closeContext = useCallback(() => setCtxMenu(null), []);
   const duplicateWrapper = useCallback(() => { workspaceRef.current?.duplicateSelected?.(); pushToast({ type: "info", message: "Duplicated selection" }); }, [pushToast]);
 
-  // delete / reset handlers
+  /* ---------- resource dispose helper ---------- */
   const disposeObjectResources = useCallback((obj) => {
     if (!obj) return;
     obj.traverse(n => {
@@ -668,6 +773,7 @@ export default function Studio() {
     });
   }, []);
 
+  /* ---------- delete / reset ---------- */
   const requestDeleteSelected = useCallback(() => {
     const sel = workspaceRef.current?.getSelectedMesh?.() ?? selected;
     if (!sel) return;
@@ -704,7 +810,7 @@ export default function Studio() {
     });
   }, [disposeObjectResources, pushToast]);
 
-  // ---------- collaboration (unchanged) ----------
+  /* ---------- collaboration (kept) ---------- */
   const startCollab = useCallback(async () => {
     if (collabSocketRef.current) {
       try { collabSocketRef.current.disconnect(); } catch (e) {}
@@ -734,198 +840,137 @@ export default function Studio() {
     } catch (e) { console.error("collab start failed", e); pushToast({ type: "error", message: "Failed to start collab (see console)" }); setCollabLoading(false); }
   }, [pushToast]);
 
-  // ---------- outliner helpers ----------
-  const refreshLightListFromScene = useCallback(() => {
-    try {
-      const scene = workspaceRef.current?.scene;
-      if (!scene) { setLights([]); return; }
-      const acc = [];
-      scene.traverse((n) => {
-        if (n.isLight && n.userData?.__objekta) {
-          acc.push({
-            uuid: n.uuid,
-            name: n.name || n.type,
-            type: n.type,
-            color: '#' + new THREE.Color(n.color || 0xffffff).getHexString(),
-            intensity: typeof n.intensity === 'number' ? n.intensity : 1,
-          });
-        }
-      });
-      setLights(acc);
-    } catch (e) { setLights([]); }
-  }, []);
-
-  useEffect(() => { refreshLightListFromScene(); }, [refreshLightListFromScene]);
-
-  // ---------- validation ----------
-  const [validationResult, setValidationResult] = useState(null);
-  const runValidation = useCallback(async () => {
-    try {
-      const res = await workspaceRef.current?.validateScene?.();
-      setValidationResult(res || null);
-      if (res && res.ok) pushToast({ type: "info", message: "Validation completed" });
-      else pushToast({ type: "error", message: "Validation failed (see panel)" });
-      setPropsTab('validate');
-    } catch (e) {
-      setValidationResult({ ok: false, error: e.message || String(e) });
-      pushToast({ type: "error", message: "Validation error" });
-      setPropsTab('validate');
+  /* ---------- outliner refresh helper ---------- */
+const refreshLightListFromScene = useCallback(() => {
+  try {
+    const scene = workspaceRef.current?.scene;
+    if (!scene) {
+      setLights([]);
+      return;
     }
-  }, [pushToast]);
-
-  // ---------- save/load project ----------
-  const [lastSaveAt, setLastSaveAt] = useState(null);
-  const saveProject = useCallback((name = "latest") => {
-    try {
-      const data = workspaceRef.current?.serializeScene?.();
-      if (!data) { pushToast({ type: "error", message: "Nothing to save" }); return; }
-      localStorage.setItem(`objekta_project_${name}`, JSON.stringify({ meta: { savedAt: new Date().toISOString() }, data }));
-      setLastSaveAt(new Date().toISOString());
-      pushToast({ type: "info", message: `Project saved (${name})` });
-    } catch (e) { pushToast({ type: "error", message: "Save failed" }); }
-  }, [pushToast]);
-
-  const loadLastProject = useCallback((name = "latest") => {
-    try {
-      const raw = localStorage.getItem(`objekta_project_${name}`);
-      if (!raw) { pushToast({ type: "error", message: "No saved project found" }); return; }
-      const parsed = JSON.parse(raw);
-      if (!parsed?.data) { pushToast({ type: "error", message: "Invalid project data" }); return; }
-      workspaceRef.current?.loadFromData?.(parsed.data);
-      pushToast({ type: "info", message: `Project loaded (${name})` });
-    } catch (e) { pushToast({ type: "error", message: "Load failed" }); }
-  }, [pushToast]);
-
-  // ---------- EventBus integration ----------
-  useEffect(() => {
-    const onSceneUpdated = () => { setSceneVersion((v) => v + 1); updateStatsOnce(); refreshLightListFromScene(); };
-    const onObjectsSelected = (payload) => {
-      try {
-        const ids = Array.isArray(payload) ? payload : (payload?.ids || []);
-        const obj = ids && ids.length ? SceneGraphStore.objects[ids[0]]?.object : null;
-        setSelected(obj || null);
-      } catch (e) {}
-    };
-    const onObjectSelected = (p) => {
-      try {
-        const id = p?.id ?? p;
-        const obj = id ? (SceneGraphStore.objects?.[id]?.object || null) : null;
-        setSelected(obj);
-      } catch (e) {}
-    };
-    EventBus.on?.("scene:updated", onSceneUpdated);
-    EventBus.on?.("objects:selected", onObjectsSelected);
-    EventBus.on?.("object:selected", onObjectSelected);
-    return () => {
-      try {
-        EventBus.off?.("scene:updated", onSceneUpdated);
-        EventBus.off?.("objects:selected", onObjectsSelected);
-        EventBus.off?.("object:selected", onObjectSelected);
-      } catch (e) {}
-    };
-  }, [updateStatsOnce, refreshLightListFromScene]);
-
-  // ---------- outliner component ----------
-  const OutlinerView = ({ onSelect, sceneVersion, outlinerSearch: parentSearch, setOutlinerSearch: setParentSearch }) => {
-    const [items, setItems] = useState([]);
-    const lastVerRef = useRef(-1);
-
-    useEffect(() => {
-      let mounted = true;
-      const scanIfNeeded = async () => {
-        try {
-          const ws = workspaceRef.current;
-          if (!ws) return;
-          const ver = typeof ws.getSceneVersion === 'function' ? ws.getSceneVersion() : null;
-          if (typeof sceneVersion === 'number' && sceneVersion === lastVerRef.current) return;
-          let list = [];
-          if (typeof ws.getSceneObjects === 'function') {
-            list = ws.getSceneObjects();
-          } else {
-            const scene = ws.scene;
-            list = scene && scene._userGroup ? Array.from(scene._userGroup.children) : [];
-          }
-          if (!mounted) return;
-          lastVerRef.current = ver;
-          const filtered = parentSearch ? list.filter(i => (i.name || '').toLowerCase().includes(parentSearch.toLowerCase())) : list;
-          setItems(filtered);
-        } catch (e) {}
-      };
-
-      scanIfNeeded();
-      return () => { mounted = false; };
-    }, [parentSearch, sceneVersion]);
-
-    const toggleVisibility = (obj) => { obj.visible = !obj.visible; pushToast({ type: "info", message: `${obj.name} ${obj.visible ? "shown" : "hidden"}` }); };
-    const renameObject = (obj) => {
-      const nv = prompt('Rename object', obj.name || '');
-      if (nv && nv !== obj.name) {
-        try {
-          if (workspaceRef.current?.selectObject) {
-            workspaceRef.current?.selectObject(obj);
-            workspaceRef.current?.renameSelected?.(nv);
-          } else obj.name = nv;
-        } catch (e) { obj.name = nv; }
-        pushToast({ type: "info", message: "Renamed" });
+    const acc = [];
+    scene.traverse((n) => {
+      if (n.isLight && n.userData?.__objekta) {
+        acc.push({
+          uuid: n.uuid,
+          name: n.name || n.type,
+          type: n.type,
+          color: '#' + new THREE.Color(n.color || 0xffffff).getHexString(),
+          intensity: typeof n.intensity === 'number' ? n.intensity : 1,
+        });
       }
-    };
+    });
+    setLights(acc);
+  } catch (e) {
+    setLights([]);
+  }
+}, []);
 
-    const deleteObject = (obj) => {
-      if (!confirm('Delete object?')) return;
-      try {
-        if (workspaceRef.current?.selectObject) {
-          workspaceRef.current.selectObject(obj);
-          disposeObjectResources(obj);
-          workspaceRef.current.deleteSelected?.();
-        } else {
-          const scene = workspaceRef.current?.scene;
-          const found = scene?.getObjectByProperty('uuid', obj.uuid);
-          if (found && found.parent) {
-            disposeObjectResources(found);
-            found.parent.remove(found);
-          }
-        }
-        pushToast({ type: "info", message: "Deleted" });
-      } catch (e) { pushToast({ type: "error", message: "Delete failed" }); }
-    };
-
-    return (
-      <div style={{ padding: 8, overflowY: 'auto', height: '100%' }}>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-          <input placeholder="Filter..." value={parentSearch} onChange={e => setParentSearch(e.target.value)} style={{ flex: 1, padding: 6 }} />
-          <button onClick={() => { setParentSearch(''); }} className="studio-btn icon-btn"><FiSearch /></button>
-        </div>
-        {items.map((it) => (
-          <div key={it.uuid} style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            padding: '6px 8px', borderRadius: 8,
-            background: it.userData?.__selected ? 'rgba(127,90,240,0.12)' : 'transparent',
-            marginBottom: 6
-          }}>
-            <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => {
-              if (workspaceRef.current?.selectObject) workspaceRef.current.selectObject(it);
-              else setSelected(it);
-              onSelect?.(it);
-            }}>
-              {it.name}
-            </div>
-            <button title="Rename" onClick={() => renameObject(it)}>✎</button>
-            <button title="Toggle visibility" onClick={() => toggleVisibility(it)}>{it.visible ? '👁' : '🚫'}</button>
-            <button title="Delete" onClick={() => deleteObject(it)}>🗑</button>
-          </div>
-        ))}
-      </div>
-    );
+/* ---------- EventBus integration ---------- */
+useEffect(() => {
+  const onSceneUpdated = () => {
+    setSceneVersion((v) => v + 1);
+    updateStatsOnce();
+    refreshLightListFromScene(); // Safe now
   };
 
-  // ---------- render ----------
-  const panelTopOffset = toolbarHeight + 12;
-  const stats = { objects: 0, tris: 0 }; // keep simple; you can re-use updateStatsOnce to populate if desired
+  const onObjectsSelected = (payload) => {
+    try {
+      const ids = Array.isArray(payload) ? payload : payload?.ids || [];
+      const obj = ids.length ? SceneGraphStore.objects[ids[0]]?.object : null;
+      setSelected(obj || null);
+    } catch (e) {}
+  };
+
+  const onObjectSelected = (p) => {
+    try {
+      const id = p?.id ?? p;
+      const obj = id ? SceneGraphStore.objects?.[id]?.object || null : null;
+      setSelected(obj);
+    } catch (e) {}
+  };
+
+  EventBus.on?.("scene:updated", onSceneUpdated);
+  EventBus.on?.("objects:selected", onObjectsSelected);
+  EventBus.on?.("object:selected", onObjectSelected);
+
+  return () => {
+    try {
+      EventBus.off?.("scene:updated", onSceneUpdated);
+      EventBus.off?.("objects:selected", onObjectsSelected);
+      EventBus.off?.("object:selected", onObjectSelected);
+    } catch (e) {}
+  };
+}, [updateStatsOnce, refreshLightListFromScene]);
+
+/* ---------- Initial lights refresh ---------- */
+useEffect(() => {
+  refreshLightListFromScene();
+}, [refreshLightListFromScene]);
+
+  /* ---------- helpers referenced earlier ---------- */
+  const handleOutlinerSelect = useCallback((obj) => {
+    try {
+      if (!obj) return;
+      if (workspaceRef.current?.selectObject) {
+        workspaceRef.current.selectObject(obj);
+        workspaceRef.current.frameObject?.(obj);
+      } else {
+        setSelected(obj);
+        cameraControlsApiRef.current?.frameObject?.(obj, { padding: 1 });
+      }
+    } catch (e) { console.warn("handleOutlinerSelect failed", e); }
+  }, []);
+
+  const toggleSculpt = useCallback(() => {
+    const on = !!(workspaceRef.current?.isSculptMode?.() ?? false);
+    const next = !on;
+    EventBus.emit?.('studio:toggle:sculpt', { enabled: next });
+    try { workspaceRef.current?.setSculptMode?.(next); } catch (e) {}
+    pushToast({ type: "info", message: `Sculpt ${next ? 'enabled' : 'disabled'}` });
+  }, [pushToast]);
+
+  const setDevicePixelRatio = useCallback((dpr) => {
+    try {
+      const { renderer } = probeWorkspace();
+      if (!renderer) return;
+      renderer.setPixelRatio(Math.max(0.5, Math.min(2.5, dpr)));
+      try {
+        const w = renderer.domElement.clientWidth, h = renderer.domElement.clientHeight;
+        postApiRef.current?.resize?.(w, h);
+      } catch (e) {}
+      pushToast({ type: "info", message: `DPR set to ${dpr}` });
+    } catch (e) { console.warn("setDevicePixelRatio failed", e); }
+  }, [probeWorkspace, pushToast]);
+
+  /* ---------- panel drag/resize ---------- */
+  useEffect(() => {
+    const onMove = (ev) => {
+      if (!draggingRef.current) return;
+      const rect = panelRef.current.getBoundingClientRect();
+      const left = ev.clientX - offsetRef.current.x;
+      const top = ev.clientY - offsetRef.current.y;
+      const constrainedTop = Math.max(8, Math.min(window.innerHeight - rect.height - 8, top));
+      const constrainedRight = Math.max(8, Math.min(window.innerWidth - rect.width - 8, window.innerWidth - left - rect.width));
+      setPanelPos({ top: constrainedTop, right: Math.max(8, constrainedRight) });
+    };
+    const onUp = () => { draggingRef.current = false; };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
+
+  /* ---------- render ---------- */
+  const panelTopOffset = (toolbarRef.current?.getBoundingClientRect?.()?.height ?? 64) + 12;
+  const stats = { objects: 0, tris: 0 };
 
   return (
     <DndProvider backend={HTML5Backend}>
       <div ref={containerRef} className="studio-container">
-        <ToastContainer toasts={toasts} remove={removeToast} />
+        <ToastList toasts={toasts} remove={removeToast} />
         <Loader active={loading || collabLoading} message={loading ? `Importing model...` : (collabLoading ? "Connecting to collab..." : "")} progress={loadProgress} />
         <ConfirmModal
           open={confirmState.open}
@@ -935,15 +980,16 @@ export default function Studio() {
           onConfirm={() => { confirmState.onConfirm?.(); setConfirmState((s) => ({ ...s, open: false })); }}
         />
 
-        <div className="studio-panel palette-panel" style={{ width: paletteCollapsed ? 44 : paletteWidth, minWidth: paletteCollapsed ? 44 : 120 }}>
+        <div className="studio-panel palette-panel reveal" style={{ width: paletteCollapsed ? 44 : paletteWidth, minWidth: paletteCollapsed ? 44 : 120 }}>
           {!paletteCollapsed ? (
             <Palette
-              items={PALETTE_ITEMS.map((it) => ({ ...it, fav: !!favorites[it.name] }))}
+              items={PALETTE_ITEMS.map((it) => ({ ...it, fav: false }))}
               onAction={(name, client) => workspaceRef.current?.addItem?.(name, client)}
             />
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "center", paddingTop: 8 }} />
           )}
+
           {!paletteCollapsed && (<div className="palette-resizer" onMouseDown={(e) => {
             e.preventDefault();
             resizingRef.current = true;
@@ -964,25 +1010,26 @@ export default function Studio() {
             window.addEventListener("mousemove", onMove);
             window.addEventListener("mouseup", onUp);
           }} />)}
+
           <div style={{ position: "absolute", right: 8, top: 8 }}>
             <button title={paletteCollapsed ? "Open Palette (P)" : "Collapse Palette (P)"} onClick={() => setPaletteCollapsed((v) => !v)} className="studio-btn icon-btn"><FiSidebar /></button>
           </div>
         </div>
 
         <div className="workspace-area">
-          <div ref={toolbarRef} className="studio-toolbar">
+          <div ref={toolbarRef} className="studio-toolbar reveal">
             <button className="studio-btn icon-btn" onClick={() => workspaceRef.current?.undo?.()} title="Undo (Ctrl/Cmd+Z)"><FiRotateCcw /></button>
             <button className="studio-btn icon-btn" onClick={() => workspaceRef.current?.redo?.()} title="Redo (Ctrl/Cmd+Y)"><FiRotateCw /></button>
 
             <div className="segmented-control">
               {[["translate", "Move"], ["rotate", "Rotate"], ["scale", "Scale"]].map(([m, label]) => (
-                <button key={m} onClick={() => setMode(m)} className={activeMode === m ? 'active' : ''} title={`${label} mode`}>{label}</button>
+                <button key={m} onClick={() => setActiveMode(m)} className={activeMode === m ? 'active' : ''} title={`${label} mode`}>{label}</button>
               ))}
             </div>
 
             <div className="studio-btn snap-control">
               <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }} title="Toggle snapping">
-                <input type="checkbox" checked={snapEnabled} onChange={() => toggleSnap()} />
+                <input type="checkbox" checked={snapEnabled} onChange={() => { setSnapEnabled((v) => !v); workspaceRef.current?.toggleSnap?.(); }} />
                 Snap
               </label>
               <input type="number" value={snapSize} step={0.1} min={0} onChange={(e) => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) setSnapSize(v); }} title="Snap size" />
@@ -1033,7 +1080,7 @@ export default function Studio() {
           />
 
           {!propsCollapsed && (
-            <div ref={panelRef} className="studio-panel properties-panel" style={{ width: propsWidth, top: panelPos.top, right: panelPos.right }} role="region" aria-label="Inspector">
+            <div ref={panelRef} className="studio-panel properties-panel reveal" style={{ width: propsWidth, top: panelPos.top, right: panelPos.right }} role="region" aria-label="Inspector">
               <div className="properties-resizer" onMouseDown={(e) => {
                 e.preventDefault();
                 const startX = e.clientX;
@@ -1176,7 +1223,15 @@ export default function Studio() {
                 {propsTab === 'outliner' && (
                   <div>
                     <div style={{ fontWeight: 700, marginBottom: 8 }}>Scene Outliner</div>
-                    <OutlinerView onSelect={(o) => { handleOutlinerSelect(o); }} sceneVersion={sceneVersion} outlinerSearch={outlinerSearch} setOutlinerSearch={setOutlinerSearch} />
+                    <OutlinerView
+                      onSelect={(o) => { handleOutlinerSelect(o); }}
+                      sceneVersion={sceneVersion}
+                      outlinerSearch={outlinerSearch}
+                      setOutlinerSearch={setOutlinerSearch}
+                      pushToast={pushToast}
+                      workspaceRef={workspaceRef}
+                      disposeObjectResources={disposeObjectResources}
+                    />
                   </div>
                 )}
 
@@ -1188,9 +1243,7 @@ export default function Studio() {
                       <button className="launch-btn" onClick={() => runValidation()}>Run Validation</button>
                       <button className="studio-btn" onClick={() => setValidationResult(null)}>Clear</button>
                     </div>
-
                     {!validationResult && <div style={{ color: 'var(--text-muted)' }}>No validation run yet. Click "Run Validation".</div>}
-
                     {validationResult && (
                       <div style={{ fontSize: 13 }}>
                         {validationResult.ok ? <div style={{ color: 'var(--success)' }}>OK</div> : <div style={{ color: 'var(--danger)' }}>Issues found</div>}
@@ -1205,75 +1258,21 @@ export default function Studio() {
                 {/* Environment */}
                 {propsTab === 'environment' && (
                   <div>
-                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Environment / HDR</div>
-
-                    <div style={{ marginBottom: 12 }}>
-                      <label style={{ display: 'block', fontSize: 12 }}>Background Color</label>
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                        <input type="color" value={envColor} onChange={(e) => { setEnvColor(e.target.value); }} />
-                        <button className="studio-btn" onClick={() => applyEnvironmentColor(envColor)}>Apply Color</button>
-                      </div>
-                    </div>
-
-                    <div style={{ marginBottom: 12 }}>
-                      <label style={{ display: 'block', fontSize: 12 }}>Upload HDR / Equirectangular</label>
-                      <input type="file" accept=".hdr,.exr,.jpg,.png,.jpeg" onChange={(e) => { const f = e.target.files?.[0]; if (f) applyEnvironmentFromFile(f); }} />
-                      <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-                        <button className="studio-btn" onClick={() => { applyEnvironmentColor(envColor); }}>Apply simple color</button>
-                        <button className="studio-btn" onClick={() => { pushToast({ type: "info", message: "Hint: upload .hdr for PBR reflections (PMREM applied when available)" }) }}>Help</button>
-                      </div>
-                    </div>
-
-                    <div style={{ marginTop: 6, marginBottom: 12 }}>
-                      <label style={{ display: 'block', fontSize: 12 }}>Environment Intensity</label>
-                      <input type="range" min="0" max="4" step="0.01" value={envIntensity} onChange={(e) => {
-                        const v = parseFloat(e.target.value); setEnvIntensity(v);
-                        try {
-                          const scene = workspaceRef.current?.scene;
-                          if (scene && scene.environment) {
-                            scene.traverse((n) => {
-                              if (n.isMesh && n.material) {
-                                const mats = Array.isArray(n.material) ? n.material : [n.material];
-                                mats.forEach(m => {
-                                  if (m && typeof m.envMapIntensity === 'number') m.envMapIntensity = v;
-                                  if (m && typeof m.needsUpdate !== 'undefined') m.needsUpdate = true;
-                                });
-                              }
-                            });
-                          }
-                        } catch (e) {}
-                      }} />
-                    </div>
-
-                    <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-                      <button className="studio-btn" onClick={() => optimizeForLocalEdit()}>Optimize for local edit</button>
-                      <button className="studio-btn" onClick={() => toggleShadows(false)}>Shadows Off</button>
-                      <button className="studio-btn" onClick={() => toggleShadows(true)}>Shadows On</button>
-                      <button className="studio-btn" onClick={() => toggleBloom(!bloomEnabled)}>{bloomEnabled ? 'Bloom Off' : 'Bloom On'}</button>
+                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Environment</div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <input type="color" value={envColor} onChange={(e) => setEnvColor(e.target.value)} />
+                      <button className="studio-btn" onClick={() => applyEnvironmentColor(envColor)}>Apply Color</button>
+                      <label className="studio-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        <input type="file" accept=".hdr,.exr,.jpg,.png" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) applyEnvironmentFromFile(f); e.target.value = ''; }} />
+                        Import...
+                      </label>
                     </div>
                   </div>
                 )}
-
               </div>
-
             </div>
           )}
-
         </div>
-
-        <div className="status-bar">
-          Objects: {stats.objects} • Tris: {stats.tris} • Selected: {selected ? (selected.name || selected.uuid) : "—"} • Snap: {snapEnabled ? `${snapSize}` : "off"} • Collab: {collabConnected ? 'on' : 'off'} {lastSaveAt ? ` • Saved: ${new Date(lastSaveAt).toLocaleString()}` : ''}
-        </div>
-
-        {ctxMenu && (
-          <div className="context-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }} onMouseLeave={closeContext}>
-            <button className="context-menu-btn" onClick={() => { duplicateWrapper(); closeContext(); }}><FiCopy style={{ marginRight: 8 }} /> Duplicate</button>
-            <button className="context-menu-btn delete" onClick={() => { requestDeleteSelected(); closeContext(); }}><FiTrash2 style={{ marginRight: 8 }} /> Delete</button>
-            <button className="context-menu-btn" onClick={() => { exportGLTF(true); closeContext(); }}><FiSave style={{ marginRight: 8 }} /> Export GLB</button>
-            <button className="context-menu-btn" onClick={() => { saveJSON(); closeContext(); }}><FiPlusSquare style={{ marginRight: 8 }} /> Save JSON</button>
-            <button className="context-menu-btn" onClick={() => { requestResetScene(); closeContext(); }}><FiRefreshCcw style={{ marginRight: 8 }} /> Reset Scene</button>
-          </div>
-        )}
       </div>
     </DndProvider>
   );
