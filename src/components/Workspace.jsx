@@ -93,11 +93,10 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   // command history (preferred for undo/redo)
   class Cmd {
     constructor(redoFn, undoFn, label = "") { 
-    this.redo = redoFn;
-    this.undo = undoFn;
-    this.label = label;
-}
- // placeholder to satisfy linter? we'll implement below
+      this.redo = redoFn;
+      this.undo = undoFn;
+      this.label = label;
+    }
   }
   
   class HistoryManager {
@@ -224,6 +223,61 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   }, [scheduleComputeBoundsTreeForObject]);
 
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  // ---------- Safe-add helper to avoid invalid scene.add(...) calls ----------
+  /**
+   * safeAdd(parent, obj, label)
+   * - prevents crashes when obj is falsy or not an Object3D
+   * - wraps BufferGeometry into a Mesh
+   * - logs helpful errors for debugging in production
+   */
+  function safeAdd(parent, obj, label = "unknown") {
+    try {
+      if (!parent || typeof parent.add !== "function") {
+        console.error("safeAdd: invalid parent (not a Group/Scene)", parent, label);
+        return null;
+      }
+      if (!obj) {
+        console.error("safeAdd: attempted to add falsy object to parent", { parentName: parent.name, label, obj });
+        return null;
+      }
+
+      // duck typing for Object3D to avoid cross-realm instanceof issues
+      const looksLikeObj3D = typeof obj === "object" && (typeof obj.add === "function" || obj.isObject3D || obj.isMesh || obj.isGroup);
+
+      // If it looks like geometry (BufferGeometry) — wrap it
+      if (obj.isBufferGeometry || obj.isGeometry) {
+        const mesh = new THREE.Mesh(obj, new THREE.MeshStandardMaterial({ color: 0x888888 }));
+        mesh.name = `${label}_wrapped_geom`;
+        parent.add(mesh);
+        return mesh;
+      }
+
+      if (looksLikeObj3D) {
+        parent.add(obj);
+        return obj;
+      }
+
+      // If it's an object with a `.scene` or `.object` (some libs), try to extract a valid object
+      if (obj.scene && (typeof obj.scene.add === "function")) {
+        parent.add(obj.scene);
+        console.warn("safeAdd: added obj.scene instead of obj", { label });
+        return obj.scene;
+      }
+      if (obj.object && (typeof obj.object.add === "function")) {
+        parent.add(obj.object);
+        console.warn("safeAdd: added obj.object instead of obj", { label });
+        return obj.object;
+      }
+
+      // fallback - not valid: log and skip
+      console.error("safeAdd: refusing to add non-Object3D", { label, obj });
+      return null;
+    } catch (e) {
+      console.error("safeAdd: thrown", e, { label, obj, parent });
+      return null;
+    }
+  }
 
   // --- Sculpting integration (kept from your code) ---
   const sculptStateRef = useRef({
@@ -529,7 +583,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     if (!scene._user_group && !scene._userGroup) {
       const g = new THREE.Group();
       g.name = "_user_group";
-      scene.add(g);
+      safeAdd(scene, g, "_user_group");
       scene._userGroup = scene._user_group = g;
     }
     return scene._user_group ?? scene._userGroup;
@@ -550,8 +604,9 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     const userGroup = new THREE.Group();
     userGroup.name = "_user_group";
 
-    scene.add(editorGroup);
-    scene.add(userGroup);
+    // safeAdd both groups
+    safeAdd(scene, editorGroup, "_editor_group");
+    safeAdd(scene, userGroup, "_user_group");
 
     sceneRef.current._editorGroup = editorGroup;
     sceneRef.current._userGroup = userGroup;
@@ -676,7 +731,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       }
     });
 
-    editorGroup.add(transform);
+    // safeAdd transform into editorGroup
+    safeAdd(editorGroup, transform, "_transform_controls");
     transformRef.current = transform;
 
     // Ambient + editor lights + helpers
@@ -687,17 +743,21 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
     dirLight.position.set(5, 10, 7.5);
     dirLight.name = "_dir_light";
-    editorGroup.add(amb, hemi, dirLight);
+
+    // use safeAdd for all editorGroup items
+    safeAdd(editorGroup, amb, "_ambient_light");
+    safeAdd(editorGroup, hemi, "_hemi_light");
+    safeAdd(editorGroup, dirLight, "_dir_light");
 
     const grid = new THREE.GridHelper(40, 80, 0x33ffcc, 0x5500ff);
     grid.name = "_grid";
-    editorGroup.add(grid);
-    editorGroup.add(new THREE.AxesHelper(3));
+    safeAdd(editorGroup, grid, "_grid");
+    safeAdd(editorGroup, new THREE.AxesHelper(3), "_axes_helper");
 
     const selectionBox = new THREE.BoxHelper();
     selectionBox.name = "_selection_box";
     selectionBox.visible = false;
-    editorGroup.add(selectionBox);
+    safeAdd(editorGroup, selectionBox, "_selection_box");
 
     // --- composer/postprocessing setup via helper
     try {
@@ -786,7 +846,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
               });
               root.position.sub(center);
               const ug = getUserGroup();
-              if (ug) ug.add(root); else scene.add(root);
+              const parent = ug || scene;
+              safeAdd(parent, root, root.name || "imported_root");
               try { root.traverse(n => { SceneGraphStore.addObject?.(n.uuid, n, { name: n.name, type: n.type }); }); } catch (e) {}
               ensureBVHForObject(root);
               selectObject(root);
@@ -1185,7 +1246,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     }
     centroid.multiplyScalar(1 / Math.max(1, count));
     group.position.copy(centroid);
-    sceneRef.current.add(group);
+    safeAdd(sceneRef.current, group, group.name);
 
     for (const o of Array.from(set)) {
       try {
@@ -1281,8 +1342,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     obj.traverse((n) => { if (!n.userData) n.userData = {}; n.userData.__objekta = true; });
 
     const userGroup = getUserGroup();
-    if (userGroup) userGroup.add(obj);
-    else sceneRef.current.add(obj);
+    const parent = userGroup || sceneRef.current;
+    safeAdd(parent, obj, obj.name);
 
     try { ensureBVHForObject(obj); } catch (e) {}
 
@@ -1306,8 +1367,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
             recreated.userData = recreated.userData || {};
             recreated.userData.__objekta = true;
             const ug = getUserGroup();
-            if (ug) ug.add(recreated);
-            else sceneRef.current.add(recreated);
+            const parent2 = ug || sceneRef.current;
+            safeAdd(parent2, recreated, "redo_add");
             ensureBVHForObject(recreated);
             selectObject(recreated);
             bumpSceneVersion('redo-add');
@@ -1410,8 +1471,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
           sceneNode.name = sceneNode.name || "Imported_" + nameCountRef.current++;
 
           const userGroup = getUserGroup();
-          if (userGroup) userGroup.add(sceneNode);
-          else sceneRef.current.add(sceneNode);
+          const parent = userGroup || sceneRef.current;
+          safeAdd(parent, sceneNode, sceneNode.name || "imported_sceneNode");
 
           // register all loaded nodes with SceneGraphStore
           try {
@@ -1439,8 +1500,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
                   recreated.userData = recreated.userData || {};
                   recreated.userData.__objekta = true;
                   const ug = getUserGroup();
-                  if (ug) ug.add(recreated);
-                  else sceneRef.current.add(recreated);
+                  const parent2 = ug || sceneRef.current;
+                  safeAdd(parent2, recreated, "redo_import");
                   ensureBVHForObject(recreated);
                   selectObject(recreated);
                   bumpSceneVersion('redo-import');
@@ -1618,7 +1679,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     const toRemove = userGroup ? Array.from(userGroup.children) : [];
     toRemove.forEach((c) => { try { disposeObject(c); } catch (e) {} if (c.parent) c.parent.remove(c); });
     const loader = new THREE.ObjectLoader();
-    entry.snaps.forEach((snap) => { try { const obj = loader.parse(snap); obj.userData.__objekta = true; if (userGroup) userGroup.add(obj); else sceneRef.current.add(obj); ensureBVHForObject(obj); } catch (err) { console.error('Failed to parse history snapshot', err); } });
+    entry.snaps.forEach((snap) => { try { const obj = loader.parse(snap); obj.userData.__objekta = true; const parent = userGroup || sceneRef.current; safeAdd(parent, obj, "history_load"); ensureBVHForObject(obj); } catch (err) { console.error('Failed to parse history snapshot', err); } });
     clearSelection();
     bumpSceneVersion('loadHistory');
     needsRenderRef.current = true;
@@ -1672,8 +1733,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
             recreated.userData = recreated.userData || {};
             recreated.userData.__objekta = true;
             const ug = getUserGroup();
-            if (ug) ug.add(recreated);
-            else sceneRef.current.add(recreated);
+            const parent = ug || sceneRef.current;
+            safeAdd(parent, recreated, "undo_delete");
             try { recreated.traverse(n => { SceneGraphStore.addObject?.(n.uuid, n, { name: n.name, type: n.type }); }); } catch (e) {}
             ensureBVHForObject(recreated);
             bumpSceneVersion('undo-delete');
@@ -1695,7 +1756,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       clone.userData.__objekta = true;
       clone.traverse((n) => { if (n.isMesh && n.material) { try { n.material = Array.isArray(n.material) ? n.material.map(m => m.clone()) : n.material.clone(); } catch (err) {} } });
       const userGroup = getUserGroup();
-      if (userGroup) userGroup.add(clone); else sceneRef.current.add(clone);
+      const parent = userGroup || sceneRef.current;
+      safeAdd(parent, clone, clone.name);
       ensureBVHForObject(clone);
 
       try { clone.traverse(n => { SceneGraphStore.addObject?.(n.uuid, n, { name: n.name, type: n.type }); }); } catch (e) {}
@@ -1716,8 +1778,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
               recreated.userData = recreated.userData || {};
               recreated.userData.__objekta = true;
               const ug = getUserGroup();
-              if (ug) ug.add(recreated);
-              else sceneRef.current.add(recreated);
+              const parent2 = ug || sceneRef.current;
+              safeAdd(parent2, recreated, "redo_duplicate");
               try { recreated.traverse(n => { SceneGraphStore.addObject?.(n.uuid, n, { name: n.name, type: n.type }); }); } catch (e) {}
               ensureBVHForObject(recreated);
               bumpSceneVersion('redo-duplicate');
@@ -1767,7 +1829,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       try {
         const obj = loader.parse(snap);
         obj.userData.__objekta = true;
-        if (userGroup) userGroup.add(obj); else sceneRef.current.add(obj);
+        const parent = userGroup || sceneRef.current;
+        safeAdd(parent, obj, "load_data_obj");
         ensureBVHForObject(obj);
         try { obj.traverse(n => { SceneGraphStore.addObject?.(n.uuid, n, { name: n.name, type: n.type }); }); } catch (e) {}
       } catch (err) { console.error('Failed to load object from data', err); }
