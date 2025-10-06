@@ -3,44 +3,30 @@ import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState, us
 import * as THREE from "three";
 
 // three/examples imports MUST include .js for Vite
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js"; // (kept for safety in some code paths)
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { KTX2Loader } from "three/examples/jsm/loaders/KTX2Loader.js";
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
-import { MeshBVH, acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "three-mesh-bvh";
-import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
-import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
-import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
-import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
-import { FXAAShader } from "three/examples/jsm/shaders/FXAAShader.js";
+import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "three-mesh-bvh";
 
 import { useDrop } from "react-dnd";
 import { PALETTE_TYPE } from "./Palette";
 import EventBus from "../utils/EventBus";
 import { SceneGraphStore } from "../store/SceneGraphStore";
 
-// ----- new component helpers you provided -----
-import initCameraControls from "../components/CameraControls"; // initCameraControls({ camera, domElement, autoRotate, damping })
-import setupEnvironment from "../components/EnvironmentSetup"; // setupEnvironment({ scene, renderer })
-import initGLBImporter from "../components/GLBImporter"; // initGLBImporter({ scene, domElement, onLoad })
-import setupDefaultLighting from "../components/LightingSetup"; // setupDefaultLighting(scene, renderer, opts)
-import createMaterialEditor from "../components/MaterialEditor"; // createMaterialEditor({ container, getSelectedMesh })
-import setupPostProcessing from "../components/PostProcessing"; // setupPostProcessing({ renderer, scene, camera, width, height, options })
-
-/*
-  Workspace.jsx — integrated version
-  - Original workspace logic (sculpting, BVH, history, transform, selection, GLTF import/export) preserved
-  - Hooked up external components/utilities provided by you:
-    CameraControls, EnvironmentSetup, GLBImporter, LightingSetup, MaterialEditor, PostProcessing
-*/
+import initCameraControls from "../components/CameraControls";
+import setupEnvironment from "../components/EnvironmentSetup";
+import initGLBImporter from "../components/GLBImporter";
+import setupDefaultLighting from "../components/LightingSetup";
+import createMaterialEditor from "../components/MaterialEditor";
+import setupPostProcessing from "../components/PostProcessing";
 
 const HISTORY_LIMIT = 200;
-const THROTTLE_MS = 50;
-const AUTOSAVE_KEY = "objekta_autosave_v1";
 const HISTORY_DEBOUNCE_MS = 600;
+const AUTOSAVE_KEY = "objekta_autosave_v1";
 
 const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTopOffset = 12, onSceneChange }, ref) => {
   const containerRef = useRef(null);
@@ -52,15 +38,14 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   const orbitRef = useRef(null);
   const transformRef = useRef(null);
 
-  // new helpers refs
   const cameraControlsApiRef = useRef(null);
   const lightingApiRef = useRef(null);
   const envApiRef = useRef(null);
   const glbImporterApiRef = useRef(null);
   const materialEditorApiRef = useRef(null);
   const postfxApiRef = useRef(null);
-
   const composerRef = useRef(null);
+
   const gltfLoaderRef = useRef(null);
   const dracoRef = useRef(null);
   const ktx2Ref = useRef(null);
@@ -74,11 +59,10 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   const [selectedInternal, setSelectedInternal] = useState(null);
   const [toolbarPos, setToolbarPos] = useState({ x: -999, y: -999 });
   const [transformMode, setTransformModeState] = useState("translate");
+  const [loading, setLoading] = useState(false);
+  const [hover, setHover] = useState({ name: "", x: -999, y: -999 });
 
-  // render-on-demand flag
   const needsRenderRef = useRef(true);
-
-  // simple scene-version counter — increment whenever scene changes
   const sceneVersionRef = useRef(0);
   const bumpSceneVersion = (why) => {
     sceneVersionRef.current++;
@@ -86,19 +70,17 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     try { EventBus?.emit?.("scene:updated", { version: sceneVersionRef.current, why }); } catch (e) {}
   };
 
-  // snapshot history (legacy/autosave)
+  // History / undo
   const snapshotHistoryRef = useRef([]);
   const snapshotHistoryIndexRef = useRef(-1);
 
-  // command history (preferred for undo/redo)
   class Cmd {
-    constructor(redoFn, undoFn, label = "") { 
+    constructor(redoFn, undoFn, label = "") {
       this.redo = redoFn;
       this.undo = undoFn;
       this.label = label;
     }
   }
-  
   class HistoryManager {
     constructor(limit = HISTORY_LIMIT) {
       this.limit = limit;
@@ -128,27 +110,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   }
   const cmdHistoryRef = useRef(new HistoryManager(HISTORY_LIMIT));
 
-  const transformStartRef = useRef(null);
-  const transformDirtyRef = useRef(false);
-  const lastToolbarUpdate = useRef(0);
-  const historyDebounceRef = useRef(null);
-  const lastHistorySignatureRef = useRef(null);
-
-  // multi-select
-  const selectedSetRef = useRef(new Set());
-  const transformGroupRef = useRef(null);
-  const multiParentMapRef = useRef(new Map());
-
-  // snapping
-  const snapRef = useRef({ enabled: false, value: 0.5 });
-
-  // hover tooltip
-  const [hover, setHover] = useState({ name: "", x: -999, y: -999 });
-
-  // loading state for GLTFs
-  const [loading, setLoading] = useState(false);
-
-  // ---------- BVH wiring ----------
+  // BVH wiring
   try {
     if (THREE && THREE.Mesh && THREE.Mesh.prototype && THREE.Mesh.prototype.raycast !== acceleratedRaycast) {
       THREE.Mesh.prototype.raycast = acceleratedRaycast;
@@ -157,11 +119,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
       THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
     }
-  } catch (err) {
-    // fallback silently
-  }
+  } catch (err) {}
 
-  // --- Non-blocking BVH / computeBoundsTree scheduler ---
   const scheduleComputeBoundsTreeForObject = useCallback((obj) => {
     if (!obj) return;
     const tasks = [];
@@ -169,20 +128,12 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       obj.traverse((n) => {
         if (n.isMesh && n.geometry) {
           if (typeof n.geometry.computeBoundsTree === "function") {
-            tasks.push(() => {
-              try { n.geometry.computeBoundsTree(); } catch (e) {}
-            });
-          } else if (MeshBVH) {
-            tasks.push(() => {
-              try { n.geometry.boundsTree = new MeshBVH(n.geometry); } catch (e) {}
-            });
+            tasks.push(() => { try { n.geometry.computeBoundsTree(); } catch (e) {} });
           }
         }
       });
-    } catch (e) { /* ignore */ }
-
+    } catch (e) {}
     if (tasks.length === 0) return;
-
     const runChunk = () => {
       const start = performance.now();
       while (tasks.length) {
@@ -194,103 +145,40 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
         }
       }
     };
-
     if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
-      try {
-        window.requestIdleCallback(() => runChunk(), { timeout: 600 });
-      } catch (e) {
-        setTimeout(runChunk, 16);
-      }
-    } else {
-      setTimeout(runChunk, 16);
-    }
+      try { window.requestIdleCallback(() => runChunk(), { timeout: 600 }); } catch (e) { setTimeout(runChunk, 16); }
+    } else setTimeout(runChunk, 16);
   }, []);
 
   const ensureBVHForObject = useCallback((obj) => {
-    try {
-      scheduleComputeBoundsTreeForObject(obj);
-    } catch (e) {
-      try {
-        obj.traverse((n) => {
-          if (n.isMesh && n.geometry && typeof n.geometry.computeBoundsTree === "function") {
-            try { n.geometry.computeBoundsTree(); } catch (e) {}
-          } else if (n.isMesh && n.geometry && MeshBVH) {
-            try { n.geometry.boundsTree = new MeshBVH(n.geometry); } catch (e) {}
-          }
-        });
-      } catch (er) {}
-    }
+    try { scheduleComputeBoundsTreeForObject(obj); } catch (e) { /* fallback ignored */ }
   }, [scheduleComputeBoundsTreeForObject]);
 
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-  // ---------- Safe-add helper to avoid invalid scene.add(...) calls ----------
-  /**
-   * safeAdd(parent, obj, label)
-   * - prevents crashes when obj is falsy or not an Object3D
-   * - wraps BufferGeometry into a Mesh
-   * - logs helpful errors for debugging in production
-   */
   function safeAdd(parent, obj, label = "unknown") {
     try {
-      if (!parent || typeof parent.add !== "function") {
-        console.error("safeAdd: invalid parent (not a Group/Scene)", parent, label);
-        return null;
-      }
-      if (!obj) {
-        console.error("safeAdd: attempted to add falsy object to parent", { parentName: parent.name, label, obj });
-        return null;
-      }
-
-      // duck typing for Object3D to avoid cross-realm instanceof issues
+      if (!parent || typeof parent.add !== "function") { console.error("safeAdd: invalid parent (not a Group/Scene)", parent, label); return null; }
+      if (!obj) { console.error("safeAdd: attempted to add falsy object to parent", { parentName: parent.name, label, obj }); return null; }
       const looksLikeObj3D = typeof obj === "object" && (typeof obj.add === "function" || obj.isObject3D || obj.isMesh || obj.isGroup);
-
-      // If it looks like geometry (BufferGeometry) — wrap it
       if (obj.isBufferGeometry || obj.isGeometry) {
         const mesh = new THREE.Mesh(obj, new THREE.MeshStandardMaterial({ color: 0x888888 }));
         mesh.name = `${label}_wrapped_geom`;
         parent.add(mesh);
         return mesh;
       }
-
-      if (looksLikeObj3D) {
-        parent.add(obj);
-        return obj;
-      }
-
-      // If it's an object with a `.scene` or `.object` (some libs), try to extract a valid object
-      if (obj.scene && (typeof obj.scene.add === "function")) {
-        parent.add(obj.scene);
-        console.warn("safeAdd: added obj.scene instead of obj", { label });
-        return obj.scene;
-      }
-      if (obj.object && (typeof obj.object.add === "function")) {
-        parent.add(obj.object);
-        console.warn("safeAdd: added obj.object instead of obj", { label });
-        return obj.object;
-      }
-
-      // fallback - not valid: log and skip
+      if (looksLikeObj3D) { parent.add(obj); return obj; }
+      if (obj.scene && (typeof obj.scene.add === "function")) { parent.add(obj.scene); console.warn("safeAdd: added obj.scene instead of obj", { label }); return obj.scene; }
+      if (obj.object && (typeof obj.object.add === "function")) { parent.add(obj.object); console.warn("safeAdd: added obj.object instead of obj", { label }); return obj.object; }
       console.error("safeAdd: refusing to add non-Object3D", { label, obj });
       return null;
-    } catch (e) {
-      console.error("safeAdd: thrown", e, { label, obj, parent });
-      return null;
-    }
+    } catch (e) { console.error("safeAdd: thrown", e, { label, obj, parent }); return null; }
   }
 
-  // --- Sculpting integration (kept from your code) ---
+  // sculpting
   const sculptStateRef = useRef({
-    active: false,
-    target: null,
-    mode: 'inflate',
-    radius: 0.25,
-    strength: 0.6,
-    symmetry: { x: false, y: false, z: false },
-    pointerDown: false,
-    lastPoint: null,
-    neighborsMap: new Map(),
-    undoTmp: null,
+    active: false, target: null, mode: 'inflate', radius: 0.25, strength: 0.6,
+    symmetry: { x: false, y: false, z: false }, pointerDown: false, lastPoint: null, neighborsMap: new Map(), undoTmp: null,
   });
 
   const buildVertexNeighbors = (geometry) => {
@@ -300,7 +188,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     const nVerts = posAttr.count;
     const neighbors = new Array(nVerts);
     for (let i = 0; i < nVerts; i++) neighbors[i] = new Set();
-
     if (idxAttr) {
       const idx = idxAttr.array;
       for (let i = 0; i < idx.length; i += 3) {
@@ -333,14 +220,11 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     const nVerts = posAttr.count;
     const localPoint = worldPoint.clone();
     mesh.worldToLocal(localPoint);
-
     const radius = (typeof opts.radius === 'number') ? opts.radius : sculptStateRef.current.radius;
     const strength = (typeof opts.strength === 'number') ? opts.strength : sculptStateRef.current.strength;
     const mode = opts.mode || sculptStateRef.current.mode;
 
-    if (!sculptStateRef.current.neighborsMap.has(geometry.uuid)) {
-      sculptStateRef.current.neighborsMap.set(geometry.uuid, buildVertexNeighbors(geometry));
-    }
+    if (!sculptStateRef.current.neighborsMap.has(geometry.uuid)) sculptStateRef.current.neighborsMap.set(geometry.uuid, buildVertexNeighbors(geometry));
     const neighbors = sculptStateRef.current.neighborsMap.get(geometry.uuid);
 
     if (!geometry.attributes.normal) geometry.computeVertexNormals();
@@ -432,8 +316,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
             pos.array[ix] = v[0]; pos.array[ix+1] = v[1]; pos.array[ix+2] = v[2];
           }
           pos.needsUpdate = true; geometry.computeVertexNormals && geometry.computeVertexNormals();
-          ensureBVHForObject(mesh); bumpSceneVersion('sculpt-redo');
-          needsRenderRef.current = true;
+          ensureBVHForObject(mesh); bumpSceneVersion('sculpt-redo'); needsRenderRef.current = true;
         },
         () => {
           for (const [i, v] of undoSnapshot) {
@@ -441,8 +324,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
             pos.array[ix] = v[0]; pos.array[ix+1] = v[1]; pos.array[ix+2] = v[2];
           }
           pos.needsUpdate = true; geometry.computeVertexNormals && geometry.computeVertexNormals();
-          ensureBVHForObject(mesh); bumpSceneVersion('sculpt-undo');
-          needsRenderRef.current = true;
+          ensureBVHForObject(mesh); bumpSceneVersion('sculpt-undo'); needsRenderRef.current = true;
         },
         label
       ));
@@ -478,7 +360,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     needsRenderRef.current = true;
   };
 
-  // pointer handlers for sculpting
+  // sculpt pointer events (attached later after renderer created)
   const onSculptPointerDown = (event) => {
     if (!sculptStateRef.current.active) return;
     sculptStateRef.current.pointerDown = true;
@@ -493,12 +375,9 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       if (!mesh) return;
       const worldPoint = hit.point.clone();
       const res = applyBrushToMesh(mesh, worldPoint, { radius: sculptStateRef.current.radius, strength: sculptStateRef.current.strength, mode: sculptStateRef.current.mode, viewDir: cameraRef.current.getWorldDirection(new THREE.Vector3()).clone() });
-      if (res && res.changed && res.changed.size > 0) {
-        sculptStateRef.current.undoTmp = res.changed;
-      }
+      if (res && res.changed && res.changed.size > 0) sculptStateRef.current.undoTmp = res.changed;
     } catch (e) { console.warn('sculpt pointerdown', e); }
   };
-
   const onSculptPointerMove = (event) => {
     if (!sculptStateRef.current.active || !sculptStateRef.current.pointerDown) return;
     try {
@@ -520,8 +399,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       }
     } catch (e) { console.warn('sculpt pointermove', e); }
   };
-
-  const onSculptPointerUp = (event) => {
+  const onSculptPointerUp = () => {
     if (!sculptStateRef.current.active || !sculptStateRef.current.pointerDown) return;
     sculptStateRef.current.pointerDown = false;
     const mesh = sculptStateRef.current.target;
@@ -533,7 +411,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   };
 
   useEffect(() => {
-    const dom = () => rendererRef.current?.domElement;
     const elem = rendererRef.current?.domElement;
     if (!elem) return;
     elem.addEventListener('pointerdown', onSculptPointerDown);
@@ -546,6 +423,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     };
   }, []); // attach once
 
+  // sculpt setter helpers (exposed)
   const setSculptRadius = (r) => { sculptStateRef.current.radius = r; };
   const setSculptStrength = (s) => { sculptStateRef.current.strength = s; };
   const setSculptMode = (m) => { sculptStateRef.current.mode = m; };
@@ -600,14 +478,10 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
     const editorGroup = new THREE.Group();
     editorGroup.name = "_editor_group";
-
     const userGroup = new THREE.Group();
     userGroup.name = "_user_group";
-
-    // safeAdd both groups
     safeAdd(scene, editorGroup, "_editor_group");
     safeAdd(scene, userGroup, "_user_group");
-
     sceneRef.current._editorGroup = editorGroup;
     sceneRef.current._userGroup = userGroup;
 
@@ -623,143 +497,45 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     if (THREE.sRGBEncoding) renderer.outputEncoding = THREE.sRGBEncoding;
     rendererRef.current = renderer;
 
-    // Camera controls (from your CameraControls helper)
+    // Camera controls (helper)
     try {
       const camApi = initCameraControls({ camera, domElement: renderer.domElement, autoRotate: false, damping: 0.08 });
       cameraControlsApiRef.current = camApi;
       orbitRef.current = camApi.controls;
-      // listen to controls change to request render
       camApi.controls.addEventListener && camApi.controls.addEventListener('change', () => { needsRenderRef.current = true; });
     } catch (e) {
-      // fallback to OrbitControls
       const orbit = new OrbitControls(camera, renderer.domElement);
       orbit.enableDamping = true;
       orbitRef.current = orbit;
       orbit.addEventListener('change', () => { needsRenderRef.current = true; });
     }
 
-    // Transform
+    // Transform controls
     const transform = new TransformControls(camera, renderer.domElement);
     transform.addEventListener("dragging-changed", (e) => {
       orbitRef.current && (orbitRef.current.enabled = !e.value);
-      transformDirtyRef.current = e.value;
-      if (e.value) {
-        try {
-          const attached = transformRef.current?.object ?? transform.object;
-          if (attached) {
-            transformStartRef.current = {
-              uuid: attached.uuid,
-              pos: attached.position.clone(),
-              rot: { x: attached.rotation.x, y: attached.rotation.y, z: attached.rotation.z },
-              scale: attached.scale.clone(),
-            };
-          } else transformStartRef.current = null;
-        } catch (err) { transformStartRef.current = null; }
-
-        try {
-          const attached = transformRef.current?.object ?? transform.object;
-          const ids = attached ? [attached.uuid] : [];
-          const before = {};
-          if (attached) {
-            before[attached.uuid] = {
-              position: [attached.position.x, attached.position.y, attached.position.z],
-              rotation: [attached.rotation.x, attached.rotation.y, attached.rotation.z],
-              scale: [attached.scale.x, attached.scale.y, attached.scale.z],
-            };
-          }
-          EventBus?.emit?.("transform:started", { ids, before });
-        } catch (e) { /* ignore */ }
-      }
     });
-
     transform.addEventListener("change", () => { updateToolbarPosition(); needsRenderRef.current = true; });
     transform.addEventListener("mouseUp", () => {
-      if (transformDirtyRef.current) {
-        try {
-          const attached = transformRef.current?.object ?? transform.object;
-          if (transformStartRef.current && attached && attached.uuid === transformStartRef.current.uuid) {
-            const start = transformStartRef.current;
-            const end = {
-              uuid: attached.uuid,
-              pos: attached.position.clone(),
-              rot: { x: attached.rotation.x, y: attached.rotation.y, z: attached.rotation.z },
-              scale: attached.scale.clone(),
-            };
-
-            cmdHistoryRef.current.push(new Cmd(
-              () => {
-                const ug = getUserGroup();
-                const obj = ug?.getObjectByProperty('uuid', end.uuid);
-                if (obj) { obj.position.copy(end.pos); obj.rotation.set(end.rot.x, end.rot.y, end.rot.z); obj.scale.copy(end.scale); }
-              },
-              () => {
-                const ug = getUserGroup();
-                const obj = ug?.getObjectByProperty('uuid', start.uuid);
-                if (obj) { obj.position.copy(start.pos); obj.rotation.set(start.rot.x, start.rot.y, start.rot.z); obj.scale.copy(start.scale); }
-              },
-              "transform"
-            ));
-
-            try {
-              const ids = [end.uuid];
-              const before = {
-                [start.uuid]: {
-                  position: [start.pos.x, start.pos.y, start.pos.z],
-                  rotation: [start.rot.x, start.rot.y, start.rot.z],
-                  scale: [start.scale.x, start.scale.y, start.scale.z],
-                }
-              };
-              const after = {
-                [end.uuid]: {
-                  position: [end.pos.x, end.pos.y, end.pos.z],
-                  rotation: [end.rot.x, end.rot.y, end.rot.z],
-                  scale: [end.scale.x, end.scale.y, end.scale.z],
-                }
-              };
-              EventBus?.emit?.("transform:ended", { ids, before, after });
-            } catch (e) { /* ignore */ }
-
-            bumpSceneVersion('transform');
-            needsRenderRef.current = true;
-          }
-        } catch (e) { console.warn("Transform commit failed", e); }
-        transformDirtyRef.current = false;
-        transformStartRef.current = null;
-      }
-      if (transformGroupRef.current) {
-        try { dissolveTransformGroup(); } catch (e) {}
-      }
+      needsRenderRef.current = true;
     });
-
-    // safeAdd transform into editorGroup
     safeAdd(editorGroup, transform, "_transform_controls");
     transformRef.current = transform;
 
-    // Ambient + editor lights + helpers
-    const amb = new THREE.AmbientLight(0xffffff, 0.45);
-    amb.name = "_ambient_light";
-    const hemi = new THREE.HemisphereLight(0x606080, 0x202020, 0.4);
-    hemi.name = "_hemi_light";
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    dirLight.position.set(5, 10, 7.5);
-    dirLight.name = "_dir_light";
-
-    // use safeAdd for all editorGroup items
+    // editor lights & helpers
+    const amb = new THREE.AmbientLight(0xffffff, 0.45); amb.name = "_ambient_light";
+    const hemi = new THREE.HemisphereLight(0x606080, 0x202020, 0.4); hemi.name = "_hemi_light";
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8); dirLight.position.set(5, 10, 7.5); dirLight.name = "_dir_light";
     safeAdd(editorGroup, amb, "_ambient_light");
     safeAdd(editorGroup, hemi, "_hemi_light");
     safeAdd(editorGroup, dirLight, "_dir_light");
-
-    const grid = new THREE.GridHelper(40, 80, 0x33ffcc, 0x5500ff);
-    grid.name = "_grid";
-    safeAdd(editorGroup, grid, "_grid");
+    const grid = new THREE.GridHelper(40, 80, 0x33ffcc, 0x5500ff); grid.name = "_grid"; safeAdd(editorGroup, grid, "_grid");
     safeAdd(editorGroup, new THREE.AxesHelper(3), "_axes_helper");
 
-    const selectionBox = new THREE.BoxHelper();
-    selectionBox.name = "_selection_box";
-    selectionBox.visible = false;
+    const selectionBox = new THREE.BoxHelper(); selectionBox.name = "_selection_box"; selectionBox.visible = false;
     safeAdd(editorGroup, selectionBox, "_selection_box");
 
-    // --- composer/postprocessing setup via helper
+    // composer via helper (optional)
     try {
       const postfx = setupPostProcessing({
         renderer,
@@ -771,46 +547,33 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       });
       postfxApiRef.current = postfx;
       composerRef.current = postfx.composer;
-    } catch (e) {
-      console.warn('Composer init failed', e);
-      composerRef.current = null;
-      postfxApiRef.current = null;
-    }
+    } catch (e) { console.warn('Composer init failed', e); composerRef.current = null; postfxApiRef.current = null; }
 
-    // --- shared loaders (DRACO/KTX2/GLTF) for reuse ---
+    // shared loaders
     try {
       if (!dracoRef.current) {
         dracoRef.current = new DRACOLoader();
-        dracoRef.current.setDecoderPath("/draco/"); // ensure decoders are served from public/draco
+        dracoRef.current.setDecoderPath("/draco/");
       }
       const gltfLoader = new GLTFLoader();
       gltfLoader.setDRACOLoader(dracoRef.current);
-      // optional KTX2 (if you add basis transcoder in public/basis)
       try {
         ktx2Ref.current = new KTX2Loader().setTranscoderPath("/basis/").detectSupport(renderer);
         gltfLoader.setKTX2Loader(ktx2Ref.current);
-      } catch (e) { /* optional */ }
+      } catch (e) {}
       gltfLoaderRef.current = gltfLoader;
-    } catch (e) {
-      console.warn("Shared loader init failed", e);
-      gltfLoaderRef.current = null;
-    }
+    } catch (e) { console.warn("Shared loader init failed", e); gltfLoaderRef.current = null; }
 
-    // --- lighting + environment helpers
-    try {
-      lightingApiRef.current = setupDefaultLighting(scene, renderer, { addHelpers: false });
-      envApiRef.current = setupEnvironment({ scene, renderer });
-    } catch (e) {
-      console.warn('Lighting/Environment init failed', e);
-    }
+    // lighting + environment helpers
+    try { lightingApiRef.current = setupDefaultLighting(scene, renderer, { addHelpers: false }); } catch (e) { console.warn('lighting init failed', e); }
+    try { envApiRef.current = setupEnvironment({ scene, renderer }); } catch (e) { console.warn('env init failed', e); }
 
-    // --- material editor UI
+    // material editor
     try {
       if (containerRef.current) {
         materialEditorApiRef.current = createMaterialEditor({
           container: containerRef.current,
           getSelectedMesh: () => {
-            // return first mesh found in selection
             const sel = selectedInternal || null;
             if (!sel) return null;
             let found = null;
@@ -821,7 +584,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       }
     } catch (e) { console.warn('Material editor init failed', e); }
 
-    // --- GLB importer helper (drag/drop + file input)
+    // GLB importer helper
     try {
       if (containerRef.current) {
         glbImporterApiRef.current = initGLBImporter({
@@ -830,24 +593,15 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
           onLoad: (gltf, meta) => {
             try {
               const root = gltf.scene || gltf.scenes?.[0] || gltf;
-              // simple add logic mirroring addGLTF's intent (scale/orient/center)
               const box = new THREE.Box3().setFromObject(root);
               const size = box.getSize(new THREE.Vector3());
               const center = box.getCenter(new THREE.Vector3());
               const maxDim = Math.max(size.x, size.y, size.z, 1);
-              if (maxDim > 0) {
-                const s = 2 / maxDim;
-                root.scale.setScalar(s);
-              }
-              root.traverse((child) => {
-                if (!child.userData) child.userData = {};
-                child.userData.__objekta = true;
-                if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
-              });
+              if (maxDim > 0) root.scale.setScalar(2 / maxDim);
+              root.traverse((child) => { if (!child.userData) child.userData = {}; child.userData.__objekta = true; if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; } });
               root.position.sub(center);
               const ug = getUserGroup();
-              const parent = ug || scene;
-              safeAdd(parent, root, root.name || "imported_root");
+              safeAdd(ug || scene, root, root.name || "imported_root");
               try { root.traverse(n => { SceneGraphStore.addObject?.(n.uuid, n, { name: n.name, type: n.type }); }); } catch (e) {}
               ensureBVHForObject(root);
               selectObject(root);
@@ -858,40 +612,25 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       }
     } catch (e) { console.warn('GLB importer init failed', e); }
 
-    // Pointer selection / hover / dblclick + render loop
+    // pointer selection / hover / dblclick + render loop
     const onPointerDown = (event) => {
       if (!rendererRef.current || !cameraRef.current) return;
-      if (transformDirtyRef.current) return;
       if (sculptStateRef.current?.active) return;
-
       const rect = rendererRef.current.domElement.getBoundingClientRect();
       mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
       raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
       const intersects = raycasterRef.current.intersectObjects(sceneRef.current.children, true);
-
       let foundObj = null;
       for (const it of intersects) {
         const obj = findObjektaAncestor(it.object);
         if (obj) { foundObj = obj; break; }
       }
-
       if (foundObj) {
-        if (event.shiftKey || event.ctrlKey) {
-          toggleMultiSelect(foundObj);
-        } else {
-          clearMultiSelectionIfAny();
-          selectObject(foundObj);
-          try { transformRef.current.setMode(transformMode); } catch (e) {}
-          try { transformRef.current.attach(foundObj); } catch (e) {
-            try { const meshChild = foundObj.getObjectByProperty("type", "Mesh"); if (meshChild) transformRef.current.attach(meshChild); } catch (err) {}
-          }
-          transformDirtyRef.current = true;
-        }
+        selectObject(foundObj);
+        try { transformRef.current.setMode(transformMode); transformRef.current.attach(foundObj); } catch (e) {}
       } else {
         clearSelection();
-        clearMultiSelectionIfAny();
       }
       needsRenderRef.current = true;
     };
@@ -906,7 +645,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       );
       raycasterRef.current.setFromCamera(ndc, cameraRef.current);
       const intersects = raycasterRef.current.intersectObjects(sceneRef.current.children, true);
-
       let displayObj = null;
       if (intersects.length > 0) {
         for (const it of intersects) {
@@ -914,7 +652,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
           if (obj) { displayObj = obj; break; }
         }
       }
-
       if (displayObj) {
         const displayName = displayObj.name || (displayObj.userData && displayObj.userData.name) || "object";
         setHover({
@@ -922,18 +659,9 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
           x: clamp(event.clientX - rect.left + 12, 8, rect.width - 120),
           y: clamp(event.clientY - rect.top + 10, 8, rect.height - 28),
         });
-      } else {
-        setHover({ name: "", x: -999, y: -999 });
-      }
+      } else setHover({ name: "", x: -999, y: -999 });
     };
     renderer.domElement.addEventListener("pointermove", onPointerMove);
-
-    const onPointerUp = () => {
-      if (transformDirtyRef.current) {
-        transformDirtyRef.current = false;
-      }
-    };
-    window.addEventListener("pointerup", onPointerUp);
 
     const onDblClick = (e) => {
       if (!rendererRef.current || !cameraRef.current) return;
@@ -944,13 +672,11 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       );
       raycasterRef.current.setFromCamera(ndc, cameraRef.current);
       const intersects = raycasterRef.current.intersectObjects(sceneRef.current.children, true);
-
       let focusObj = null;
       for (const it of intersects) {
         const obj = findObjektaAncestor(it.object);
         if (obj) { focusObj = obj; break; }
       }
-
       if (focusObj) {
         const pos = new THREE.Vector3();
         focusObj.getWorldPosition(pos);
@@ -963,40 +689,19 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     };
     renderer.domElement.addEventListener("dblclick", onDblClick);
 
-    // Render loop (rAF but render only when needed)
+    // Render loop
     let mounted = true;
     const tick = () => {
       if (!mounted) return;
       requestAnimationFrame(tick);
       cameraControlsApiRef.current?.controls?.update?.() ?? orbitRef.current?.update?.();
-
-      // update selection box
-      try {
-        const selBox = sceneRef.current._editorGroup.getObjectByName("_selection_box");
-        if (selBox && selBox.isBoxHelper) {
-          const sel = (selectedInternal && getUserGroup())
-            ? (getUserGroup()?.getObjectByProperty?.('uuid', selectedInternal.uuid) || getUserGroup().getObjectByProperty('uuid', selectedInternal.uuid))
-            : null;
-          if (sel) {
-            selBox.setFromObject(sel);
-            selBox.visible = !!sel.userData?.__selected;
-          } else selBox.visible = false;
-        }
-      } catch (e) {}
-
       if (needsRenderRef.current) {
         try {
           if (postfxApiRef.current && typeof postfxApiRef.current.render === 'function') postfxApiRef.current.render();
           else if (composerRef.current) composerRef.current.render();
-          else rendererRef.current.render(sceneRef.current, cameraRef.current);
+          else renderer.render(sceneRef.current, cameraRef.current);
         } catch (e) { console.warn("Render failed:", e); }
         needsRenderRef.current = false;
-      }
-
-      const now = Date.now();
-      if (now - lastToolbarUpdate.current > THROTTLE_MS) {
-        updateToolbarPosition();
-        lastToolbarUpdate.current = now;
       }
     };
     tick();
@@ -1020,18 +725,10 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
     const onKeyDown = (e) => {
       const cmd = e.ctrlKey || e.metaKey;
-      if (cmd && e.key.toLowerCase() === "z") {
-        e.preventDefault();
-        e.shiftKey ? redo() : undo();
-      } else if (cmd && e.key.toLowerCase() === "y") {
-        e.preventDefault();
-        redo();
-      } else if (cmd && e.key.toLowerCase() === "d") {
-        e.preventDefault();
-        duplicateSelected();
-      } else if (e.key === "Delete") {
-        deleteSelected();
-      }
+      if (cmd && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+      else if (cmd && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); }
+      else if (cmd && e.key.toLowerCase() === "d") { e.preventDefault(); duplicateSelected(); }
+      else if (e.key === "Delete") deleteSelected();
     };
     window.addEventListener("keydown", onKeyDown);
 
@@ -1045,8 +742,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
         }
       }
     } catch (err) {}
-
-    pushHistorySnapshot("init");
 
     const autosaveInterval = setInterval(() => {
       try {
@@ -1063,6 +758,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     };
     window.addEventListener("beforeunload", beforeUnload);
 
+    pushHistorySnapshot("init");
+
     return () => {
       mounted = false;
       clearInterval(autosaveInterval);
@@ -1071,7 +768,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
       renderer.domElement.removeEventListener("dblclick", onDblClick);
-      window.removeEventListener("pointerup", onPointerUp);
       window.removeEventListener("resize", doResize);
       document.removeEventListener("fullscreenchange", onFs);
       window.removeEventListener("keydown", onKeyDown);
@@ -1081,16 +777,12 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       try { cameraControlsApiRef.current?.dispose?.(); } catch (e) {}
       try { rendererRef.current?.dispose?.(); } catch (e) {}
 
-      // remove user objects
       try {
         const ug = getUserGroup();
         const toRemove = ug ? Array.from(ug.children) : [];
-        toRemove.forEach((c) => {
-          try { disposeObject(c); } catch (e) {}
-        });
+        toRemove.forEach((c) => { try { disposeObject(c); } catch (e) {} if (c.parent) c.parent.remove(c); });
       } catch (err) {}
 
-      // dispose helper APIs
       try { dracoRef.current?.dispose?.(); dracoRef.current = null; } catch (e) {}
       try { ktx2Ref.current?.dispose?.(); ktx2Ref.current = null; } catch (e) {}
       try { glbImporterApiRef.current?.dispose?.(); glbImporterApiRef.current = null; } catch (e) {}
@@ -1100,11 +792,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       try { postfxApiRef.current?.dispose?.(); postfxApiRef.current = null; } catch (e) {}
       try { composerRef.current?.dispose?.(); composerRef.current = null; } catch (e) {}
 
-      // revoke any created blob URLs (GLTF loads / exports / textures)
       try {
-        for (const url of blobUrlsRef.current) {
-          try { URL.revokeObjectURL(url); } catch (e) {}
-        }
+        for (const url of blobUrlsRef.current) { try { URL.revokeObjectURL(url); } catch (e) {} }
         blobUrlsRef.current.clear();
       } catch (e) {}
     };
@@ -1117,13 +806,10 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   const selectObject = (obj) => {
     if (!obj) return;
     if (selectedInternal) markSelectionVisual(selectedInternal, false);
-
     setSelectedInternal(obj);
     onSelect?.(obj);
-
     try { transformRef.current?.attach(obj); } catch (e) {}
     try { transformRef.current?.setMode(transformMode); } catch (e) {}
-
     markSelectionVisual(obj, true);
     updateToolbarPosition();
     needsRenderRef.current = true;
@@ -1135,7 +821,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     onSelect?.(null);
     try { transformRef.current?.detach?.(); } catch (e) {}
     setToolbarPos({ x: -999, y: -999 });
-
     const selBox = sceneRef.current?._editorGroup?.getObjectByName("_selection_box");
     if (selBox) selBox.visible = false;
     needsRenderRef.current = true;
@@ -1143,20 +828,13 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
   const markSelectionVisual = (obj, selectedFlag) => {
     if (!obj) return;
-
     try {
-      const selBox = sceneRef.current?._editorGroup?.getObjectByName("_selection_box");
+      const selBox = sceneRef.current._editorGroup.getObjectByName("_selection_box");
       if (selBox && selBox.isBoxHelper) {
-        if (selectedFlag) {
-          selBox.setFromObject(obj);
-          selBox.material.color.set(0x7f5af0);
-          selBox.visible = true;
-        } else {
-          selBox.visible = false;
-        }
+        if (selectedFlag) { selBox.setFromObject(obj); selBox.material.color.set(0x7f5af0); selBox.visible = true; }
+        else selBox.visible = false;
       }
     } catch (err) {}
-
     obj.traverse((n) => {
       if (n.isMesh && n.material) {
         try {
@@ -1180,12 +858,15 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
         } catch (err) {}
       }
     });
-
     obj.userData.__selected = !!selectedFlag;
     needsRenderRef.current = true;
   };
 
-  // ---------- Multi-select helpers ----------
+  // Multi-select helpers (kept minimal)
+  const selectedSetRef = useRef(new Set());
+  const transformGroupRef = useRef(null);
+  const multiParentMapRef = useRef(new Map());
+
   const toggleMultiSelect = (obj) => {
     if (!obj) return;
     const set = selectedSetRef.current;
@@ -1199,18 +880,9 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       markSelectionVisual(obj, true);
       try { SceneGraphStore.addObject?.(obj.uuid, obj, { name: obj.name, type: obj.type }); } catch (e) {}
     }
-
-    if (set.size >= 2) {
-      createTransformGroupFromSet();
-    } else {
-      dissolveTransformGroup();
-      if (set.size === 1) {
-        const first = set.values().next().value;
-        if (first) selectObject(first);
-      } else {
-        clearSelection();
-      }
-    }
+    if (set.size >= 2) createTransformGroupFromSet();
+    else dissolveTransformGroup();
+    needsRenderRef.current = true;
   };
 
   const clearMultiSelectionIfAny = () => {
@@ -1218,10 +890,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     if (set.size === 0) return;
     for (const o of Array.from(set)) {
       markSelectionVisual(o, false);
-      try {
-        const origParent = multiParentMapRef.current.get(o.uuid);
-        if (origParent && origParent.attach) origParent.attach(o);
-      } catch (e) {}
+      try { const origParent = multiParentMapRef.current.get(o.uuid); if (origParent && origParent.attach) origParent.attach(o); } catch (e) {}
     }
     set.clear();
     multiParentMapRef.current.clear();
@@ -1233,28 +902,17 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     const set = selectedSetRef.current;
     if (set.size < 2) return;
     if (transformGroupRef.current) return;
-
     const group = new THREE.Group();
     group.name = "_multi_transform_group_" + (nameCountRef.current++);
     const centroid = new THREE.Vector3();
     let count = 0;
-    for (const o of set) {
-      const p = new THREE.Vector3();
-      o.getWorldPosition(p);
-      centroid.add(p);
-      count++;
-    }
+    for (const o of set) { const p = new THREE.Vector3(); o.getWorldPosition(p); centroid.add(p); count++; }
     centroid.multiplyScalar(1 / Math.max(1, count));
     group.position.copy(centroid);
     safeAdd(sceneRef.current, group, group.name);
-
-    for (const o of Array.from(set)) {
-      try {
-        multiParentMapRef.current.set(o.uuid, o.parent || sceneRef.current);
-        group.attach(o);
-      } catch (e) {}
+    for (const o of set) {
+      try { multiParentMapRef.current.set(o.uuid, o.parent || sceneRef.current); group.attach(o); } catch (e) {}
     }
-
     transformGroupRef.current = group;
     try { transformRef.current.attach(group); } catch (e) {}
     needsRenderRef.current = true;
@@ -1265,25 +923,10 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     if (!group) return;
     const set = selectedSetRef.current;
     for (const o of Array.from(set)) {
-      try {
-        const origParent = multiParentMapRef.current.get(o.uuid) || sceneRef.current;
-        origParent.attach(o);
-      } catch (e) {}
+      try { const origParent = multiParentMapRef.current.get(o.uuid) || sceneRef.current; origParent.attach(o); } catch (e) {}
     }
-    try {
-      if (group.parent) group.parent.remove(group);
-    } catch (e) {}
+    try { if (group.parent) group.parent.remove(group); } catch (e) {}
     transformGroupRef.current = null;
-    if (set.size === 1) {
-      const first = set.values().next().value;
-      try { transformRef.current.attach(first); } catch (e) {}
-      setSelectedInternal(first);
-    } else if (set.size === 0) {
-      clearSelection();
-    } else {
-      const first = set.values().next().value;
-      if (first) try { transformRef.current.attach(first); } catch (e) {}
-    }
     needsRenderRef.current = true;
   };
 
@@ -1309,14 +952,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       point = worldPointAtMouse(point);
     }
     let obj;
-
-    const makeIcon = (color = 0xffff00, size = 0.06) =>
-      new THREE.Mesh(new THREE.SphereGeometry(size, 8, 8), new THREE.MeshBasicMaterial({ color }));
-
-    const parseColor = (c, fallback = 0xffffff) => {
-      if (!c) return fallback;
-      try { return new THREE.Color(c); } catch (err) { return fallback; }
-    };
+    const makeIcon = (color = 0xffff00, size = 0.06) => new THREE.Mesh(new THREE.SphereGeometry(size, 8, 8), new THREE.MeshBasicMaterial({ color }));
+    const parseColor = (c, fallback = 0xffffff) => { if (!c) return fallback; try { return new THREE.Color(c); } catch (err) { return fallback; } };
 
     switch (name) {
       case "Cube": obj = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshStandardMaterial({ color: opts.color ? parseColor(opts.color) : 0xff5555 })); break;
@@ -1336,7 +973,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
     if (point && point instanceof THREE.Vector3) obj.position.copy(point);
     else obj.position.copy(new THREE.Vector3(0,0.5,0));
-
     obj.name = name + "_" + nameCountRef.current++;
     obj.userData.__objekta = true;
     obj.traverse((n) => { if (!n.userData) n.userData = {}; n.userData.__objekta = true; });
@@ -1344,15 +980,9 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     const userGroup = getUserGroup();
     const parent = userGroup || sceneRef.current;
     safeAdd(parent, obj, obj.name);
-
     try { ensureBVHForObject(obj); } catch (e) {}
-
-    try {
-      SceneGraphStore.addObject?.(obj.uuid, obj, { name: obj.name, type: name });
-    } catch (e) { /* ignore if store missing */ }
-
+    try { SceneGraphStore.addObject?.(obj.uuid, obj, { name: obj.name, type: name }); } catch (e) {}
     try { EventBus?.emit?.("scene:updated", { id: obj.uuid, type: "add" }); } catch (e) {}
-
     selectObject(obj);
     bumpSceneVersion('addItem');
 
@@ -1367,8 +997,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
             recreated.userData = recreated.userData || {};
             recreated.userData.__objekta = true;
             const ug = getUserGroup();
-            const parent2 = ug || sceneRef.current;
-            safeAdd(parent2, recreated, "redo_add");
+            safeAdd(ug || sceneRef.current, recreated, "redo_add");
             ensureBVHForObject(recreated);
             selectObject(recreated);
             bumpSceneVersion('redo-add');
@@ -1389,7 +1018,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     return obj;
   };
 
-  // ---------- Palette DnD ----------
+  // Palette DnD
   const [{ isOver }, dropRef] = useDrop({
     accept: PALETTE_TYPE,
     drop: (item, monitor) => {
@@ -1398,40 +1027,15 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       const worldPos = worldPointAtMouse(clientOffset);
       addItem(item.name, worldPos, { color: item.color });
     },
-    collect: (monitor) => ({ isOver: !!monitor.isOver() }),
+    collect: (monitor) => ({ isOver: !!monitor.isOver() } ),
   });
+  const setContainerNode = (node) => { containerRef.current = node; try { if (node && typeof dropRef === "function") dropRef(node); } catch (err) {} };
 
-  const setContainerNode = (node) => {
-    containerRef.current = node;
-    try { if (node && typeof dropRef === "function") dropRef(node); } catch (err) {}
-  };
-
-  // ---------- Local GLB Drop ---------- (the helper importer also handles this; keep this as fallback)
-  useEffect(() => {
-    const handleDrop = (e) => {
-      e.preventDefault(); e.stopPropagation();
-      if (!e.dataTransfer || !e.dataTransfer.files) return;
-      const glbFile = Array.from(e.dataTransfer.files).find((f) => f.name.toLowerCase().endsWith('.glb') || f.name.toLowerCase().endsWith('.gltf'));
-      if (glbFile) {
-        const point = worldPointAtMouse({ x: e.clientX, y: e.clientY });
-        addGLTF(glbFile, point).catch(err => console.error('GLTF import failed', err));
-      }
-    };
-    const handleDragOver = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; };
-    const el = containerRef.current; if (!el) return;
-    el.addEventListener('drop', handleDrop); el.addEventListener('dragover', handleDragOver);
-    return () => { el.removeEventListener('drop', handleDrop); el.removeEventListener('dragover', handleDragOver); };
-  }, []);
-
-  // ---------- Add GLTF (uses shared gltfLoaderRef) ----------
+  // GLTF add (file or Object3D)
   const addGLTF = (input, point = null, onProgress = null) => {
     return new Promise((resolve, reject) => {
       const loader = gltfLoaderRef.current || new GLTFLoader();
-      // ensure DRACO attached if available
-      try {
-        if (dracoRef.current && loader.setDRACOLoader) loader.setDRACOLoader(dracoRef.current);
-      } catch (e) {}
-
+      try { if (dracoRef.current && loader.setDRACOLoader) loader.setDRACOLoader(dracoRef.current); } catch (e) {}
       setLoading(true);
 
       const addNodeToScene = (sceneNode) => {
@@ -1474,14 +1078,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
           const parent = userGroup || sceneRef.current;
           safeAdd(parent, sceneNode, sceneNode.name || "imported_sceneNode");
 
-          // register all loaded nodes with SceneGraphStore
-          try {
-            sceneNode.traverse((n) => {
-              if (n.userData?.__objekta) {
-                try { SceneGraphStore.addObject?.(n.uuid, n, { name: n.name, type: n.type }); } catch (e) {}
-              }
-            });
-          } catch (e) {}
+          try { sceneNode.traverse((n) => { if (n.userData?.__objekta) try { SceneGraphStore.addObject?.(n.uuid, n, { name: n.name, type: n.type }); } catch (e) {} }); } catch (e) {}
 
           try { EventBus?.emit?.("scene:updated", { id: sceneNode.uuid, type: "import" }); } catch (e) {}
 
@@ -1500,8 +1097,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
                   recreated.userData = recreated.userData || {};
                   recreated.userData.__objekta = true;
                   const ug = getUserGroup();
-                  const parent2 = ug || sceneRef.current;
-                  safeAdd(parent2, recreated, "redo_import");
+                  safeAdd(ug || sceneRef.current, recreated, "redo_import");
                   ensureBVHForObject(recreated);
                   selectObject(recreated);
                   bumpSceneVersion('redo-import');
@@ -1511,22 +1107,15 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
                 try {
                   const ug = getUserGroup();
                   const existing = ug?.getObjectByProperty('uuid', uuid);
-                  if (existing) {
-                    try { existing.traverse(n => { SceneGraphStore.removeObject?.(n.uuid); }); } catch (e) {}
-                    disposeObject(existing); if (existing.parent) existing.parent.remove(existing); clearSelection(); bumpSceneVersion('undo-import');
-                  }
+                  if (existing) { try { existing.traverse(n => { SceneGraphStore.removeObject?.(n.uuid); }); } catch (e) {} disposeObject(existing); if (existing.parent) existing.parent.remove(existing); clearSelection(); bumpSceneVersion('undo-import'); }
                 } catch (e) { console.warn("Undo import failed", e); }
               },
               "import"
             ));
           } catch (e) {}
 
-        } catch (err) {
-          console.warn("addNodeToScene error", err);
-        } finally {
-          setLoading(false);
-          needsRenderRef.current = true;
-        }
+        } catch (err) { console.warn("addNodeToScene error", err); }
+        finally { setLoading(false); needsRenderRef.current = true; }
       };
 
       if (input && input.isObject3D) {
@@ -1572,13 +1161,12 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     });
   };
 
-  // ---------- Export GLTF (returns Promise<Blob>) ----------
+  // ---------- Export GLTF ----------
   const exportGLTF = (binary = true) => {
     return new Promise((resolve, reject) => {
       if (!sceneRef.current) { reject(new Error('No scene')); return; }
       const userGroup = getUserGroup();
       const userObjects = userGroup ? Array.from(userGroup.children) : [];
-
       const exporter = new GLTFExporter();
       const exportScene = new THREE.Scene();
 
@@ -1618,7 +1206,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
           let blob;
           if (binary && result instanceof ArrayBuffer) blob = new Blob([result], { type: 'model/gltf-binary' });
           else { const str = JSON.stringify(result, null, 2); blob = new Blob([str], { type: 'application/json' }); }
-
           const link = document.createElement('a');
           const url = URL.createObjectURL(blob);
           try { blobUrlsRef.current.add(url); } catch (e) {}
@@ -1626,14 +1213,13 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
           link.download = binary ? 'scene.glb' : 'scene.gltf';
           link.click();
           setTimeout(() => { try { URL.revokeObjectURL(url); blobUrlsRef.current.delete(url); } catch (e) {} }, 1500);
-
           resolve(blob);
         } catch (e) { reject(e); }
       }, { binary, embedImages: true, truncateDrawRange: true });
     });
   };
 
-  // ---------- Snapshot history helpers ----------
+  // ---------- Snapshot helpers ----------
   const computeSceneSignature = () => {
     if (!sceneRef.current) return "";
     try {
@@ -1655,12 +1241,10 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   const pushHistorySnapshot = (label = "") => {
     if (!sceneRef.current) return;
     const signature = computeSceneSignature();
-    if (signature && lastHistorySignatureRef.current === signature) return;
-    lastHistorySignatureRef.current = signature;
-
+    if (signature && snapshotHistoryRef.current.length && snapshotHistoryRef.current[snapshotHistoryRef.current.length - 1]?.signature === signature) return;
     const userGroup = getUserGroup();
     const snaps = userGroup ? Array.from(userGroup.children).filter((c) => c.userData?.__objekta).map((c) => c.toJSON()) : [];
-    snapshotHistoryRef.current.push({ label, snaps });
+    snapshotHistoryRef.current.push({ label, snaps, signature });
     if (snapshotHistoryRef.current.length > HISTORY_LIMIT) snapshotHistoryRef.current.shift();
     snapshotHistoryIndexRef.current = snapshotHistoryRef.current.length - 1;
     bumpSceneVersion('pushHistorySnapshot');
@@ -1669,8 +1253,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
   const commitHistory = (label = "") => { pushHistorySnapshot(label); bumpSceneVersion('commitHistory'); };
   const commitHistoryDebounced = (label = "") => {
-    if (historyDebounceRef.current) clearTimeout(historyDebounceRef.current);
-    historyDebounceRef.current = setTimeout(() => { pushHistorySnapshot(label); historyDebounceRef.current = null; }, HISTORY_DEBOUNCE_MS);
+    clearTimeout(commitHistoryDebounced._t);
+    commitHistoryDebounced._t = setTimeout(() => pushHistorySnapshot(label), HISTORY_DEBOUNCE_MS);
   };
 
   const loadHistory = (entry) => {
@@ -1679,7 +1263,9 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     const toRemove = userGroup ? Array.from(userGroup.children) : [];
     toRemove.forEach((c) => { try { disposeObject(c); } catch (e) {} if (c.parent) c.parent.remove(c); });
     const loader = new THREE.ObjectLoader();
-    entry.snaps.forEach((snap) => { try { const obj = loader.parse(snap); obj.userData.__objekta = true; const parent = userGroup || sceneRef.current; safeAdd(parent, obj, "history_load"); ensureBVHForObject(obj); } catch (err) { console.error('Failed to parse history snapshot', err); } });
+    entry.snaps.forEach((snap) => {
+      try { const obj = loader.parse(snap); obj.userData.__objekta = true; safeAdd(userGroup || sceneRef.current, obj, "history_load"); ensureBVHForObject(obj); } catch (err) { console.error('Failed to parse history snapshot', err); }
+    });
     clearSelection();
     bumpSceneVersion('loadHistory');
     needsRenderRef.current = true;
@@ -1687,20 +1273,14 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
 
   // ---------- Undo/Redo ----------
   const undo = () => {
-    if (cmdHistoryRef.current.length > 0 && cmdHistoryRef.current.index >= 0) {
-      cmdHistoryRef.current.undo();
-      return;
-    }
+    if (cmdHistoryRef.current.length > 0 && cmdHistoryRef.current.index >= 0) { cmdHistoryRef.current.undo(); return; }
     if (snapshotHistoryIndexRef.current > 0) {
       snapshotHistoryIndexRef.current--;
       loadHistory(snapshotHistoryRef.current[snapshotHistoryIndexRef.current]);
     }
   };
   const redo = () => {
-    if (cmdHistoryRef.current.length > 0 && cmdHistoryRef.current.index < cmdHistoryRef.current.stack.length - 1) {
-      cmdHistoryRef.current.redo();
-      return;
-    }
+    if (cmdHistoryRef.current.length > 0 && cmdHistoryRef.current.index < cmdHistoryRef.current.stack.length - 1) { cmdHistoryRef.current.redo(); return; }
     if (snapshotHistoryIndexRef.current < snapshotHistoryRef.current.length - 1) {
       snapshotHistoryIndexRef.current++;
       loadHistory(snapshotHistoryRef.current[snapshotHistoryIndexRef.current]);
@@ -1717,7 +1297,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       if (selectedInternal.parent) selectedInternal.parent.remove(selectedInternal);
       clearSelection();
       bumpSceneVersion('delete');
-
       try { EventBus?.emit?.("scene:updated", { id: uuid, type: "delete" }); } catch (e) {}
 
       cmdHistoryRef.current.push(new Cmd(
@@ -1733,8 +1312,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
             recreated.userData = recreated.userData || {};
             recreated.userData.__objekta = true;
             const ug = getUserGroup();
-            const parent = ug || sceneRef.current;
-            safeAdd(parent, recreated, "undo_delete");
+            safeAdd(ug || sceneRef.current, recreated, "undo_delete");
             try { recreated.traverse(n => { SceneGraphStore.addObject?.(n.uuid, n, { name: n.name, type: n.type }); }); } catch (e) {}
             ensureBVHForObject(recreated);
             bumpSceneVersion('undo-delete');
@@ -1756,20 +1334,15 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       clone.userData.__objekta = true;
       clone.traverse((n) => { if (n.isMesh && n.material) { try { n.material = Array.isArray(n.material) ? n.material.map(m => m.clone()) : n.material.clone(); } catch (err) {} } });
       const userGroup = getUserGroup();
-      const parent = userGroup || sceneRef.current;
-      safeAdd(parent, clone, clone.name);
+      safeAdd(userGroup || sceneRef.current, clone, clone.name);
       ensureBVHForObject(clone);
-
       try { clone.traverse(n => { SceneGraphStore.addObject?.(n.uuid, n, { name: n.name, type: n.type }); }); } catch (e) {}
-
       selectObject(clone);
       bumpSceneVersion('duplicate');
-
       try { EventBus?.emit?.("scene:updated", { id: clone.uuid, type: "duplicate" }); } catch (e) {}
 
       try {
-        const snap = clone.toJSON();
-        const uuid = clone.uuid;
+        const snap = clone.toJSON(); const uuid = clone.uuid;
         cmdHistoryRef.current.push(new Cmd(
           () => {
             try {
@@ -1778,8 +1351,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
               recreated.userData = recreated.userData || {};
               recreated.userData.__objekta = true;
               const ug = getUserGroup();
-              const parent2 = ug || sceneRef.current;
-              safeAdd(parent2, recreated, "redo_duplicate");
+              safeAdd(ug || sceneRef.current, recreated, "redo_duplicate");
               try { recreated.traverse(n => { SceneGraphStore.addObject?.(n.uuid, n, { name: n.name, type: n.type }); }); } catch (e) {}
               ensureBVHForObject(recreated);
               bumpSceneVersion('redo-duplicate');
@@ -1829,8 +1401,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       try {
         const obj = loader.parse(snap);
         obj.userData.__objekta = true;
-        const parent = userGroup || sceneRef.current;
-        safeAdd(parent, obj, "load_data_obj");
+        safeAdd(userGroup || sceneRef.current, obj, "load_data_obj");
         ensureBVHForObject(obj);
         try { obj.traverse(n => { SceneGraphStore.addObject?.(n.uuid, n, { name: n.name, type: n.type }); }); } catch (e) {}
       } catch (err) { console.error('Failed to load object from data', err); }
@@ -1851,11 +1422,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     pushHistorySnapshot('reset');
     clearSelection();
     bumpSceneVersion('resetScene');
-
-    try {
-      if (SceneGraphStore.clearSelection) SceneGraphStore.clearSelection();
-      if (SceneGraphStore.objects) SceneGraphStore.objects = {};
-    } catch (e) {}
+    try { if (SceneGraphStore.clearSelection) SceneGraphStore.clearSelection(); if (SceneGraphStore.objects) SceneGraphStore.objects = {}; } catch (e) {}
     try { EventBus?.emit?.("scene:updated", { type: "reset" }); } catch (e) {}
     needsRenderRef.current = true;
   };
@@ -1871,7 +1438,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     needsRenderRef.current = true;
   };
 
-  // ---------- Transform batching (throttle / debounce) ----------
+  // ---------- Transform batching ----------
   const pendingTransformRef = useRef({ position: false, rotation: false, scale: false });
   const transformFlushTimerRef = useRef(null);
   const TRANSFORM_FLUSH_MS = 100;
@@ -1884,12 +1451,10 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     else if (typeof axis === 'number') idx = axis;
     if (typeof idx !== 'number' || idx < 0 || idx > 2) return;
     const key = axes[idx];
-
     try {
       if (prop === 'rotation') selectedInternal.rotation[key] = val;
       else selectedInternal[prop][key] = val;
-    } catch (e) { /* ignore */ }
-
+    } catch (e) {}
     pendingTransformRef.current[prop] = true;
     if (transformFlushTimerRef.current) clearTimeout(transformFlushTimerRef.current);
     transformFlushTimerRef.current = setTimeout(() => {
@@ -1902,14 +1467,12 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   };
 
   const toggleSnap = (enable) => {
-    const transform = transformRef.current; if (!transform) return; if (typeof enable === 'boolean') snapRef.current.enabled = enable; else snapRef.current.enabled = !snapRef.current.enabled;
-    if (snapRef.current.enabled) { transform.setTranslationSnap(snapRef.current.value); transform.setRotationSnap(THREE.MathUtils.degToRad(15)); } else { transform.setTranslationSnap(null); transform.setRotationSnap(null); }
+    const transform = transformRef.current; if (!transform) return; if (typeof enable === 'boolean') transform.setTranslationSnap(enable ? 0.5 : null); else transform.setTranslationSnap(null);
     needsRenderRef.current = true;
   };
+  const setSnapValue = (val) => { if (transformRef.current) transformRef.current.setTranslationSnap(val); };
 
-  const setSnapValue = (val) => { snapRef.current.value = val; if (snapRef.current.enabled && transformRef.current) transformRef.current.setTranslationSnap(snapRef.current.value); };
-
-  // ---------- Validation helpers & scene summary ----------
+  // ---------- Validation helpers & summary ----------
   const getSceneSummary = () => {
     const scene = sceneRef.current;
     if (!scene) return { totalTris: 0, objects: 0, objectsList: [] };
@@ -1933,15 +1496,10 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   };
 
   const validateSceneAPI = async () => {
-    try {
-      const data = serializeScene();
-      return { ok: true, summary: getSceneSummary() };
-    } catch (e) {
-      return { ok: false, error: e.message || String(e) };
-    }
+    try { const data = serializeScene(); return { ok: true, summary: getSceneSummary() }; } catch (e) { return { ok: false, error: e.message || String(e) }; }
   };
 
-  // ---------- New helpers: apply texture & HDR env loader ----------
+  // ---------- Texture and HDR helpers ----------
   const applyTextureToSelection = (file) => {
     return new Promise((resolve, reject) => {
       if (!file) return reject(new Error("No file provided"));
@@ -1959,8 +1517,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
               const mats = Array.isArray(n.material) ? n.material : [n.material];
               mats.forEach(m => {
                 try { m.map && m.map.dispose && m.map.dispose(); } catch(e) {}
-                m.map = tex;
-                m.needsUpdate = true;
+                m.map = tex; m.needsUpdate = true;
               });
             }
           });
@@ -1981,7 +1538,6 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       if (!renderer) return reject(new Error("Renderer not ready"));
       const pmrem = new THREE.PMREMGenerator(renderer);
       pmrem.compileEquirectangularShader();
-
       const onLoaded = (tex) => {
         const env = pmrem.fromEquirectangular(tex).texture;
         sceneRef.current.environment = env;
@@ -1990,10 +1546,8 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
         needsRenderRef.current = true;
         resolve(env);
       };
-
-      if (typeof fileOrUrl === "string") {
-        loader.load(fileOrUrl, onLoaded, undefined, (err) => reject(err));
-      } else {
+      if (typeof fileOrUrl === "string") loader.load(fileOrUrl, onLoaded, undefined, (err) => reject(err));
+      else {
         const reader = new FileReader();
         reader.onload = () => {
           const arr = reader.result;
@@ -2010,7 +1564,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     });
   };
 
-  // ---------- API ----------
+  // ---------- API exposure ----------
   useImperativeHandle(ref, () => ({
     addItem, addGLTF, exportGLTF, undo, redo, deleteSelected,
     setTransformMode: (mode) => setTransformModeState(mode),
@@ -2026,22 +1580,15 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       }
       return startSculptingInternal(target, opts);
     },
-    stopSculpting: () => {
-      stopSculptingInternal();
-    },
+    stopSculpting: () => stopSculptingInternal(),
     setSculptRadius, setSculptStrength, setSculptMode, setSculptSymmetry,
     validateScene: validateSceneAPI,
     getSceneSummary,
-    getSceneObjects: () => {
-      const ug = getUserGroup();
-      return ug ? Array.from(ug.children) : [];
-    },
+    getSceneObjects: () => { const ug = getUserGroup(); return ug ? Array.from(ug.children) : []; },
     getSceneVersion: () => sceneVersionRef.current,
     get scene() { return sceneRef.current; },
-    // new helpers
     applyTextureToSelection,
     loadEnvironmentFromHDR,
-    // exposures for helper apis (if needed)
     getLightingApi: () => lightingApiRef.current,
     getEnvApi: () => envApiRef.current,
     getPostfxApi: () => postfxApiRef.current,
@@ -2056,7 +1603,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     };
   } catch (e) {}
 
-  // ---------- Panels: Outliner + Properties (inside workspace for fallback UI) ----------
+  // ---------- Panels: Outliner + Properties ----------
   const OutlinerPanelInner = ({ onPrimarySelect }) => {
     const [items, setItems] = useState([]);
     const lastVer = useRef(sceneVersionRef.current);
@@ -2068,17 +1615,11 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
         if (!mounted) return;
         setItems(list);
       };
-
       scanOnce();
-
       const iv = setInterval(() => {
         const ver = sceneVersionRef.current;
-        if (ver !== lastVer.current) {
-          lastVer.current = ver;
-          scanOnce();
-        }
+        if (ver !== lastVer.current) { lastVer.current = ver; scanOnce(); }
       }, 600);
-
       return () => { mounted = false; clearInterval(iv); };
     }, []);
 

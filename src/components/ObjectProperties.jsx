@@ -2,11 +2,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
-import "../styles/ObjectProperties.css"; // <- new stylesheet
+import "../styles/ObjectProperties.css"; // keep your CSS import
 
-/* (Everything else in the component is functionally unchanged;
-   only inline styling was moved to CSS classes.) */
-
+/* constants & helpers */
 const CLIP_KEY = "objekta_transform_clipboard_v3";
 const MAT_CLIP_KEY = "objekta_material_clipboard_v1";
 const PRESET_PREFIX = "objekta_mat_preset_";
@@ -21,12 +19,11 @@ const MAP_SLOTS = [
   { key: "aoMap", label: "AO Map" },
 ];
 
-// color helpers (same as before)
 const clamp = (v, a = 0, b = 255) => Math.min(Math.max(v, a), b);
 
 function hexToRgb(hex) {
   if (!hex) return { r: 136, g: 136, b: 136 };
-  const h = hex.replace("#", "");
+  const h = String(hex).replace("#", "");
   const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
   const n = parseInt(full, 16);
   return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
@@ -85,6 +82,15 @@ function hslToRgb(h, s, l) {
   };
 }
 
+/**
+ * ObjectPropertiesTexture
+ * Props:
+ *  - selected: THREE.Object3D (mesh / group)
+ *  - onTransformChange(prop, axis, value) -> called with applied numeric values
+ *  - onMaterialChange(patch)
+ *  - onApplyTexture(file, slotKey), onApplyGLB(file), onRemoveTexture(slotKey)
+ *  - onVisibilityToggle(visible), onDelete(), onRename(name)
+ */
 export default function ObjectPropertiesTexture({
   selected,
   onTransformChange,
@@ -100,11 +106,11 @@ export default function ObjectPropertiesTexture({
   const [name, setName] = useState("");
   const [visible, setVisible] = useState(true);
   const [position, setPosition] = useState({ x: 0, y: 0, z: 0 });
-  const [rotation, setRotation] = useState({ x: 0, y: 0, z: 0 });
+  const [rotation, setRotation] = useState({ x: 0, y: 0, z: 0 }); // UI: degrees if useDegrees, else radians
   const [scale, setScale] = useState({ x: 1, y: 1, z: 1 });
   const [useDegrees, setUseDegrees] = useState(true);
   const [uniformScale, setUniformScale] = useState(false);
-  const [localSpace, setLocalSpace] = useState(true);
+  const [localSpace, setLocalSpace] = useState(true); // note: local/world behavior limited to simple parent transforms
 
   // MATERIAL
   const [hex, setHex] = useState("#888888");
@@ -129,7 +135,7 @@ export default function ObjectPropertiesTexture({
   const textureLoaderRef = useRef(null);
   const gltfLoaderRef = useRef(null);
   const mountedRef = useRef(true);
-  const pendingRef = useRef({ position: {}, rotation: {}, scale: {} });
+  const pendingRef = useRef({ position: {}, rotation: {}, scale: {} }); // stores final numeric values to flush
   const flushTimerRef = useRef(null);
   const materialTimerRef = useRef(null);
   const dragActiveRef = useRef(false);
@@ -153,8 +159,10 @@ export default function ObjectPropertiesTexture({
 
   // helpers
   const toNum = useCallback((v,d=0)=> {
-    const n = typeof v === "number" && Number.isFinite(v) ? Number(v) : d;
-    return Number(n.toFixed(4));
+    const n = typeof v === "number" && Number.isFinite(v) ? Number(v) : (typeof v === "string" && v !== "" ? Number(parseFloat(v)) : d);
+    const out = Number.isFinite(n) ? n : d;
+    // keep 4 decimals for UI state
+    return Number(Number(out).toFixed(4));
   }, []);
 
   const safeHex = useCallback((h) => {
@@ -172,12 +180,12 @@ export default function ObjectPropertiesTexture({
     return () => { textureLoaderRef.current = null; gltfLoaderRef.current = null; };
   }, []);
 
-  // sync when selected changes (revokes previous blob urls to avoid leaks)
+  // --- sync when selected changes (populate UI from selected) ---
   const materialSnapshot = useRef(null);
   useEffect(() => {
     mountedRef.current = true;
 
-    // revoke blob urls from previous selection to avoid leaks
+    // revoke previous blobs created by this component (we only revoke ones we created where .file is present)
     try {
       Object.values(mapsRef.current || {}).forEach((m) => {
         if (m && m.url && m.file) {
@@ -187,7 +195,7 @@ export default function ObjectPropertiesTexture({
     } catch (e) {}
 
     if (!selected) {
-      // reset
+      // reset UI
       setName(""); setVisible(true);
       setPosition({ x: 0, y: 0, z: 0 });
       setRotation({ x: 0, y: 0, z: 0 });
@@ -200,17 +208,29 @@ export default function ObjectPropertiesTexture({
       return;
     }
 
+    // fill UI from selected
     setName(selected.name || "");
-    setVisible(selected.visible ?? true);
-    setPosition({ x: toNum(selected.position?.x ?? 0), y: toNum(selected.position?.y ?? 0), z: toNum(selected.position?.z ?? 0) });
-    setScale({ x: toNum(selected.scale?.x ?? 1, 1), y: toNum(selected.scale?.y ?? 1, 1), z: toNum(selected.scale?.z ?? 1, 1) });
+    setVisible(typeof selected.visible === "boolean" ? selected.visible : true);
+
+    // position (local)
+    const pos = selected.position || new THREE.Vector3();
+    setPosition({ x: toNum(pos.x), y: toNum(pos.y), z: toNum(pos.z) });
+
+    // scale
+    const sc = selected.scale || new THREE.Vector3(1,1,1);
+    setScale({ x: toNum(sc.x,1), y: toNum(sc.y,1), z: toNum(sc.z,1) });
+
+    // rotation: selected.rotation is radians; show degrees if useDegrees
+    const rx = selected.rotation?.x ?? 0;
+    const ry = selected.rotation?.y ?? 0;
+    const rz = selected.rotation?.z ?? 0;
     if (useDegrees) {
-      setRotation({ x: toNum((selected.rotation?.x ?? 0) * (180/Math.PI)), y: toNum((selected.rotation?.y ?? 0) * (180/Math.PI)), z: toNum((selected.rotation?.z ?? 0) * (180/Math.PI)) });
+      setRotation({ x: toNum(rx * 180 / Math.PI), y: toNum(ry * 180 / Math.PI), z: toNum(rz * 180 / Math.PI) });
     } else {
-      setRotation({ x: toNum(selected.rotation?.x ?? 0), y: toNum(selected.rotation?.y ?? 0), z: toNum(selected.rotation?.z ?? 0) });
+      setRotation({ x: toNum(rx), y: toNum(ry), z: toNum(rz) });
     }
 
-    // extract material from first mesh
+    // extract material values from first mesh found
     try {
       let foundMat = null;
       selected.traverse((c) => {
@@ -273,7 +293,6 @@ export default function ObjectPropertiesTexture({
         setMapVersion(v => v + 1);
       }
 
-      // fresh snapshot built from foundMat values
       materialSnapshot.current = {
         ...snapValues,
         maps: JSON.parse(JSON.stringify(Object.fromEntries(Object.entries(mapsRef.current || {}).map(([k,v])=>[k,{url:v?.url,settings:v.settings}]))))
@@ -288,58 +307,126 @@ export default function ObjectPropertiesTexture({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, useDegrees, toNum]);
 
-  // TRANSFORM batching
+  // --- TRANSFORM logic: immediate apply for UI feedback + batched onTransformChange callback --- //
+
+  // apply a numeric transform value directly to the selected object (value units: position/scale in units, rotation in radians)
+  const applyToSelected = useCallback((prop, axis, numericValue) => {
+    if (!selected) return;
+    try {
+      if (prop === "rotation") {
+        selected.rotation[axis] = numericValue;
+      } else if (prop === "position") {
+        selected.position[axis] = numericValue;
+      } else if (prop === "scale") {
+        // guard: avoid zero or negative scales unless intended
+        selected.scale[axis] = numericValue;
+      }
+      // update matrices for immediate visual feedback
+      selected.updateMatrix?.();
+      selected.updateMatrixWorld?.();
+    } catch (e) {
+      // swallow to keep UI robust
+    }
+  }, [selected]);
+
+  // queue transform to pendingRef (numericValue: position/scale in units, rotation in radians)
+  const queueTransform = useCallback((prop, axis, numericValue) => {
+    if (!prop || !axis) return;
+    if (!pendingRef.current[prop]) pendingRef.current[prop] = {};
+    pendingRef.current[prop][axis] = Number(numericValue);
+    // immediate application for UI responsiveness
+    applyToSelected(prop, axis, Number(numericValue));
+    // schedule a batched flush (which will call onTransformChange if provided)
+    if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+    flushTimerRef.current = setTimeout(() => {
+      flushTimerRef.current = null;
+      // flushPending will call onTransformChange
+      try { flushPending(); } catch (e) {}
+    }, 80);
+  }, [applyToSelected]);
+
+  // flush pending values (call onTransformChange for each property/axis)
   const flushPending = useCallback(() => {
     if (!mountedRef.current) return;
     const p = pendingRef.current;
     try {
       for (const prop of ["position", "rotation", "scale"]) {
         const obj = p[prop];
-        if (!obj) continue;
+        if (!obj || Object.keys(obj).length === 0) continue;
         for (const axis of Object.keys(obj)) {
           const val = obj[axis];
-          if (typeof onTransformChange === "function") onTransformChange(prop, axis, val);
-          else {
-            try {
-              if (selected) {
-                if (prop === "rotation") selected.rotation[axis] = val;
-                else selected[prop][axis] = val;
-                selected.updateMatrixWorld?.();
-              }
-            } catch (e) {}
+          if (typeof onTransformChange === "function") {
+            // rotation is passed as radians
+            onTransformChange(prop, axis, Number(val));
+          } else {
+            // fallback: we already applied to selected in applyToSelected
           }
         }
         pendingRef.current[prop] = {};
       }
     } catch (e) {}
-  }, [onTransformChange, selected]);
+  }, [onTransformChange]);
 
-  const scheduleFlush = useCallback(() => {
-    if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
-    flushTimerRef.current = setTimeout(() => { flushTimerRef.current = null; flushPending(); }, 80);
-  }, [flushPending]);
-
-  const queueTransform = useCallback((prop, axis, uiValue) => {
-    if (!prop || !axis) return;
-    let sendVal = uiValue;
-    if (prop === "rotation" && useDegrees) sendVal = (uiValue * Math.PI) / 180;
-    if (!pendingRef.current[prop]) pendingRef.current[prop] = {};
-    pendingRef.current[prop][axis] = Number(sendVal || 0);
-    scheduleFlush();
-  }, [scheduleFlush, useDegrees]);
-
+  // numeric input handler: converts UI value to numeric units and queues
   const handleInputChange = useCallback((prop, axis) => (e) => {
-    const raw = e.target.value; const parsed = raw === '' ? 0 : parseFloat(raw);
-    if (prop === 'position') setPosition((s) => ({...s, [axis]: isNaN(parsed) ? 0 : parsed}));
-    else if (prop === 'rotation') setRotation((s) => ({...s, [axis]: isNaN(parsed) ? 0 : parsed}));
-    else if (prop === 'scale') {
-      if (uniformScale) { const v = isNaN(parsed) ? 0 : parsed; setScale({x:v,y:v,z:v}); queueTransform('scale','x',v); queueTransform('scale','y',v); queueTransform('scale','z',v); return; }
-      else setScale((s) => ({...s, [axis]: isNaN(parsed) ? 0 : parsed}));
+    const raw = e.target.value;
+    const parsed = raw === "" ? 0 : Number(parseFloat(raw));
+    if (prop === "position") {
+      const v = isNaN(parsed) ? 0 : parsed;
+      setPosition((s) => ({ ...s, [axis]: v }));
+      // if world-space toggle is used, keep UI as provided but queue local numbers (simple behavior)
+      queueTransform("position", axis, v);
+    } else if (prop === "rotation") {
+      const v = isNaN(parsed) ? 0 : parsed;
+      setRotation((s) => ({ ...s, [axis]: v }));
+      // convert to radians when useDegrees is true
+      const numeric = useDegrees ? (v * Math.PI) / 180 : v;
+      queueTransform("rotation", axis, numeric);
+    } else if (prop === "scale") {
+      const v = isNaN(parsed) ? 0 : parsed;
+      if (uniformScale) {
+        // apply uniform immediately
+        setScale({ x: v, y: v, z: v });
+        queueTransform("scale", "x", v);
+        queueTransform("scale", "y", v);
+        queueTransform("scale", "z", v);
+      } else {
+        setScale((s) => ({ ...s, [axis]: v }));
+        queueTransform("scale", axis, v);
+      }
     }
-    queueTransform(prop, axis, isNaN(parsed) ? 0 : parsed);
-  }, [queueTransform, uniformScale]);
+  }, [queueTransform, useDegrees, uniformScale]);
 
-  // MATERIAL apply (debounced)
+  // keep selected object in sync if user toggles useDegrees: update rotation UI immediately from selected values
+  useEffect(() => {
+    if (!selected) return;
+    const rx = selected.rotation?.x ?? 0;
+    const ry = selected.rotation?.y ?? 0;
+    const rz = selected.rotation?.z ?? 0;
+    if (useDegrees) {
+      setRotation({ x: toNum(rx * 180 / Math.PI), y: toNum(ry * 180 / Math.PI), z: toNum(rz * 180 / Math.PI) });
+    } else {
+      setRotation({ x: toNum(rx), y: toNum(ry), z: toNum(rz) });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useDegrees, selected]);
+
+  // if uniformScale toggled on, sync all axes to x
+  useEffect(() => {
+    if (uniformScale) {
+      setScale((s) => {
+        const x = toNum(s.x || 1, 1);
+        // update UI and remote
+        queueTransform("scale", "x", x);
+        queueTransform("scale", "y", x);
+        queueTransform("scale", "z", x);
+        return { x, y: x, z: x };
+      });
+    }
+  }, [uniformScale, queueTransform, toNum]);
+
+  // --- MATERIAL helpers (kept largely same with small safety tweaks) --- //
+
   const applyMaterialPatch = useCallback((patch = {}) => {
     try {
       selected?.traverse((n) => {
@@ -354,7 +441,7 @@ export default function ObjectPropertiesTexture({
               if (patch.emissiveHex && m.emissive) { m.emissive.set(patch.emissiveHex); if (typeof patch.emissiveIntensity === 'number' && m.emissiveIntensity !== undefined) m.emissiveIntensity = patch.emissiveIntensity; }
               if (typeof patch.wireframe === 'boolean') m.wireframe = patch.wireframe;
               if (typeof patch.normalScale === 'number' && m.normalScale) m.normalScale = new THREE.Vector2(patch.normalScale, patch.normalScale);
-              if (typeof patch.aoIntensity === 'number' && m.aoMap) { /* AO intensity often used in shader - left for host */ }
+              if (typeof patch.aoIntensity === 'number' && m.aoMap) { /* left to host shader code, no-op here */ }
               m.needsUpdate = true;
             } catch (e) {}
           });
@@ -373,11 +460,12 @@ export default function ObjectPropertiesTexture({
     }, 120);
   }, [applyMaterialPatch]);
 
-  // snapshots (undo/redo)
+  // snapshots undo/redo
   const snapshotMaterialState = useCallback((label = 'mat-edit') => {
     try {
       const snap = {
         hex, roughness, metalness, opacity, emissiveHex, emissiveIntensity, wireframe, normalScale, aoIntensity,
+        invertRoughness, invertMetalness,
         maps: JSON.parse(JSON.stringify(Object.fromEntries(Object.entries(mapsRef.current || {}).map(([k,v]) => [k, { url: v?.url || null, settings: v?.settings || {} }])))),
         label,
       };
@@ -385,7 +473,7 @@ export default function ObjectPropertiesTexture({
       if (materialUndoRef.current.length > MAT_UNDO_LIMIT) materialUndoRef.current.shift();
       materialRedoRef.current = [];
     } catch (e) {}
-  }, [hex, roughness, metalness, opacity, emissiveHex, emissiveIntensity, wireframe, normalScale, aoIntensity]);
+  }, [hex, roughness, metalness, opacity, emissiveHex, emissiveIntensity, wireframe, normalScale, aoIntensity, invertRoughness, invertMetalness]);
 
   const applySnapshotToMaterial = useCallback((snap) => {
     if (!snap) return;
@@ -401,7 +489,6 @@ export default function ObjectPropertiesTexture({
       setNormalScale(typeof snap.normalScale === 'number' ? snap.normalScale : 1);
       setAoIntensity(typeof snap.aoIntensity === 'number' ? snap.aoIntensity : 1);
 
-      // restore maps metadata and attempt to load them
       const ms = {};
       for (const k of Object.keys(snap.maps || {})) {
         const entry = snap.maps[k];
@@ -419,7 +506,6 @@ export default function ObjectPropertiesTexture({
                   if (typeof tex.rotation === 'number') tex.rotation = s.rotation ?? 0;
                   tex.center = tex.center || new THREE.Vector2(0.5, 0.5);
                   tex.needsUpdate = true;
-                  // apply to selected materials
                   selected?.traverse((n) => { if (n.isMesh && n.material) {
                     const mats = Array.isArray(n.material) ? n.material : [n.material];
                     mats.forEach(m => { try { m[k] = tex; m.needsUpdate = true; } catch(e){} });
@@ -619,9 +705,16 @@ export default function ObjectPropertiesTexture({
         try {
           const scene = gltf.scene || gltf.scenes?.[0];
           if (!scene) return;
-          if (selected && (selected.isMesh || selected.isGroup)) {
-            selected.clear?.();
-            scene.children.forEach((c) => { selected.add(c.clone()); });
+          if (selected && (selected.isMesh || selected.isGroup || selected.isObject3D)) {
+            // replace children with gltf scene children
+            try {
+              // remove existing children safely
+              if (typeof selected.clear === "function") selected.clear();
+              scene.children.forEach((c) => { selected.add(c.clone(true)); });
+            } catch (e) {
+              // fallback: attach children directly
+              scene.children.forEach((c) => { selected.add(c.clone(true)); });
+            }
           }
           URL.revokeObjectURL(url);
         } catch (e) { URL.revokeObjectURL(url); }
@@ -778,7 +871,7 @@ export default function ObjectPropertiesTexture({
   const openPreview = (url) => { setPreviewUrl(url); };
   const closePreview = () => { setPreviewUrl(null); };
 
-  // Numeric component moved to use CSS class
+  // Numeric input component (keeps simple markup)
   const Numeric = ({ value, onChange, step = 0.1, min, max, ariaLabel }) => (
     <input className="op-numeric" type="number" step={step} value={value} onChange={onChange} min={min} max={max} aria-label={ariaLabel} />
   );
@@ -788,21 +881,92 @@ export default function ObjectPropertiesTexture({
   const [openMaterial, setOpenMaterial] = useState(true);
   const [openTextures, setOpenTextures] = useState(true);
 
-  // main render
+  // header actions (copy/paste transforms)
+  const copyTransformsToClipboard = useCallback(() => {
+    try {
+      const rotRad = { x: selected?.rotation?.x ?? 0, y: selected?.rotation?.y ?? 0, z: selected?.rotation?.z ?? 0 };
+      const payload = { position, rotation: rotRad, scale };
+      localStorage.setItem(CLIP_KEY, JSON.stringify(payload));
+    } catch (e) {}
+  }, [position, rotation, scale, selected]);
+
+  const pasteTransformsFromClipboard = useCallback(() => {
+    try {
+      const s = localStorage.getItem(CLIP_KEY);
+      if (!s) return;
+      const raw = JSON.parse(s);
+      // raw.rotation is expected to be radians (how we saved above)
+      const pos = raw.position || {};
+      const sc = raw.scale || {};
+      const rot = raw.rotation || {};
+      // update UI
+      setPosition({ x: toNum(pos.x), y: toNum(pos.y), z: toNum(pos.z) });
+      setScale({ x: toNum(sc.x,1), y: toNum(sc.y,1), z: toNum(sc.z,1) });
+
+      if (useDegrees) {
+        setRotation({ x: toNum((rot.x || 0) * 180 / Math.PI), y: toNum((rot.y || 0) * 180 / Math.PI), z: toNum((rot.z || 0) * 180 / Math.PI) });
+        // queue numeric radians (queueTransform will not convert because we pass radians directly)
+        queueTransform('rotation','x', (rot.x || 0));
+        queueTransform('rotation','y', (rot.y || 0));
+        queueTransform('rotation','z', (rot.z || 0));
+      } else {
+        setRotation({ x: toNum(rot.x || 0), y: toNum(rot.y || 0), z: toNum(rot.z || 0) });
+        queueTransform('rotation','x', rot.x || 0);
+        queueTransform('rotation','y', rot.y || 0);
+        queueTransform('rotation','z', rot.z || 0);
+      }
+
+      // queue position / scale (assume clipboard uses local units)
+      queueTransform('position','x', pos.x || 0);
+      queueTransform('position','y', pos.y || 0);
+      queueTransform('position','z', pos.z || 0);
+      queueTransform('scale','x', sc.x || 1);
+      queueTransform('scale','y', sc.y || 1);
+      queueTransform('scale','z', sc.z || 1);
+    } catch (e) {}
+  }, [queueTransform, toNum, useDegrees]);
+
+  // sync workspace visible toggle
+  const toggleVisibility = (v) => {
+    setVisible(v);
+    try { if (selected) selected.visible = v; } catch(e) {}
+    if (typeof onVisibilityToggle === 'function') onVisibilityToggle(v);
+  };
+
+  // header rename
+  const handleRename = (n) => {
+    setName(n);
+    try { if (selected) selected.name = n; } catch (e) {}
+    if (typeof onRename === 'function') onRename(n);
+  };
+
+  // persist changes before unmount (flush)
+  useEffect(() => {
+    const onBeforeUnload = () => {
+      if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+      if (Object.keys(pendingRef.current.position || {}).length || Object.keys(pendingRef.current.rotation || {}).length || Object.keys(pendingRef.current.scale || {}).length) {
+        flushPending();
+      }
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [flushPending]);
+
+  // -- Render UI (keeps your layout & classes but uses the fixed transform handlers) -- //
+
   return selected ? (
     <div className={`op-container ${dragActive ? "drag-active" : ""}`} onDrop={onDrop} onDragOver={onDragOver} onDragEnter={onDragEnter} onDragLeave={onDragLeave}>
-
       {/* Header */}
       <div className="op-header">
         <input
           className="op-name-input"
           type="text"
           value={name}
-          onChange={(e) => { setName(e.target.value); try { if (selected) selected.name = e.target.value; } catch(e){} if (typeof onRename === 'function') onRename(e.target.value); }}
+          onChange={(e) => handleRename(e.target.value)}
           placeholder="Object name"
         />
         <label className="op-visible-label">
-          <input type="checkbox" checked={visible} onChange={(e) => { setVisible(e.target.checked); try { if (selected) selected.visible = e.target.checked; } catch (e) {} if (typeof onVisibilityToggle === 'function') onVisibilityToggle(e.target.checked); }} />
+          <input type="checkbox" checked={visible} onChange={(e) => toggleVisibility(e.target.checked)} />
           <span>Visible</span>
         </label>
         <div className="op-header-actions">
@@ -819,8 +983,8 @@ export default function ObjectPropertiesTexture({
           <strong>Transform</strong>
 
           <div className="op-panel-right">
-            <button className="op-small-btn" onClick={() => { const rotRad = { x: useDegrees ? rotation.x*Math.PI/180 : rotation.x, y: useDegrees ? rotation.y*Math.PI/180 : rotation.y, z: useDegrees ? rotation.z*Math.PI/180 : rotation.z }; const payload = { position, rotation: rotRad, scale }; localStorage.setItem(CLIP_KEY, JSON.stringify(payload)); }}>Copy</button>
-            <button className="op-small-btn" onClick={() => { try { const s = localStorage.getItem(CLIP_KEY); if (!s) return; const raw = JSON.parse(s); setPosition({ x: toNum(raw.position.x), y: toNum(raw.position.y), z: toNum(raw.position.z) }); setScale({ x: toNum(raw.scale.x,1), y: toNum(raw.scale.y,1), z: toNum(raw.scale.z,1) }); if (useDegrees) { setRotation({ x: toNum(raw.rotation.x*180/Math.PI), y: toNum(raw.rotation.y*180/Math.PI), z: toNum(raw.rotation.z*180/Math.PI) }); queueTransform('rotation','x', raw.rotation.x*180/Math.PI); queueTransform('rotation','y', raw.rotation.y*180/Math.PI); queueTransform('rotation','z', raw.rotation.z*180/Math.PI); } else { setRotation({ x: toNum(raw.rotation.x), y: toNum(raw.rotation.y), z: toNum(raw.rotation.z) }); queueTransform('rotation','x', raw.rotation.x); queueTransform('rotation','y', raw.rotation.y); queueTransform('rotation','z', raw.rotation.z); } queueTransform('position','x', raw.position.x); queueTransform('position','y', raw.position.y); queueTransform('position','z', raw.position.z); queueTransform('scale','x', raw.scale.x); queueTransform('scale','y', raw.scale.y); queueTransform('scale','z', raw.scale.z); } catch (e){} }}>Paste</button>
+            <button className="op-small-btn" onClick={copyTransformsToClipboard}>Copy</button>
+            <button className="op-small-btn" onClick={pasteTransformsFromClipboard}>Paste</button>
 
             <input id={glbIdRef.current} type="file" accept="model/gltf,model/glb,.gltf,.glb" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) applyGLBFile(f); e.target.value=''; }} />
             <button className="op-small-btn" onClick={() => document.getElementById(glbIdRef.current)?.click()}>Import .glb</button>

@@ -12,6 +12,9 @@
   color: #fff;
   font-family: Inter, sans-serif;
   font-size: 13px;
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* drag active */
@@ -30,7 +33,11 @@
   color: #fff;
   font-weight: 700;
   flex: 1;
+  outline: none;
+  transition: box-shadow .12s ease, transform .08s ease;
 }
+.op-name-input:focus { box-shadow: 0 6px 18px rgba(127,90,240,0.12); transform: translateY(-1px); }
+
 .op-visible-label { display:flex; gap:6px; align-items:center; margin-left:6px; }
 .op-header-actions { display:flex; gap:6px; margin-left:auto; }
 
@@ -42,7 +49,9 @@
   border: var(--border);
   color: #fff;
   cursor: pointer;
+  transition: background .08s ease, transform .06s ease;
 }
+.op-btn:hover, .op-small-btn:hover, .op-collapse:hover { background: rgba(255,255,255,0.03); transform: translateY(-1px); }
 .op-small-btn { padding: 6px 8px; font-size: 12px; }
 .op-btn-danger { background: rgba(80,0,40,0.6); color: #ff88c4; border: var(--border); }
 
@@ -53,6 +62,7 @@
   border-radius: 8px;
   padding: 8px;
   background: rgba(255,255,255,0.02);
+  transition: background .12s ease, transform .06s ease;
 }
 .op-panel-header { display:flex; align-items:center; gap:8px; }
 .op-panel-right { margin-left:auto; display:flex; gap:8px; align-items:center; }
@@ -75,7 +85,26 @@
   background: var(--field-bg);
   color: #fff;
   text-align:center;
+  outline: none;
+  transition: box-shadow .08s ease, transform .05s ease;
 }
+.op-numeric:focus { box-shadow: 0 6px 18px rgba(0,0,0,0.45) inset, 0 6px 16px rgba(127,90,240,0.08); transform: translateY(-1px); }
+
+/* remove number input spinners for better UX */
+.op-numeric {
+  -webkit-appearance: none; /* Chrome, Safari, Edge, Opera */
+  -moz-appearance: textfield; /* Firefox */
+  appearance: none; /* standard modern browsers */
+  margin: 0; /* remove default margins in some browsers */
+}
+
+/* For WebKit browsers */
+.op-numeric::-webkit-outer-spin-button,
+.op-numeric::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 
 /* inline checkbox */
 .op-inline-checkbox { display:flex; gap:6px; align-items:center; margin-left:8px; font-size:12px; }
@@ -86,7 +115,8 @@
 .op-color-swatch { width:44px; height:44px; border-radius:8px; border: var(--border); cursor:pointer; }
 .op-color-swatch.small { width:32px; height:32px; border-radius:6px; }
 .op-color-controls { display:flex; flex-direction:column; gap:6px; }
-.op-text { padding:6px 8px; border-radius:8px; border:var(--border); background:var(--field-bg); color:#fff; width:120px; }
+.op-text { padding:6px 8px; border-radius:8px; border:var(--border); background:var(--field-bg); color:#fff; width:120px; outline:none; }
+.op-text:focus { box-shadow: 0 6px 18px rgba(127,90,240,0.08); transform: translateY(-1px); }
 .op-rgb-row, .op-hsl-row { display:flex; gap:6px; align-items:center; }
 
 /* sliders/inputs */
@@ -103,7 +133,7 @@
 .op-texture-left { display:flex; gap:12px; align-items:center; min-width:220px; }
 .op-texture-label { font-weight:700; width:110px;}
 .op-texture-actions { display:flex; gap:8px; align-items:center; }
-.op-thumb { width:48px; height:48px; object-fit:cover; border-radius:6px; cursor:pointer; }
+.op-thumb { width:48px; height:48px; object-fit:cover; border-radius:6px; cursor:pointer; border: var(--border); }
 .op-thumb-empty { width:48px; height:48px; border-radius:6px; background: rgba(255,255,255,0.03); display:flex; align-items:center; justify-content:center; color: rgba(255,255,255,0.4); }
 
 .op-texture-right { display:flex; flex-direction:column; gap:6px; flex:1; }
@@ -121,8 +151,11 @@
   justify-content:center;
   background: rgba(0,0,0,0.6);
   z-index: 9999;
+  -webkit-tap-highlight-color: transparent;
+  /* ensure clicks on overlay are captured so the toolbar/canvas underneath doesn't react */
+  pointer-events: auto;
 }
-.op-preview-box { background:#111; padding:12px; border-radius:8px; max-width: 90vw; max-height: 90vh; }
+.op-preview-box { background:#111; padding:12px; border-radius:8px; max-width: 90vw; max-height: 90vh; box-shadow: 0 20px 60px rgba(0,0,0,0.6); }
 .op-preview-img { max-width: 80vw; max-height: 80vh; display:block; }
 .op-preview-actions { display:flex; gap:8px; margin-top:8px; }
 
@@ -134,4 +167,13 @@
   .op-material-body { flex-direction:column; }
   .op-transform-body { flex-direction:column; }
   .op-texture-row { flex-direction:column; align-items:flex-start; }
+  .op-numeric { width: 100%; }
+  .op-range { width: 100%; }
 }
+
+/* accessibility: focus-visible outlines for keyboard users */
+:focus:not(.no-focus-outline) { outline: none; }
+:focus-visible { outline: 3px solid rgba(127,90,240,0.28); outline-offset: 2px; border-radius: 6px; }
+
+/* subtle transitions for a polished feel */
+.op-panel, .op-header, .op-button, .op-small-btn, .op-numeric, .op-text { transition: all 90ms ease; }

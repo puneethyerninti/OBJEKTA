@@ -1,15 +1,17 @@
-// src/components/SculptToolbar.jsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 
 /**
  * SculptToolbar (updated)
- * - Throttles pointermove updates with rAF
- * - Calls workspace API hooks if present: startSculpting/stopSculpting, setSculptRadius, setSculptStrength, setSculptMode,
- *   setSculptSymmetry, sculptPointerDown/sculptPointerMove/sculptPointerUp, undo/redo, setControlsEnabled
- * - Persist position/pinned/collapsed with debounce
- * - Fixes renderer id typo (#objekta-renderer)
+ * - rAF-throttled pointer move
+ * - Robust workspace API integration (safe calls)
+ * - Persist position / pinned / collapsed with debounce
+ * - Fixed renderer lookup (id + selector + canvas fallback)
+ * - Proper cleanup to avoid leaks
+ *
+ * Drop this file into: src/components/SculptToolbar.jsx
  */
+
 export default function SculptToolbar({ workspaceRef, rendererSelector = null, preferLeft = false }) {
   const [active, setActive] = useState(false);
   const [mode, setMode] = useState("inflate");
@@ -22,13 +24,26 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
   const localKeyCollapsed = "objekta_sculpt_toolbar_collapsed_v3";
 
   const [userPos, setUserPos] = useState(() => {
-    try { const raw = localStorage.getItem(localKeyPos); return raw ? JSON.parse(raw) : null; } catch { return null; }
+    try {
+      const raw = localStorage.getItem(localKeyPos);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
   });
   const [pinned, setPinned] = useState(() => {
-    try { return localStorage.getItem(localKeyPinned) === "1"; } catch { return false; }
+    try {
+      return localStorage.getItem(localKeyPinned) === "1";
+    } catch (e) {
+      return false;
+    }
   });
   const [collapsed, setCollapsed] = useState(() => {
-    try { return localStorage.getItem(localKeyCollapsed) === "1"; } catch { return false; }
+    try {
+      return localStorage.getItem(localKeyCollapsed) === "1";
+    } catch (e) {
+      return false;
+    }
   });
 
   const [dockStyle, setDockStyle] = useState({ left: null, right: "16px", top: "20px", bottom: null });
@@ -38,73 +53,54 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
   const rendererElemRef = useRef(null);
   const draggingRef = useRef(null);
   const rafRef = useRef(null);
+  const pointerPendingRef = useRef(null);
   const pointerDownRef = useRef(false);
   const lastPressureRef = useRef(0);
+  const saveTimeoutRef = useRef(null);
+
   const modes = ["inflate", "deflate", "grab", "smooth", "pinch", "flatten"];
 
-  // Debounce save helpers
-  const saveTimeoutRef = useRef(null);
+  // debounce save helper
   const debouncedSave = (key, value) => {
-    try { if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current); } catch (e) {}
+    try {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    } catch (e) {}
     saveTimeoutRef.current = setTimeout(() => {
-      try { localStorage.setItem(key, typeof value === "string" ? value : JSON.stringify(value)); } catch (e) {}
+      try {
+        localStorage.setItem(key, typeof value === "string" ? value : JSON.stringify(value));
+      } catch (e) {}
     }, 220);
   };
 
-  const getApi = () => workspaceRef?.current ?? (typeof window !== "undefined" ? window.__OBJEKTA_WORKSPACE : null);
-  const callApi = (name, ...args) => {
+  // get workspace API (safe)
+  const getApi = useCallback(() => {
+    try {
+      if (workspaceRef && workspaceRef.current) return workspaceRef.current;
+      if (typeof window !== "undefined" && window.__OBJEKTA_WORKSPACE) return window.__OBJEKTA_WORKSPACE;
+    } catch (e) {}
+    return null;
+  }, [workspaceRef]);
+
+  const callApi = useCallback((name, ...args) => {
     try {
       const api = getApi();
       if (!api) return;
       const fn = api[name];
       if (typeof fn === "function") return fn(...args);
-    } catch (e) {}
-  };
+    } catch (e) {
+      // swallow — optional logging could be added
+    }
+    return undefined;
+  }, [getApi]);
 
-  // --- find renderer element and setup rAF-based dock adjust ---
-  useEffect(() => {
-    const findRenderer = () => {
-      try {
-        const api = getApi();
-        if (api) {
-          const r = api.getRenderer?.();
-          if (r && r.domElement) return r.domElement;
-        }
-      } catch (e) {}
-      if (rendererSelector) {
-        const q = document.querySelector(rendererSelector);
-        if (q) return q;
-      }
-      const byId = document.querySelector("#objekta-renderer"); // fixed id typo
-      if (byId) return byId;
-      const canv = document.querySelector("canvas");
-      if (canv) return canv;
-      return document.body;
-    };
-
-    rendererElemRef.current = findRenderer();
-    rafRef.current = requestAnimationFrame(() => adjustDockPosition());
-    window.addEventListener("resize", adjustDockPosition);
-    window.addEventListener("orientationchange", adjustDockPosition);
-    return () => {
-      try { cancelAnimationFrame(rafRef.current); } catch (e) {}
-      window.removeEventListener("resize", adjustDockPosition);
-      window.removeEventListener("orientationchange", adjustDockPosition);
-      try { if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current); } catch (e) {}
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const rectsIntersect = (a, b) => {
-    if (!a || !b) return false;
-    return !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
-  };
-
-  function adjustDockPosition() {
+  // adjust dock position (memoized)
+  const adjustDockPosition = useCallback(() => {
+    // if user has pinned or manually placed, do not auto-dock
     if (pinned || userPos) return;
     const el = toolbarRef.current;
     const rendererEl = rendererElemRef.current || document.body;
     if (!el || !rendererEl) return;
+
     const rRect = rendererEl.getBoundingClientRect();
     const tRect = el.getBoundingClientRect();
     const p = document.querySelector(".studio-panel.properties-panel");
@@ -138,6 +134,11 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
       bottom: Math.round(rRect.top + margin + tRect.height),
     };
 
+    const rectsIntersect = (a, b) => {
+      if (!a || !b) return false;
+      return !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
+    };
+
     if (pRect && rectsIntersect(proposed, pRect)) {
       setDockStyle({
         left: `${Math.round(rRect.left + margin)}px`,
@@ -155,19 +156,56 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
       top: `${Math.round(rRect.top + margin)}px`,
       bottom: null,
     });
-  }
+  }, [pinned, userPos, preferLeft]);
+
+  // find renderer element and setup rAF-based dock adjust
+  useEffect(() => {
+    const findRenderer = () => {
+      try {
+        const api = getApi();
+        if (api) {
+          const r = api.getRenderer?.();
+          if (r && r.domElement) return r.domElement;
+        }
+      } catch (e) {}
+
+      if (rendererSelector) {
+        const q = document.querySelector(rendererSelector);
+        if (q) return q;
+      }
+
+      const byId = document.querySelector("#objekta-renderer");
+      if (byId) return byId;
+
+      const canv = document.querySelector("canvas");
+      if (canv) return canv;
+
+      return document.body;
+    };
+
+    rendererElemRef.current = findRenderer();
+    rafRef.current = requestAnimationFrame(() => adjustDockPosition());
+
+    window.addEventListener("resize", adjustDockPosition);
+    window.addEventListener("orientationchange", adjustDockPosition);
+
+    return () => {
+      try { cancelAnimationFrame(rafRef.current); } catch (e) {}
+      window.removeEventListener("resize", adjustDockPosition);
+      window.removeEventListener("orientationchange", adjustDockPosition);
+      try { if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current); } catch (e) {}
+    };
+  }, [adjustDockPosition, getApi, rendererSelector]);
 
   // --- brush overlay & pointer handling (throttled with rAF) ---
   useEffect(() => {
     const el = rendererElemRef.current || document.body;
-    if (!el) return;
+    if (!el) return undefined;
     let mounted = true;
-    let pending = null;
 
     const applyBrushOverlay = (cx, cy, inside, pxRadius) => {
       if (!mounted) return;
       setBrushOverlay((prev) => {
-        // avoid re-render if unchanged
         if (prev.x === cx && prev.y === cy && prev.pxRadius === pxRadius && prev.visible === (active && inside)) return prev;
         return { x: cx, y: cy, visible: active && inside, pxRadius };
       });
@@ -175,10 +213,10 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
 
     const onPointerMove = (ev) => {
       if (!mounted) return;
-      // schedule via rAF to throttle heavy math
-      if (pending) return;
-      pending = requestAnimationFrame(() => {
-        pending = null;
+      // throttle using rAF
+      if (pointerPendingRef.current) return;
+      pointerPendingRef.current = requestAnimationFrame(() => {
+        pointerPendingRef.current = null;
         const rect = el.getBoundingClientRect();
         const cx = ev.clientX;
         const cy = ev.clientY;
@@ -199,6 +237,7 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
             camera.getWorldDirection(camDir);
             const right = new THREE.Vector3().crossVectors(camera.up, camDir).normalize();
             const secWorld = world.clone().add(right.clone().multiplyScalar(radius));
+
             const p1 = world.clone().project(camera);
             const p2 = secWorld.clone().project(camera);
             const px1 = (p1.x * 0.5 + 0.5) * rect.width + rect.left;
@@ -206,16 +245,16 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
             const px2 = (p2.x * 0.5 + 0.5) * rect.width + rect.left;
             const py2 = (-p2.y * 0.5 + 0.5) * rect.height + rect.top;
             const pxRadius = Math.max(4, Math.round(Math.hypot(px2 - px1, py2 - py1)));
+
             applyBrushOverlay(cx, cy, inside, pxRadius);
 
-            // forward low-frequency pointer data to workspace if available
             if (typeof api?.sculptPointerMove === "function") {
               try { api.sculptPointerMove({ x: cx, y: cy, pressure: ev.pressure ?? 0.5, pxRadius }); } catch (e) {}
             }
             return;
           }
         } catch (e) {
-          // fallthrough to heuristic
+          // fallback heuristic
         }
 
         const width = Math.max(200, rect.width || window.innerWidth);
@@ -235,7 +274,6 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
       if (typeof api?.sculptPointerDown === "function") {
         try { api.sculptPointerDown({ x: ev.clientX, y: ev.clientY, pressure: ev.pressure ?? 0.5 }); } catch (e) {}
       } else {
-        // fallback: set sculpt strength based on pressure
         if (typeof ev.pressure === "number" && api?.setSculptStrength) {
           const scaled = Math.max(0.01, strength * (ev.pressure || 1));
           try { api.setSculptStrength(scaled); } catch (e) {}
@@ -263,30 +301,29 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
       el.removeEventListener("pointermove", onPointerMove);
       el.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("pointerup", onPointerUp);
-      if (pending) cancelAnimationFrame(pending);
+      if (pointerPendingRef.current) cancelAnimationFrame(pointerPendingRef.current);
     };
-  }, [active, radius, strength]); // keep dependencies minimal
+  }, [radius, strength, getApi]);
 
-  // --- header drag to move toolbar ---
+  // header drag to move toolbar
   useEffect(() => {
     const header = toolbarRef.current?.querySelector(".sculpt-header");
-    if (!header) return;
+    if (!header) return undefined;
 
-    const onPointerDown = (ev) => {
+    let mounted = true;
+
+    const onHeaderPointerDown = (ev) => {
       if (ev.button !== 0) return;
       ev.preventDefault();
       const tRect = toolbarRef.current.getBoundingClientRect();
-      draggingRef.current = {
-        offsetX: ev.clientX - tRect.left,
-        offsetY: ev.clientY - tRect.top,
-      };
+      draggingRef.current = { offsetX: ev.clientX - tRect.left, offsetY: ev.clientY - tRect.top };
       header.setPointerCapture?.(ev.pointerId);
-      window.addEventListener("pointermove", onPointerMove);
-      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointermove", onHeaderPointerMove);
+      window.addEventListener("pointerup", onHeaderPointerUp);
       try { toolbarRef.current.style.cursor = "grabbing"; } catch (e) {}
     };
 
-    const onPointerMove = (ev) => {
+    const onHeaderPointerMove = (ev) => {
       if (!draggingRef.current) return;
       ev.preventDefault();
       const posX = ev.clientX - draggingRef.current.offsetX;
@@ -295,20 +332,22 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
       const h = Math.max(48, toolbarRef.current.offsetHeight || 160);
       const clampedX = Math.min(Math.max(8, posX), window.innerWidth - w - 8);
       const clampedY = Math.min(Math.max(8, posY), window.innerHeight - h - 8);
+
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       rafRef.current = requestAnimationFrame(() => {
+        if (!mounted) return;
         setUserPos({ x: clampedX, y: clampedY });
       });
     };
 
-    const onPointerUp = (ev) => {
+    const onHeaderPointerUp = (ev) => {
       if (!draggingRef.current) return;
       try { header.releasePointerCapture?.(ev.pointerId); } catch (e) {}
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointermove", onHeaderPointerMove);
+      window.removeEventListener("pointerup", onHeaderPointerUp);
       try { toolbarRef.current.style.cursor = "grab"; } catch (e) {}
 
-      // snap to edges relative to renderer
+      // snap logic
       const snapThreshold = 28;
       const rendererEl = rendererElemRef.current || document.body;
       const rRect = rendererEl.getBoundingClientRect();
@@ -332,25 +371,32 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
       draggingRef.current = null;
     };
 
-    header.addEventListener("pointerdown", onPointerDown);
-    return () => header.removeEventListener("pointerdown", onPointerDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    header.addEventListener("pointerdown", onHeaderPointerDown);
+    return () => {
+      mounted = false;
+      try { header.removeEventListener("pointerdown", onHeaderPointerDown); } catch (e) {}
+    };
   }, [userPos]);
 
   // double-click header to reset auto-dock
   useEffect(() => {
     const header = toolbarRef.current?.querySelector(".sculpt-header");
-    if (!header) return;
-    const onDbl = (e) => { e.preventDefault(); setUserPos(null); try { localStorage.removeItem(localKeyPos); } catch (e) {} requestAnimationFrame(() => adjustDockPosition()); };
+    if (!header) return undefined;
+    const onDbl = (e) => {
+      e.preventDefault();
+      setUserPos(null);
+      try { localStorage.removeItem(localKeyPos); } catch (e) {}
+      requestAnimationFrame(() => adjustDockPosition());
+    };
     header.addEventListener("dblclick", onDbl);
     return () => header.removeEventListener("dblclick", onDbl);
-  }, []);
+  }, [adjustDockPosition]);
 
   // persist pinned/collapsed
   useEffect(() => { debouncedSave(localKeyPinned, pinned ? "1" : "0"); }, [pinned]);
   useEffect(() => { debouncedSave(localKeyCollapsed, collapsed ? "1" : "0"); }, [collapsed]);
 
-  // keep userPos inside viewport
+  // keep userPos inside viewport on resize
   useEffect(() => {
     const onResize = () => {
       if (!userPos) { adjustDockPosition(); return; }
@@ -366,13 +412,13 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
     };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [userPos]);
+  }, [userPos, adjustDockPosition]);
 
   // sync workspace API when UI changes
-  useEffect(() => { callApi("setSculptRadius", radius); }, [radius]);
-  useEffect(() => { callApi("setSculptStrength", strength); }, [strength]);
-  useEffect(() => { callApi("setSculptMode", mode); }, [mode]);
-  useEffect(() => { callApi("setSculptSymmetry", symmetry); }, [symmetry]);
+  useEffect(() => { callApi("setSculptRadius", radius); }, [radius, callApi]);
+  useEffect(() => { callApi("setSculptStrength", strength); }, [strength, callApi]);
+  useEffect(() => { callApi("setSculptMode", mode); }, [mode, callApi]);
+  useEffect(() => { callApi("setSculptSymmetry", symmetry); }, [symmetry, callApi]);
 
   // Start/Stop sculpt
   const toggleActive = () => {
@@ -430,6 +476,7 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
   // cleanup sculpt on unmount
   useEffect(() => {
     return () => { if (active) { callApi("stopSculpting"); callApi("setControlsEnabled", true); } };
+    // intentionally not adding callApi to deps to avoid spurious calls
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -453,8 +500,8 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
     return out;
   };
 
-  const togglePinned = () => { setPinned((v) => !v); };
-  const toggleCollapsed = () => { setCollapsed((v) => !v); };
+  const togglePinned = () => { setPinned((v) => { const next = !v; debouncedSave(localKeyPinned, next ? "1" : "0"); return next; }); };
+  const toggleCollapsed = () => { setCollapsed((v) => { const next = !v; debouncedSave(localKeyCollapsed, next ? "1" : "0"); return next; }); };
   const resetDock = () => { setUserPos(null); setPinned(false); try { localStorage.removeItem(localKeyPos); localStorage.removeItem(localKeyPinned); } catch (e) {} requestAnimationFrame(() => adjustDockPosition()); };
 
   // collapsed UI
@@ -474,6 +521,7 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
           <button
             onClick={() => setCollapsed(false)}
             style={{ width: 40, height: 40, borderRadius: 8, background: "rgba(255,255,255,0.06)", color: "#fff", border: "none", cursor: "pointer" }}
+            aria-label="Expand sculpt toolbar"
           >
             ✦
           </button>
@@ -523,13 +571,14 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
           </div>
 
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <button onClick={undo} className="px-2 py-1 rounded" style={{ background: "rgba(255,255,255,0.04)", color: "#fff", border: "none" }}>Undo</button>
-            <button onClick={redo} className="px-2 py-1 rounded" style={{ background: "rgba(255,255,255,0.04)", color: "#fff", border: "none" }}>Redo</button>
+            <button onClick={undo} className="px-2 py-1 rounded" style={{ background: "rgba(255,255,255,0.04)", color: "#fff", border: "none" }} aria-label="Undo sculpt">Undo</button>
+            <button onClick={redo} className="px-2 py-1 rounded" style={{ background: "rgba(255,255,255,0.04)", color: "#fff", border: "none" }} aria-label="Redo sculpt">Redo</button>
 
             <button
               onClick={togglePinned}
               title={pinned ? "Unpin (stop auto-docking)" : "Pin (keep current position)"}
               style={{ marginLeft: 6, background: pinned ? "rgba(127,90,240,0.95)" : "rgba(255,255,255,0.04)", color: "#fff", border: "none", padding: "6px 8px", borderRadius: 8 }}
+              aria-pressed={pinned}
             >
               {pinned ? "📌" : "📍"}
             </button>
@@ -538,6 +587,7 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
               onClick={() => setCollapsed(true)}
               title="Collapse toolbar"
               style={{ marginLeft: 6, background: "rgba(255,255,255,0.04)", color: "#fff", border: "none", padding: "6px 8px", borderRadius: 8 }}
+              aria-label="Collapse sculpt toolbar"
             >
               ―
             </button>
@@ -548,6 +598,8 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
           <button
             onClick={toggleActive}
             style={{ flex: 1, padding: "8px 10px", borderRadius: 8, background: active ? "linear-gradient(90deg,#16a34a,#059669)" : "rgba(255,255,255,0.04)", color: "#fff", border: "none" }}
+            aria-pressed={active}
+            aria-label={active ? "Stop sculpting" : "Start sculpting"}
           >
             {active ? "Stop" : "Start"}
           </button>
@@ -569,6 +621,7 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
                   border: "none",
                   cursor: "pointer"
                 }}
+                aria-pressed={mode === m}
               >
                 {m}
               </button>
@@ -578,12 +631,12 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
 
         <div style={{ marginBottom: 10 }}>
           <div style={{ fontSize: 12, marginBottom: 6 }}>Radius: {radius.toFixed(2)}</div>
-          <input type="range" min="0.01" max="5" step="0.01" value={radius} onChange={(e) => setRadius(parseFloat(e.target.value))} style={{ width: "100%" }} />
+          <input type="range" min="0.01" max="5" step="0.01" value={radius} onChange={(e) => setRadius(parseFloat(e.target.value))} style={{ width: "100%" }} aria-label="Sculpt radius" />
         </div>
 
         <div style={{ marginBottom: 10 }}>
           <div style={{ fontSize: 12, marginBottom: 6 }}>Strength: {strength.toFixed(2)}</div>
-          <input type="range" min="0.01" max="2" step="0.01" value={strength} onChange={(e) => setStrength(parseFloat(e.target.value))} style={{ width: "100%" }} />
+          <input type="range" min="0.01" max="2" step="0.01" value={strength} onChange={(e) => setStrength(parseFloat(e.target.value))} style={{ width: "100%" }} aria-label="Sculpt strength" />
         </div>
 
         <div style={{ marginBottom: 8 }}>
@@ -598,7 +651,7 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
         <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.65)" }}>Shortcuts: B · 1-6 · +/-</div>
           <div style={{ display: "flex", gap: 6 }}>
-            <button onClick={resetDock} style={{ background: "rgba(255,255,255,0.03)", color: "#fff", border: "none", padding: "6px 8px", borderRadius: 6 }}>Reset</button>
+            <button onClick={resetDock} style={{ background: "rgba(255,255,255,0.03)", color: "#fff", border: "none", padding: "6px 8px", borderRadius: 6 }} aria-label="Reset toolbar position">Reset</button>
           </div>
         </div>
       </div>
