@@ -8,6 +8,7 @@ import * as THREE from "three";
  * - Persist position / pinned / collapsed with debounce
  * - Fixed renderer lookup (id + selector + canvas fallback)
  * - Proper cleanup to avoid leaks
+ * - Ensures pointer capture + pointercancel/leave handling and hides selection pointer
  *
  * Drop this file into: src/components/SculptToolbar.jsx
  */
@@ -95,7 +96,6 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
 
   // adjust dock position (memoized)
   const adjustDockPosition = useCallback(() => {
-    // if user has pinned or manually placed, do not auto-dock
     if (pinned || userPos) return;
     const el = toolbarRef.current;
     const rendererEl = rendererElemRef.current || document.body;
@@ -206,14 +206,19 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
     const applyBrushOverlay = (cx, cy, inside, pxRadius) => {
       if (!mounted) return;
       setBrushOverlay((prev) => {
+        if (!inside && prev.visible) return { x: -9999, y: -9999, visible: false, pxRadius: prev.pxRadius };
         if (prev.x === cx && prev.y === cy && prev.pxRadius === pxRadius && prev.visible === (active && inside)) return prev;
         return { x: cx, y: cy, visible: active && inside, pxRadius };
       });
     };
 
+    const hideBrushOverlay = () => {
+      if (!mounted) return;
+      setBrushOverlay((prev) => (prev.visible ? { ...prev, visible: false, x: -9999, y: -9999 } : prev));
+    };
+
     const onPointerMove = (ev) => {
       if (!mounted) return;
-      // throttle using rAF
       if (pointerPendingRef.current) return;
       pointerPendingRef.current = requestAnimationFrame(() => {
         pointerPendingRef.current = null;
@@ -254,7 +259,7 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
             return;
           }
         } catch (e) {
-          // fallback heuristic
+          // fallback
         }
 
         const width = Math.max(200, rect.width || window.innerWidth);
@@ -270,6 +275,10 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
     const onPointerDown = (ev) => {
       pointerDownRef.current = true;
       lastPressureRef.current = ev.pressure ?? 0.5;
+
+      // try to capture the pointer on the renderer element so pointerup is reliably delivered
+      try { el.setPointerCapture?.(ev.pointerId); } catch (e) {}
+
       const api = getApi();
       if (typeof api?.sculptPointerDown === "function") {
         try { api.sculptPointerDown({ x: ev.clientX, y: ev.clientY, pressure: ev.pressure ?? 0.5 }); } catch (e) {}
@@ -284,26 +293,53 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
     const onPointerUp = (ev) => {
       pointerDownRef.current = false;
       lastPressureRef.current = 0;
+
+      // ensure brush overlay hides immediately
+      hideBrushOverlay();
+
+      // release pointer capture if we captured it
+      try { el.releasePointerCapture?.(ev.pointerId); } catch (e) {}
+
       const api = getApi();
       if (typeof api?.sculptPointerUp === "function") {
         try { api.sculptPointerUp({ x: ev.clientX, y: ev.clientY, pressure: ev.pressure ?? 0 }); } catch (e) {}
       } else if (api?.setSculptStrength) {
         try { api.setSculptStrength(strength); } catch (e) {}
       }
+
+      // extra safety: if workspace exposes a hideSculptPointer / hideSelectionPointer call, invoke it
+      try { if (typeof api?.hideSculptPointer === "function") api.hideSculptPointer(); } catch (e) {}
+      try { if (typeof api?.hideSelectionPointer === "function") api.hideSelectionPointer(); } catch (e) {}
+    };
+
+    const onPointerCancelOrLeave = (ev) => {
+      pointerDownRef.current = false;
+      lastPressureRef.current = 0;
+      hideBrushOverlay();
+      const api = getApi();
+      try { if (typeof api?.sculptPointerUp === "function") api.sculptPointerUp({ x: ev.clientX ?? -1, y: ev.clientY ?? -1, pressure: 0 }); } catch (e) {}
+      try { if (typeof api?.hideSculptPointer === "function") api.hideSculptPointer(); } catch (e) {}
+      try { if (typeof api?.hideSelectionPointer === "function") api.hideSelectionPointer(); } catch (e) {}
     };
 
     el.addEventListener("pointermove", onPointerMove, { passive: true });
     el.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("pointerup", onPointerUp);
+    el.addEventListener("pointercancel", onPointerCancelOrLeave);
+    el.addEventListener("pointerleave", onPointerCancelOrLeave);
+    el.addEventListener("pointerout", onPointerCancelOrLeave);
 
     return () => {
       mounted = false;
       el.removeEventListener("pointermove", onPointerMove);
       el.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("pointerup", onPointerUp);
+      el.removeEventListener("pointercancel", onPointerCancelOrLeave);
+      el.removeEventListener("pointerleave", onPointerCancelOrLeave);
+      el.removeEventListener("pointerout", onPointerCancelOrLeave);
       if (pointerPendingRef.current) cancelAnimationFrame(pointerPendingRef.current);
     };
-  }, [radius, strength, getApi]);
+  }, [radius, strength, getApi, active]);
 
   // header drag to move toolbar
   useEffect(() => {
@@ -428,6 +464,9 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
       setActive(true);
     } else {
       callApi("stopSculpting");
+      // ensure workspace hides any lingering pointers
+      callApi("hideSculptPointer");
+      callApi("hideSelectionPointer");
       callApi("setControlsEnabled", true);
       setActive(false);
     }
@@ -475,7 +514,7 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
 
   // cleanup sculpt on unmount
   useEffect(() => {
-    return () => { if (active) { callApi("stopSculpting"); callApi("setControlsEnabled", true); } };
+    return () => { if (active) { callApi("stopSculpting"); callApi("setControlsEnabled", true); callApi("hideSculptPointer"); callApi("hideSelectionPointer"); } };
     // intentionally not adding callApi to deps to avoid spurious calls
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
