@@ -90,6 +90,7 @@ function hslToRgb(h, s, l) {
  *  - onMaterialChange(patch)
  *  - onApplyTexture(file, slotKey), onApplyGLB(file), onRemoveTexture(slotKey)
  *  - onVisibilityToggle(visible), onDelete(), onRename(name)
+ *  - onLightChange(payload)  // optional: receives { type, color, intensity, position, target... }
  */
 export default function ObjectPropertiesTexture({
   selected,
@@ -101,6 +102,7 @@ export default function ObjectPropertiesTexture({
   onVisibilityToggle,
   onDelete,
   onRename,
+  onLightChange, // optional new callback
 }) {
   // TRANSFORM / UI
   const [name, setName] = useState("");
@@ -110,7 +112,7 @@ export default function ObjectPropertiesTexture({
   const [scale, setScale] = useState({ x: 1, y: 1, z: 1 });
   const [useDegrees, setUseDegrees] = useState(true);
   const [uniformScale, setUniformScale] = useState(false);
-  const [localSpace, setLocalSpace] = useState(true); // note: local/world behavior limited to simple parent transforms
+  const [localSpace, setLocalSpace] = useState(true);
 
   // MATERIAL
   const [hex, setHex] = useState("#888888");
@@ -135,11 +137,17 @@ export default function ObjectPropertiesTexture({
   const textureLoaderRef = useRef(null);
   const gltfLoaderRef = useRef(null);
   const mountedRef = useRef(true);
-  const pendingRef = useRef({ position: {}, rotation: {}, scale: {} }); // stores final numeric values to flush
+  const pendingRef = useRef({ position: {}, rotation: {}, scale: {} });
   const flushTimerRef = useRef(null);
   const materialTimerRef = useRef(null);
   const dragActiveRef = useRef(false);
   const [dragActive, setDragActive] = useState(false);
+
+  // lighting UI state (new)
+  const [lightType, setLightType] = useState("directional");
+  const [lightColor, setLightColor] = useState("#ffffff");
+  const [lightIntensity, setLightIntensity] = useState(1.2);
+  const lightTimerRef = useRef(null);
 
   // file input ids
   const fileIdsRef = useRef({});
@@ -161,7 +169,6 @@ export default function ObjectPropertiesTexture({
   const toNum = useCallback((v,d=0)=> {
     const n = typeof v === "number" && Number.isFinite(v) ? Number(v) : (typeof v === "string" && v !== "" ? Number(parseFloat(v)) : d);
     const out = Number.isFinite(n) ? n : d;
-    // keep 4 decimals for UI state
     return Number(Number(out).toFixed(4));
   }, []);
 
@@ -184,8 +191,6 @@ export default function ObjectPropertiesTexture({
   const materialSnapshot = useRef(null);
   useEffect(() => {
     mountedRef.current = true;
-
-    // revoke previous blobs created by this component (we only revoke ones we created where .file is present)
     try {
       Object.values(mapsRef.current || {}).forEach((m) => {
         if (m && m.url && m.file) {
@@ -195,7 +200,6 @@ export default function ObjectPropertiesTexture({
     } catch (e) {}
 
     if (!selected) {
-      // reset UI
       setName(""); setVisible(true);
       setPosition({ x: 0, y: 0, z: 0 });
       setRotation({ x: 0, y: 0, z: 0 });
@@ -208,7 +212,6 @@ export default function ObjectPropertiesTexture({
       return;
     }
 
-    // fill UI from selected
     setName(selected.name || "");
     setVisible(typeof selected.visible === "boolean" ? selected.visible : true);
 
@@ -220,7 +223,7 @@ export default function ObjectPropertiesTexture({
     const sc = selected.scale || new THREE.Vector3(1,1,1);
     setScale({ x: toNum(sc.x,1), y: toNum(sc.y,1), z: toNum(sc.z,1) });
 
-    // rotation: selected.rotation is radians; show degrees if useDegrees
+    // rotation
     const rx = selected.rotation?.x ?? 0;
     const ry = selected.rotation?.y ?? 0;
     const rz = selected.rotation?.z ?? 0;
@@ -307,9 +310,8 @@ export default function ObjectPropertiesTexture({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, useDegrees, toNum]);
 
-  // --- TRANSFORM logic: immediate apply for UI feedback + batched onTransformChange callback --- //
+  // --- TRANSFORM logic: immediate apply for UI feedback + batched onTransformChange callback ---
 
-  // apply a numeric transform value directly to the selected object (value units: position/scale in units, rotation in radians)
   const applyToSelected = useCallback((prop, axis, numericValue) => {
     if (!selected) return;
     try {
@@ -318,34 +320,25 @@ export default function ObjectPropertiesTexture({
       } else if (prop === "position") {
         selected.position[axis] = numericValue;
       } else if (prop === "scale") {
-        // guard: avoid zero or negative scales unless intended
         selected.scale[axis] = numericValue;
       }
-      // update matrices for immediate visual feedback
       selected.updateMatrix?.();
       selected.updateMatrixWorld?.();
-    } catch (e) {
-      // swallow to keep UI robust
-    }
+    } catch (e) {}
   }, [selected]);
 
-  // queue transform to pendingRef (numericValue: position/scale in units, rotation in radians)
   const queueTransform = useCallback((prop, axis, numericValue) => {
     if (!prop || !axis) return;
     if (!pendingRef.current[prop]) pendingRef.current[prop] = {};
     pendingRef.current[prop][axis] = Number(numericValue);
-    // immediate application for UI responsiveness
     applyToSelected(prop, axis, Number(numericValue));
-    // schedule a batched flush (which will call onTransformChange if provided)
     if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
     flushTimerRef.current = setTimeout(() => {
       flushTimerRef.current = null;
-      // flushPending will call onTransformChange
       try { flushPending(); } catch (e) {}
     }, 80);
   }, [applyToSelected]);
 
-  // flush pending values (call onTransformChange for each property/axis)
   const flushPending = useCallback(() => {
     if (!mountedRef.current) return;
     const p = pendingRef.current;
@@ -356,10 +349,7 @@ export default function ObjectPropertiesTexture({
         for (const axis of Object.keys(obj)) {
           const val = obj[axis];
           if (typeof onTransformChange === "function") {
-            // rotation is passed as radians
             onTransformChange(prop, axis, Number(val));
-          } else {
-            // fallback: we already applied to selected in applyToSelected
           }
         }
         pendingRef.current[prop] = {};
@@ -367,25 +357,21 @@ export default function ObjectPropertiesTexture({
     } catch (e) {}
   }, [onTransformChange]);
 
-  // numeric input handler: converts UI value to numeric units and queues
   const handleInputChange = useCallback((prop, axis) => (e) => {
     const raw = e.target.value;
     const parsed = raw === "" ? 0 : Number(parseFloat(raw));
     if (prop === "position") {
       const v = isNaN(parsed) ? 0 : parsed;
       setPosition((s) => ({ ...s, [axis]: v }));
-      // if world-space toggle is used, keep UI as provided but queue local numbers (simple behavior)
       queueTransform("position", axis, v);
     } else if (prop === "rotation") {
       const v = isNaN(parsed) ? 0 : parsed;
       setRotation((s) => ({ ...s, [axis]: v }));
-      // convert to radians when useDegrees is true
       const numeric = useDegrees ? (v * Math.PI) / 180 : v;
       queueTransform("rotation", axis, numeric);
     } else if (prop === "scale") {
       const v = isNaN(parsed) ? 0 : parsed;
       if (uniformScale) {
-        // apply uniform immediately
         setScale({ x: v, y: v, z: v });
         queueTransform("scale", "x", v);
         queueTransform("scale", "y", v);
@@ -397,7 +383,6 @@ export default function ObjectPropertiesTexture({
     }
   }, [queueTransform, useDegrees, uniformScale]);
 
-  // keep selected object in sync if user toggles useDegrees: update rotation UI immediately from selected values
   useEffect(() => {
     if (!selected) return;
     const rx = selected.rotation?.x ?? 0;
@@ -411,12 +396,10 @@ export default function ObjectPropertiesTexture({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [useDegrees, selected]);
 
-  // if uniformScale toggled on, sync all axes to x
   useEffect(() => {
     if (uniformScale) {
       setScale((s) => {
         const x = toNum(s.x || 1, 1);
-        // update UI and remote
         queueTransform("scale", "x", x);
         queueTransform("scale", "y", x);
         queueTransform("scale", "z", x);
@@ -425,8 +408,7 @@ export default function ObjectPropertiesTexture({
     }
   }, [uniformScale, queueTransform, toNum]);
 
-  // --- MATERIAL helpers (kept largely same with small safety tweaks) --- //
-
+  // --- MATERIAL helpers (kept largely same with small safety tweaks) ---
   const applyMaterialPatch = useCallback((patch = {}) => {
     try {
       selected?.traverse((n) => {
@@ -706,13 +688,10 @@ export default function ObjectPropertiesTexture({
           const scene = gltf.scene || gltf.scenes?.[0];
           if (!scene) return;
           if (selected && (selected.isMesh || selected.isGroup || selected.isObject3D)) {
-            // replace children with gltf scene children
             try {
-              // remove existing children safely
               if (typeof selected.clear === "function") selected.clear();
               scene.children.forEach((c) => { selected.add(c.clone(true)); });
             } catch (e) {
-              // fallback: attach children directly
               scene.children.forEach((c) => { selected.add(c.clone(true)); });
             }
           }
@@ -753,7 +732,7 @@ export default function ObjectPropertiesTexture({
       const meta = e.ctrlKey || e.metaKey;
       if (meta && e.key.toLowerCase() === "z") { e.preventDefault(); matUndo(); }
       if (meta && (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z"))) { e.preventDefault(); matRedo(); }
-      if (e.key === "Escape" && previewUrl) { setPreviewUrl(null); } // ESC closes preview
+      if (e.key === "Escape" && previewUrl) { setPreviewUrl(null); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -765,6 +744,7 @@ export default function ObjectPropertiesTexture({
       mountedRef.current = false;
       if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
       if (materialTimerRef.current) { clearTimeout(materialTimerRef.current); materialTimerRef.current = null; }
+      if (lightTimerRef.current) { clearTimeout(lightTimerRef.current); lightTimerRef.current = null; }
       try {
         Object.values(mapsRef.current || {}).forEach((m) => { if (m && m.url && m.file) { try { URL.revokeObjectURL(m.url); } catch(e) {} } });
       } catch (e) {}
@@ -871,10 +851,106 @@ export default function ObjectPropertiesTexture({
   const openPreview = (url) => { setPreviewUrl(url); };
   const closePreview = () => { setPreviewUrl(null); };
 
-  // Numeric input component (keeps simple markup)
-  const Numeric = ({ value, onChange, step = 0.1, min, max, ariaLabel }) => (
-    <input className="op-numeric" type="number" step={step} value={value} onChange={onChange} min={min} max={max} aria-label={ariaLabel} />
-  );
+  // ----- ENHANCED Numeric input with wheel + drag support -----
+  const Numeric = ({ value, onChange, step = 0.1, min, max, ariaLabel }) => {
+    const dragRef = useRef({ active: false, startY: 0, startVal: 0 });
+    const inputRef = useRef(null);
+
+    useEffect(() => {
+      return () => {
+        // cleanup (in case)
+        dragRef.current.active = false;
+      };
+    }, []);
+
+    const clampVal = (v) => {
+      if (typeof min === "number" && v < min) return min;
+      if (typeof max === "number" && v > max) return max;
+      return v;
+    };
+
+    // helper to call parent onChange with event-like object
+    const emit = (newVal) => {
+      const ev = { target: { value: String(Number(Number(newVal).toFixed(4))) } };
+      try { onChange && onChange(ev); } catch (e) {}
+    };
+
+    const onWheel = (e) => {
+      e.preventDefault();
+      // wheel deltaY: positive (down) -> decrease; negative (up) -> increase
+      const dir = Math.sign(-e.deltaY || 0);
+      const delta = dir * step;
+      let next = Number(value) + delta;
+      next = clampVal(next);
+      emit(next);
+    };
+
+    const onMouseDown = (e) => {
+      e.preventDefault();
+      dragRef.current.active = true;
+      dragRef.current.startY = e.clientY;
+      dragRef.current.startVal = Number(value || 0);
+      document.body.style.cursor = "ns-resize";
+
+      const onMove = (ev) => {
+        if (!dragRef.current.active) return;
+        const dy = ev.clientY - dragRef.current.startY;
+        // sensitivity: pixels -> value change (tweak as needed)
+        const sens = Math.max(0.0001, Math.abs(step) / 2);
+        const newVal = clampVal(dragRef.current.startVal - dy * sens);
+        emit(newVal);
+      };
+
+      const onUp = () => {
+        dragRef.current.active = false;
+        document.body.style.cursor = "";
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    };
+
+    // touch support
+    const onTouchStart = (e) => {
+      if (!e.touches || !e.touches[0]) return;
+      dragRef.current.active = true;
+      dragRef.current.startY = e.touches[0].clientY;
+      dragRef.current.startVal = Number(value || 0);
+      const onTouchMove = (ev) => {
+        if (!dragRef.current.active) return;
+        const dy = ev.touches[0].clientY - dragRef.current.startY;
+        const sens = Math.max(0.0001, Math.abs(step) / 2);
+        const newVal = clampVal(dragRef.current.startVal - dy * sens);
+        emit(newVal);
+      };
+      const onTouchEnd = () => {
+        dragRef.current.active = false;
+        window.removeEventListener("touchmove", onTouchMove);
+        window.removeEventListener("touchend", onTouchEnd);
+      };
+      window.addEventListener("touchmove", onTouchMove, { passive: true });
+      window.addEventListener("touchend", onTouchEnd);
+    };
+
+    return (
+      <input
+        ref={inputRef}
+        className="op-numeric"
+        type="number"
+        step={step}
+        value={value}
+        onChange={onChange}
+        onWheel={onWheel}
+        onMouseDown={onMouseDown}
+        onTouchStart={onTouchStart}
+        min={min}
+        max={max}
+        aria-label={ariaLabel}
+      />
+    );
+  };
 
   // UI collapsible state
   const [openTransform, setOpenTransform] = useState(true);
@@ -895,17 +971,14 @@ export default function ObjectPropertiesTexture({
       const s = localStorage.getItem(CLIP_KEY);
       if (!s) return;
       const raw = JSON.parse(s);
-      // raw.rotation is expected to be radians (how we saved above)
       const pos = raw.position || {};
       const sc = raw.scale || {};
       const rot = raw.rotation || {};
-      // update UI
       setPosition({ x: toNum(pos.x), y: toNum(pos.y), z: toNum(pos.z) });
       setScale({ x: toNum(sc.x,1), y: toNum(sc.y,1), z: toNum(sc.z,1) });
 
       if (useDegrees) {
         setRotation({ x: toNum((rot.x || 0) * 180 / Math.PI), y: toNum((rot.y || 0) * 180 / Math.PI), z: toNum((rot.z || 0) * 180 / Math.PI) });
-        // queue numeric radians (queueTransform will not convert because we pass radians directly)
         queueTransform('rotation','x', (rot.x || 0));
         queueTransform('rotation','y', (rot.y || 0));
         queueTransform('rotation','z', (rot.z || 0));
@@ -916,7 +989,6 @@ export default function ObjectPropertiesTexture({
         queueTransform('rotation','z', rot.z || 0);
       }
 
-      // queue position / scale (assume clipboard uses local units)
       queueTransform('position','x', pos.x || 0);
       queueTransform('position','y', pos.y || 0);
       queueTransform('position','z', pos.z || 0);
@@ -952,8 +1024,25 @@ export default function ObjectPropertiesTexture({
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [flushPending]);
 
-  // -- Render UI (keeps your layout & classes but uses the fixed transform handlers) -- //
+  // LIGHTING panel helpers (new)
+  const scheduleLightApply = useCallback((payload) => {
+    if (!onLightChange) return;
+    if (lightTimerRef.current) clearTimeout(lightTimerRef.current);
+    lightTimerRef.current = setTimeout(() => {
+      lightTimerRef.current = null;
+      try { onLightChange(payload); } catch (e) {}
+    }, 100);
+  }, [onLightChange]);
 
+  useEffect(() => {
+    // when user toggles the light UI (or initial load), send initial payload once
+    if (onLightChange) {
+      scheduleLightApply({ type: lightType, color: lightColor, intensity: lightIntensity });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onLightChange]);
+
+  // -- Render UI (keeps your layout & classes but uses the fixed transform handlers) --
   return selected ? (
     <div className={`op-container ${dragActive ? "drag-active" : ""}`} onDrop={onDrop} onDragOver={onDragOver} onDragEnter={onDragEnter} onDragLeave={onDragLeave}>
       {/* Header */}
@@ -1092,6 +1181,33 @@ export default function ObjectPropertiesTexture({
             </div>
           </div>
         )}
+      </div>
+
+      {/* Lighting (NEW) */}
+      <div className="op-panel">
+        <div className="op-panel-header">
+          <strong>Lighting</strong>
+          <div className="op-panel-right note">Live update (if scene passed <code>onLightChange</code>)</div>
+        </div>
+
+        <div className="op-material-body">
+          <div className="op-texture-row">
+            <label>Type</label>
+            <select className="op-select" value={lightType} onChange={(e) => { const t = e.target.value; setLightType(t); scheduleLightApply({ type: t, color: lightColor, intensity: lightIntensity }); }}>
+              <option value="directional">Directional</option>
+              <option value="point">Point</option>
+              <option value="ambient">Ambient</option>
+              <option value="spot">Spot</option>
+            </select>
+          </div>
+
+          <div className="op-texture-row">
+            <label>Color</label>
+            <input className="op-color-swatch small" type="color" value={lightColor} onChange={(e) => { setLightColor(e.target.value); scheduleLightApply({ type: lightType, color: e.target.value, intensity: lightIntensity }); }} />
+            <label>Intensity {lightIntensity.toFixed(2)}</label>
+            <input className="op-range" type="range" min="0" max="5" step="0.01" value={lightIntensity} onChange={(e) => { const v = Number(e.target.value); setLightIntensity(v); scheduleLightApply({ type: lightType, color: lightColor, intensity: v }); }} />
+          </div>
+        </div>
       </div>
 
       {/* Presets panel */}
