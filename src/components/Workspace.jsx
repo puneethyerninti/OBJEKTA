@@ -361,6 +361,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   };
 
   // sculpt pointer events (attached later after renderer created)
+  // These were originally written to accept DOM PointerEvent; we add wrapper APIs later.
   const onSculptPointerDown = (event) => {
     if (!sculptStateRef.current.active) return;
     sculptStateRef.current.pointerDown = true;
@@ -408,6 +409,41 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       sculptStateRef.current.undoTmp = null;
       bumpSceneVersion('sculpt-stroke-commit');
     }
+  };
+
+  // API wrappers which accept either PointerEvent or shorthand {x,y,pressure,pxRadius}
+  const wrapperSculptPointerDown = (evOrObj) => {
+    try {
+      if (!evOrObj) return;
+      let e = evOrObj;
+      if (!(evOrObj instanceof Event) && typeof evOrObj.x === "number") {
+        e = { clientX: evOrObj.x, clientY: evOrObj.y, pressure: evOrObj.pressure ?? 0.5 };
+      }
+      onSculptPointerDown(e);
+    } catch (e) { console.warn("wrapperSculptPointerDown", e); }
+  };
+  const wrapperSculptPointerMove = (evOrObj) => {
+    try {
+      if (!evOrObj) return;
+      let e = evOrObj;
+      if (!(evOrObj instanceof Event) && typeof evOrObj.x === "number") {
+        e = { clientX: evOrObj.x, clientY: evOrObj.y, pressure: evOrObj.pressure ?? 0.5, pxRadius: evOrObj.pxRadius };
+      }
+      onSculptPointerMove(e);
+    } catch (e) { console.warn("wrapperSculptPointerMove", e); }
+  };
+  const wrapperSculptPointerUp = (evOrObj) => {
+    try {
+      if (!evOrObj) {
+        onSculptPointerUp();
+        return;
+      }
+      let e = evOrObj;
+      if (!(evOrObj instanceof Event) && typeof evOrObj.x === "number") {
+        e = { clientX: evOrObj.x, clientY: evOrObj.y, pressure: evOrObj.pressure ?? 0 };
+      }
+      onSculptPointerUp(e);
+    } catch (e) { console.warn("wrapperSculptPointerUp", e); }
   };
 
   useEffect(() => {
@@ -584,33 +620,79 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
       }
     } catch (e) { console.warn('Material editor init failed', e); }
 
-    // GLB importer helper
-    try {
-      if (containerRef.current) {
-        glbImporterApiRef.current = initGLBImporter({
-          scene,
-          domElement: containerRef.current,
-          onLoad: (gltf, meta) => {
-            try {
-              const root = gltf.scene || gltf.scenes?.[0] || gltf;
-              const box = new THREE.Box3().setFromObject(root);
-              const size = box.getSize(new THREE.Vector3());
-              const center = box.getCenter(new THREE.Vector3());
-              const maxDim = Math.max(size.x, size.y, size.z, 1);
-              if (maxDim > 0) root.scale.setScalar(2 / maxDim);
-              root.traverse((child) => { if (!child.userData) child.userData = {}; child.userData.__objekta = true; if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; } });
-              root.position.sub(center);
-              const ug = getUserGroup();
-              safeAdd(ug || scene, root, root.name || "imported_root");
-              try { root.traverse(n => { SceneGraphStore.addObject?.(n.uuid, n, { name: n.name, type: n.type }); }); } catch (e) {}
-              ensureBVHForObject(root);
-              selectObject(root);
-              bumpSceneVersion('import-glb-helper');
-            } catch (err) { console.warn('glb importer onLoad failed', err); }
-          }
-        });
-      }
-    } catch (e) { console.warn('GLB importer init failed', e); }
+    // ✅ GLB Importer Helper (fixed for color & texture rendering)
+try {
+  if (containerRef.current) {
+    glbImporterApiRef.current = initGLBImporter({
+      scene,
+      domElement: containerRef.current,
+      onLoad: (gltf, meta) => {
+        try {
+          const root = gltf.scene || gltf.scenes?.[0] || gltf;
+
+          // ✅ Preserve materials, textures, and color space
+          root.traverse((child) => {
+            if (child.isMesh) {
+              if (child.material) {
+                child.material.needsUpdate = true;
+                child.material.side = THREE.DoubleSide;
+                child.material.toneMapped = true;
+
+                // convert color space if needed
+                if (child.material.color?.isColor)
+                  child.material.color.convertSRGBToLinear?.();
+              } else {
+                // Fallback material
+                child.material = new THREE.MeshStandardMaterial({ color: 0xaaaaaa });
+              }
+
+              child.castShadow = true;
+              child.receiveShadow = true;
+            }
+          });
+
+          // ✅ Normalize model scale & center
+          const box = new THREE.Box3().setFromObject(root);
+          const size = box.getSize(new THREE.Vector3());
+          const center = box.getCenter(new THREE.Vector3());
+          const maxDim = Math.max(size.x, size.y, size.z, 1);
+          if (maxDim > 0) root.scale.setScalar(2 / maxDim);
+          root.position.sub(center);
+
+          // ✅ Add to scene or user group
+          const ug = getUserGroup();
+          safeAdd(ug || scene, root, root.name || "imported_root");
+
+          // ✅ Register in store
+          try {
+            root.traverse((n) => {
+              SceneGraphStore.addObject?.(n.uuid, n, {
+                name: n.name,
+                type: n.type,
+              });
+            });
+          } catch (e) {}
+
+          // ✅ BVH + Selection updates
+          ensureBVHForObject(root);
+          selectObject(root);
+          bumpSceneVersion("import-glb-helper");
+
+          // ✅ Ensure scene lighting (important for correct material rendering)
+          const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+          const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
+          directionalLight.position.set(5, 10, 7);
+          scene.add(ambientLight);
+          scene.add(directionalLight);
+        } catch (err) {
+          console.warn("GLB importer onLoad failed", err);
+        }
+      },
+    });
+  }
+} catch (e) {
+  console.warn("GLB importer init failed", e);
+}
 
     // pointer selection / hover / dblclick + render loop
     const onPointerDown = (event) => {
@@ -1565,6 +1647,16 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
   };
 
   // ---------- API exposure ----------
+  // helper to enable/disable controls externally
+  const setControlsEnabled = (enabled) => {
+    try {
+      if (orbitRef.current && typeof orbitRef.current.enabled === "boolean") orbitRef.current.enabled = enabled;
+      if (cameraControlsApiRef.current?.controls) cameraControlsApiRef.current.controls.enabled = enabled;
+      if (transformRef.current) transformRef.current.enabled = enabled;
+      needsRenderRef.current = true;
+    } catch (e) {}
+  };
+
   useImperativeHandle(ref, () => ({
     addItem, addGLTF, exportGLTF, undo, redo, deleteSelected,
     setTransformMode: (mode) => setTransformModeState(mode),
@@ -1582,6 +1674,11 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     },
     stopSculpting: () => stopSculptingInternal(),
     setSculptRadius, setSculptStrength, setSculptMode, setSculptSymmetry,
+    // NEW: expose pointer wrappers so external toolbars can call them (SculptToolbar)
+    sculptPointerDown: wrapperSculptPointerDown,
+    sculptPointerMove: wrapperSculptPointerMove,
+    sculptPointerUp: wrapperSculptPointerUp,
+    setControlsEnabled,
     validateScene: validateSceneAPI,
     getSceneSummary,
     getSceneObjects: () => { const ug = getUserGroup(); return ug ? Array.from(ug.children) : []; },
@@ -1595,11 +1692,29 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
     getCameraControlsApi: () => cameraControlsApiRef.current,
   }));
 
+  // Mirror the same API surface on global for legacy callers
   try {
     window.__OBJEKTA_WORKSPACE = {
       addItem, addGLTF, exportGLTF, undo, redo,
       getScene: () => sceneRef.current, getRenderer: () => rendererRef.current, getCamera: () => cameraRef.current,
-      selectObject: (o) => selectObject(o), serializeScene, validateScene: validateSceneAPI, getSceneSummary
+      selectObject: (o) => selectObject(o), serializeScene, validateScene: validateSceneAPI, getSceneSummary,
+      // NEW global sculpt API for external toolbars (SculptToolbar)
+      startSculpting: (mesh = null, opts = {}) => {
+        try {
+          const target = mesh || (selectedInternal || null);
+          if (!target) { console.warn('startSculpting global: no target'); return false; }
+          return startSculptingInternal(target, opts);
+        } catch (e) { console.warn(e); return false; }
+      },
+      stopSculpting: () => { try { stopSculptingInternal(); } catch (e) {} },
+      setSculptRadius: (r) => setSculptRadius(r),
+      setSculptStrength: (s) => setSculptStrength(s),
+      setSculptMode: (m) => setSculptMode(m),
+      setSculptSymmetry: (s) => setSculptSymmetry(s),
+      sculptPointerDown: wrapperSculptPointerDown,
+      sculptPointerMove: wrapperSculptPointerMove,
+      sculptPointerUp: wrapperSculptPointerUp,
+      setControlsEnabled,
     };
   } catch (e) {}
 
@@ -1773,17 +1888,7 @@ const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTop
         </div>
       )}
 
-      {selectedInternal && (
-        <div className="absolute bg-black/60 text-white px-2 py-1 rounded-md text-sm z-40" style={{ left: toolbarPos.x, top: toolbarPos.y, transform: "translate(-50%,-100%)", pointerEvents: "auto", minWidth: 120, display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ display: "flex", gap: 6 }}>
-            <button onClick={() => setTransformModeState("translate")} title="Move">↔</button>
-            <button onClick={() => setTransformModeState("rotate")} title="Rotate">⤾</button>
-            <button onClick={() => setTransformModeState("scale")} title="Scale">⇲</button>
-            <button onClick={duplicateSelected} title="Duplicate (Ctrl/Cmd+D)">⧉</button>
-          </div>
-          <div className="truncate" style={{ maxWidth: 220, fontSize: 12 }}>{selectedInternal.name}</div>
-        </div>
-      )}
+      
 
       {isOver && (<div className="absolute inset-0 border-2 border-dashed border-green-500 pointer-events-none" />)}
 
