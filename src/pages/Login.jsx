@@ -1,60 +1,89 @@
-// src/pages/Login.jsx
-import React, { useState } from "react";
+import React, { useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function Login() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const { login } = useAuth() || {};
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [err, setErr] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    alert(`Logging in with email: ${email}`);
+    setErr(null);
+    setLoading(true);
+    try {
+      await login(email, password);
+      navigate('/dashboard');
+    } catch (error) {
+      setErr(error.message || 'Login failed');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-    <div className="site-wrapper bg-gray-900 text-white">
-      <main className="px-6 py-16 max-w-md mx-auto">
-        <section className="text-center mb-12">
-          <h1 className="text-5xl font-extrabold text-cyan-400 drop-shadow-[0_0_10px_#00ffff]">
-            Login
-          </h1>
-          <p className="mt-4 text-gray-300">Access your OBJEKTA account and continue creating.</p>
-        </section>
-
-        <section className="bg-gray-800 p-8 rounded-lg shadow-lg">
-          <form className="space-y-6" onSubmit={handleSubmit}>
-            <div>
-              <label className="block text-gray-200 mb-2" htmlFor="email">Email</label>
-              <input
-                id="email"
+    <div className="auth-page">
+      <div className="auth-container">
+        <div className="auth-header">
+          <Link to="/" className="auth-logo">
+            <span className="auth-logo-text">OBJEKTA</span>
+          </Link>
+        </div>
+        
+        <div className="auth-card">
+          <h1 className="auth-title">Sign in</h1>
+          <p className="auth-subtitle">Enter your credentials to access your workspace</p>
+          
+          <form onSubmit={handleSubmit} className="auth-form">
+            <div className="auth-field">
+              <label className="auth-label">Email</label>
+              <input 
+                className="auth-input" 
                 type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="Your Email"
-                className="w-full p-3 rounded bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                name="email" 
+                value={email} 
+                onChange={(e) => setEmail(e.target.value)} 
+                placeholder="name@company.com"
+                required
               />
             </div>
-
-            <div>
-              <label className="block text-gray-200 mb-2" htmlFor="password">Password</label>
-              <input
-                id="password"
+            
+            <div className="auth-field">
+              <label className="auth-label">Password</label>
+              <input 
+                className="auth-input" 
                 type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Your Password"
-                className="w-full p-3 rounded bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                name="password" 
+                value={password} 
+                onChange={(e) => setPassword(e.target.value)} 
+                placeholder="Enter your password"
+                required
               />
             </div>
-
-            <button
-              type="submit"
-              className="w-full py-3 bg-cyan-400 text-gray-900 font-bold rounded hover:bg-cyan-500 transition-colors"
-            >
-              Login
+            
+            {err && <div className="auth-error">{err}</div>}
+            
+            <button type="submit" className="auth-button" disabled={loading}>
+              {loading ? 'Signing in...' : 'Sign in'}
             </button>
           </form>
-        </section>
-      </main>
+          
+          <div className="auth-divider">
+            <span>New to OBJEKTA?</span>
+          </div>
+          
+          <Link to="/register" className="auth-link-button">
+            Create your account
+          </Link>
+        </div>
+        
+        <div className="auth-footer">
+          <Link to="/" className="auth-footer-link">← Back to Home</Link>
+        </div>
+      </div>
     </div>
   );
 }

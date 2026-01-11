@@ -1,18 +1,28 @@
 // src/pages/Studio.jsx
-import React, { useRef, useState, useEffect, useCallback, useLayoutEffect } from "react";
+import React, { useRef, useState, useEffect, useCallback } from "react";
+// Static pako import keeps compression available even if dynamic import fails
+import { deflate } from "pako";
 import * as THREE from "three";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { DndProvider } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
 import {
   FiSave, FiUpload, FiRefreshCcw, FiMaximize, FiMinimize, FiRotateCcw,
-  FiRotateCw, FiSidebar, FiLayers, FiPlusSquare, FiCopy, FiWifi, FiWifiOff, FiSearch
+  FiRotateCw, FiSidebar, FiLayers, FiPlusSquare, FiCopy, FiWifi, FiWifiOff, FiSearch,
+  FiZap, FiGrid, FiCamera, FiMove, FiImage
 } from "react-icons/fi";
+import { useNavigate, useLocation } from "react-router-dom";
+import { useAuth } from "../contexts/AuthContext";
 
 import Palette from "../components/Palette";
 import Workspace from "../components/Workspace";
 import ObjectProperties from "../components/ObjectProperties";
 import SculptToolbar from "../components/SculptToolbar";
+import { loadInitialPanels, persistPanelStates, loadPref, saveBool, PREF_KEYS } from "../utils/preferences";
+import { ensurePersistentStorage, logQuotaIfAny } from "../utils/storage";
+import Timeline from "../components/Timeline";
+import StudioToast from "../components/StudioToast";
+import Loader from "../components/Loader";
 import "../styles/Studio.css";
 
 import { SceneGraphStore } from "../store/SceneGraphStore";
@@ -25,10 +35,12 @@ import setupEnvironment from "../components/EnvironmentSetup";
 import initGLBImporter from "../components/GLBImporter";
 import createMaterialEditor from "../components/MaterialEditor";
 import setupPostProcessing from "../components/PostProcessing";
+import { API_BASE, apiUrl } from "../utils/api";
 
-/* -------------------
-   Small UI subcomponents (ToastList, Loader, ConfirmModal)
-   ------------------- */
+/* ---------------------------
+   Small UI helpers + Outliner
+   --------------------------- */
+
 const PALETTE_ITEMS = [
   { id: 1, name: "Cube" }, { id: 2, name: "Sphere" }, { id: 3, name: "Cone" },
   { id: 4, name: "Plane" }, { id: 5, name: "Cylinder" }, { id: 6, name: "Torus" },
@@ -38,42 +50,29 @@ const PALETTE_ITEMS = [
 
 const ToastItem = ({ t, onClose }) => (
   <div role="status" aria-live="polite" className="toast-item" style={{
-    background: t.type === 'error' ? 'rgba(255, 60, 80, 0.9)' : 'rgba(20,20,30,0.9)',
+    background: t.type === 'error' ? 'rgba(255,60,80,0.9)' : 'linear-gradient(180deg, rgba(20,20,30,0.95), rgba(10,6,20,0.9))',
     color: 'var(--text-light)'
   }}>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: 'center', gap: 8 }}>
       <div style={{ fontWeight: 700 }}>{t.title || (t.type === "error" ? "Error" : "Info")}</div>
-      <button onClick={onClose} style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 16 }}>✕</button>
+      <button onClick={onClose} aria-label="Close toast" style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 16 }}>✕</button>
     </div>
     <div style={{ marginTop: 6, color: 'var(--text-muted)' }}>{t.message}</div>
   </div>
 );
 
 const ToastList = ({ toasts, remove }) => (
-  <div className="toast-container">
+  <div className="toast-container" aria-live="polite" aria-atomic="true">
     {toasts.map((t) => <ToastItem key={t.id} t={t} onClose={() => remove(t.id)} />)}
   </div>
 );
 
-const Loader = ({ active, message, progress }) => {
-  if (!active) return null;
-  return (
-    <div className="loader-container" role="status" aria-live="polite">
-      <div className="loader-content">
-        <div style={{ marginBottom: 8, fontWeight: 700 }}>{message || "Loading..."}</div>
-        <div style={{ height: 8, background: "rgba(255,255,255,0.08)", borderRadius: 6, overflow: "hidden", width: 240 }}>
-          <div style={{ width: `${Math.round((progress ?? 0) * 100)}%`, height: "100%", background: "linear-gradient(90deg,var(--brand-purple),var(--brand-pink))" }} />
-        </div>
-        {typeof progress === "number" && <div style={{ marginTop: 8, fontSize: 12 }}>{Math.round(progress * 100)}%</div>}
-      </div>
-    </div>
-  );
-};
+// Use the shared `Loader` imported from `../components/Loader` above.
 
 const ConfirmModal = ({ open, title, message, onCancel, onConfirm }) => {
   if (!open) return null;
   return (
-    <div className="modal-container" onClick={onCancel}>
+    <div className="modal-container" onClick={onCancel} role="dialog" aria-modal="true">
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 12 }}>{title}</div>
         <p style={{ color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.5 }}>{message}</p>
@@ -86,18 +85,19 @@ const ConfirmModal = ({ open, title, message, onCancel, onConfirm }) => {
   );
 };
 
-/* -------------------
-   OutlinerView component
-   ------------------- */
 const OutlinerView = ({ onSelect, sceneVersion, outlinerSearch: parentSearch, setOutlinerSearch: setParentSearch, pushToast, workspaceRef, disposeObjectResources }) => {
   const [items, setItems] = useState([]);
   const lastVerRef = useRef(-1);
+  const mountedRef = useRef(true);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
 
   useEffect(() => {
     let mounted = true;
+    let timer = null;
+
     const scanIfNeeded = async () => {
       try {
-        const ws = workspaceRef.current ?? workspaceRef; // may be ref or object
+        const ws = workspaceRef.current ?? workspaceRef;
         if (!ws) return;
         const ver = typeof ws.getSceneVersion === 'function' ? ws.getSceneVersion() : null;
         if (typeof sceneVersion === 'number' && sceneVersion === lastVerRef.current) return;
@@ -105,10 +105,10 @@ const OutlinerView = ({ onSelect, sceneVersion, outlinerSearch: parentSearch, se
         if (typeof ws.getSceneObjects === 'function') {
           list = ws.getSceneObjects();
         } else {
-          const scene = ws.scene;
-          list = scene && scene._userGroup ? Array.from(scene._userGroup.children) : [];
+          const scene = ws.getScene?.() ?? ws.scene;
+          list = scene && (scene._userGroup || scene._user_group) ? Array.from((scene._userGroup || scene._user_group).children) : [];
         }
-        if (!mounted) return;
+        if (!mounted || !mountedRef.current) return;
         lastVerRef.current = ver;
         const filtered = parentSearch ? list.filter(i => (i.name || '').toLowerCase().includes(parentSearch.toLowerCase())) : list;
         setItems(filtered);
@@ -116,8 +116,20 @@ const OutlinerView = ({ onSelect, sceneVersion, outlinerSearch: parentSearch, se
     };
 
     scanIfNeeded();
-    const t = setInterval(scanIfNeeded, 800);
-    return () => { mounted = false; clearInterval(t); };
+    const onSceneUpdated = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => scanIfNeeded(), 120);
+    };
+    EventBus.on?.('scene:updated', onSceneUpdated);
+
+    const poll = setInterval(() => scanIfNeeded(), 4000);
+
+    return () => {
+      mounted = false;
+      if (timer) clearTimeout(timer);
+      clearInterval(poll);
+      EventBus.off?.('scene:updated', onSceneUpdated);
+    };
   }, [parentSearch, sceneVersion, workspaceRef]);
 
   const toggleVisibility = (obj) => { obj.visible = !obj.visible; pushToast?.({ type: "info", message: `${obj.name} ${obj.visible ? "shown" : "hidden"}` }); };
@@ -154,10 +166,13 @@ const OutlinerView = ({ onSelect, sceneVersion, outlinerSearch: parentSearch, se
   };
 
   return (
-    <div style={{ padding: 8, overflowY: 'auto', height: '100%' }}>
+    <div
+      // Use flex rather than height:100% so parent flex layouts can resolve
+      // the inner container's size and allow overflow to work reliably.
+      style={{ padding: 8, overflowY: 'auto', flex: '1 1 auto', minHeight: 0 }}>
       <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-        <input placeholder="Filter..." value={parentSearch} onChange={e => setParentSearch(e.target.value)} style={{ flex: 1, padding: 6 }} />
-        <button onClick={() => { setParentSearch(''); }} className="studio-btn icon-btn"><FiSearch /></button>
+        <input aria-label="Filter outliner" placeholder="Filter..." value={parentSearch} onChange={e => setParentSearch(e.target.value)} style={{ flex: 1, padding: 6 }} />
+        <button aria-label="Clear filter" onClick={() => { setParentSearch(''); }} className="studio-btn icon-btn"><FiSearch /></button>
       </div>
       {items.map((it) => (
         <div key={it.uuid} style={{
@@ -166,43 +181,75 @@ const OutlinerView = ({ onSelect, sceneVersion, outlinerSearch: parentSearch, se
           background: it.userData?.__selected ? 'rgba(127,90,240,0.12)' : 'transparent',
           marginBottom: 6
         }}>
-          <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => { if (workspaceRef.current?.selectObject) workspaceRef.current.selectObject(it); else onSelect?.(it); onSelect?.(it); }}>
+          <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => {
+            if (workspaceRef.current?.selectObject) {
+              workspaceRef.current.selectObject(it);
+              onSelect?.(it);
+            } else {
+              onSelect?.(it);
+            }
+          }}>
             {it.name || it.type || it.uuid}
           </div>
-          <button title="Rename" onClick={() => renameObject(it)}>✎</button>
-          <button title="Toggle visibility" onClick={() => toggleVisibility(it)}>{it.visible ? '👁' : '🚫'}</button>
-          <button title="Delete" onClick={() => deleteObject(it)}>🗑</button>
+          <button aria-label={`Rename ${it.name || it.type}`} title="Rename" onClick={() => renameObject(it)}>✎</button>
+          <button aria-label={`${it.visible ? "Hide" : "Show"} ${it.name || it.type}`} title="Toggle visibility" onClick={() => toggleVisibility(it)}>{it.visible ? '👁' : '🚫'}</button>
+          <button aria-label={`Delete ${it.name || it.type}`} title="Delete" onClick={() => deleteObject(it)}>🗑</button>
         </div>
       ))}
     </div>
   );
 };
 
-/* -------------------
+/* ---------------------------
    Main Studio component
-   ------------------- */
+   --------------------------- */
+
 export default function Studio() {
-  // refs & UI state
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { logout } = useAuth() || {};
+
+  // refs & API handles
   const workspaceRef = useRef(null);
   const panelRef = useRef(null);
   const containerRef = useRef(null);
   const toolbarRef = useRef(null);
 
-  // helper apis
   const lightingApiRef = useRef(null);
   const envApiRef = useRef(null);
   const importerApiRef = useRef(null);
   const cameraControlsApiRef = useRef(null);
   const materialEditorApiRef = useRef(null);
   const postApiRef = useRef(null);
-
-  // TransformControls fallback
   const transformControlsRef = useRef(null);
+
+  // Reduce page scroll while in Studio, but DON'T hide element scrollbars — keep internal rails usable
+  useEffect(() => {
+    const enterStudio = () => {
+      document.body.classList.add('studio-active');
+      // prevent body/document scrolling while studio is active
+      document.documentElement.style.overflow = 'hidden';
+      document.body.style.overflow = 'hidden';
+    };
+
+    enterStudio();
+
+    return () => {
+      document.body.classList.remove('studio-active');
+      document.documentElement.style.overflow = '';
+      document.body.style.overflow = '';
+
+      // remove any legacy injected style if present (from earlier runs)
+      const existingStyle = document.getElementById('studio-scrollbar-hide');
+      if (existingStyle) existingStyle.remove();
+    };
+  }, []);
 
   // UI state
   const [selected, setSelected] = useState(null);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [panelPos, setPanelPos] = useState({ top: 50, right: 20 });
+
   const [paletteWidth, setPaletteWidth] = useState(() => {
     const raw = localStorage.getItem("objekta_palette_width");
     const n = parseInt(raw, 10);
@@ -211,8 +258,24 @@ export default function Studio() {
   const paletteWidthRef = useRef(paletteWidth);
   useEffect(() => { paletteWidthRef.current = paletteWidth; }, [paletteWidth]);
 
-  const [paletteCollapsed, setPaletteCollapsed] = useState(false);
-  const [propsCollapsed, setPropsCollapsed] = useState(false);
+  const initialPanels = loadInitialPanels();
+  const [paletteCollapsed, setPaletteCollapsed] = useState(initialPanels.paletteCollapsed);
+  useEffect(() => { persistPanelStates({ paletteCollapsed, propsCollapsed: false }); }, [paletteCollapsed]);
+  const togglePaletteCollapse = useCallback(() => setPaletteCollapsed(v => !v), []);
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.defaultPrevented) return;
+      const tag = e.target?.tagName;
+      if (tag && ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)) return;
+      if (e.target?.isContentEditable) return;
+      if ((e.key === 'p' || e.key === 'P') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        togglePaletteCollapse();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [togglePaletteCollapse]);
   const [propsWidth, setPropsWidth] = useState(() => {
     const raw = localStorage.getItem("objekta_props_width");
     const n = parseInt(raw, 10);
@@ -236,14 +299,90 @@ export default function Studio() {
     const to = toastTimeoutsRef.current.get(id);
     if (to) { clearTimeout(to); toastTimeoutsRef.current.delete(id); }
   }, []);
+  useEffect(() => {
+    return () => {
+      for (const to of toastTimeoutsRef.current.values()) clearTimeout(to);
+      toastTimeoutsRef.current.clear();
+    };
+  }, []);
 
+  const forcedLogoutRef = useRef(false);
+  useEffect(() => { forcedLogoutRef.current = false; }, [location?.pathname, logout]);
+  const forceLogoutDueTo401 = useCallback((reason = "Session expired. Please sign in again.") => {
+    if (forcedLogoutRef.current) return;
+    forcedLogoutRef.current = true;
+    pushToast({ type: "error", title: "Authentication", message: reason || "Session expired. Please sign in again." }, 6200);
+    logout?.();
+    navigate("/login");
+  }, [logout, navigate, pushToast]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handler = () => forceLogoutDueTo401();
+    window.addEventListener("objekta:session-expired", handler);
+    return () => window.removeEventListener("objekta:session-expired", handler);
+  }, [forceLogoutDueTo401]);
+
+  // Request persistent storage once toast helpers are available
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const res = await ensurePersistentStorage();
+      if (!mounted) return;
+      if (res.persisted) {
+        pushToast?.({ type: 'info', title: 'Storage Ready', message: 'Persistent storage granted for large scenes.' }, 4000);
+      }
+      await logQuotaIfAny('StudioStorage');
+    })();
+    return () => { mounted = false; };
+  }, [pushToast]);
+
+  useEffect(() => {
+    const onImportStats = (stats) => {
+      const tris = stats?.triangles || 0;
+      const tex = stats?.totalTexels || 0;
+      pushToast({
+        type: 'info',
+        title: 'Import analyzed',
+        message: `${(tris/1e6).toFixed(2)}M tris, ${(tex/1e6).toFixed(1)} MP texels${stats?.downscaled ? `, downscaled ${stats.downscaled} textures` : ''}`
+      }, 7000);
+    };
+    const onMissing = (list) => {
+      if (!list || list.length === 0) return;
+      const preview = list.slice(0, 3).join(', ');
+      pushToast({ type: 'error', title: 'Missing resources', message: `${preview}${list.length > 3 ? '…' : ''}` }, 8000);
+    };
+    const onImportError = (payload) => {
+      if (!payload) return;
+      const hint = payload.hint ? ` ${payload.hint}` : '';
+      pushToast({ type: 'error', title: 'Import failed', message: `${payload.message || 'Check console.'}${hint}` }, 8000);
+    };
+    const onImportWarning = (payload) => {
+      if (!payload) return;
+      pushToast({ type: 'info', title: 'Import note', message: payload.message || 'Check console.' }, 6000);
+    };
+    EventBus.on?.('import:stats', onImportStats);
+    EventBus.on?.('import:missingResources', onMissing);
+    EventBus.on?.('import:error', onImportError);
+    EventBus.on?.('import:warning', onImportWarning);
+    return () => {
+      EventBus.off?.('import:stats', onImportStats);
+      EventBus.off?.('import:missingResources', onMissing);
+      EventBus.off?.('import:error', onImportError);
+      EventBus.off?.('import:warning', onImportWarning);
+    };
+  }, [pushToast]);
+
+  // busy / loaders
   const [loading, setLoading] = useState(false);
   const [loadProgress, setLoadProgress] = useState(null);
+
   const [confirmState, setConfirmState] = useState({ open: false, title: "", message: "", onConfirm: null });
   const resizingRef = useRef(false);
   const draggingRef = useRef(false);
   const offsetRef = useRef({ x: 0, y: 0 });
   const [activeMode, setActiveMode] = useState("translate");
+  const [viewMode, setViewMode] = useState("rendered");
 
   // snapping
   const [snapEnabled, setSnapEnabled] = useState(false);
@@ -254,7 +393,7 @@ export default function Studio() {
   });
   useEffect(() => { localStorage.setItem("objekta_snap", String(snapSize)); try { workspaceRef.current?.setSnapValue?.(snapSize); } catch (e) {} }, [snapSize]);
 
-  // material state
+  // material editor state (compact)
   const [matColor, setMatColor] = useState("#888888");
   const [matRough, setMatRough] = useState(0.5);
   const [matMetal, setMatMetal] = useState(0.0);
@@ -264,26 +403,117 @@ export default function Studio() {
   useEffect(() => {
     const prev = prevMatMapRef.current;
     if (prev && typeof prev === 'string' && prev.startsWith && prev.startsWith('blob:') && prev !== matMapURL) {
-      try { URL.revokeObjectURL(prev); } catch (e) {}
+      // Delay revocation to allow any pending loaders to finish
+      setTimeout(() => {
+        try { URL.revokeObjectURL(prev); } catch (e) {}
+      }, 1000);
     }
     prevMatMapRef.current = matMapURL;
-    return () => { try { if (matMapURL && matMapURL.startsWith && matMapURL.startsWith('blob:')) URL.revokeObjectURL(matMapURL); } catch (e) {} };
+    return () => { 
+      setTimeout(() => {
+        try { if (matMapURL && matMapURL.startsWith && matMapURL.startsWith('blob:')) URL.revokeObjectURL(matMapURL); } catch (e) {} 
+      }, 1000);
+    };
   }, [matMapURL]);
 
-  // lights / collab / outliner / validation state
+  // lights / collaboration / outliner / validation
   const [lights, setLights] = useState([]);
   const [collabConnected, setCollabConnected] = useState(false);
   const collabSocketRef = useRef(null);
   const [collabLoading, setCollabLoading] = useState(false);
+  const collabErrorGateRef = useRef({ lastToast: 0, logged: false });
   const [outlinerSearch, setOutlinerSearch] = useState("");
   const [sceneVersion, setSceneVersion] = useState(0);
   const [propsTab, setPropsTab] = useState("props");
   const [envColor, setEnvColor] = useState("#111122");
-  const [envIntensity, setEnvIntensity] = useState(1.0);
+    // track last environment file for persistence during save
+    const envFileRef = useRef(null);
   const [bloomEnabled, setBloomEnabled] = useState(false);
+  const [oceanEnabled, setOceanEnabled] = useState(false);
+  const [rainEnabled, setRainEnabled] = useState(false);
+  const [environmentActive, setEnvironmentActive] = useState(false);
+  const [validationResult, setValidationResult] = useState(null);
 
-  const pushSceneToast = useCallback((msg) => pushToast({ type: "info", message: msg }), [pushToast]);
+  // ---------- Dashboard / Backend state ----------
+  const [projects, setProjects] = useState([]); // normalized: { _id, name, lastSavedAt, thumbnailUrl }
+  const [projectId, setProjectId] = useState(null);
+  const [projectName, setProjectName] = useState("Untitled Project");
+  const [isSaving, setIsSaving] = useState(false);
+  const [isAutosave, setIsAutosave] = useState(true);
+  const [isConnectedToServer, setIsConnectedToServer] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState(null);
+  const [isDirty, setIsDirty] = useState(false);
+
+  const projectSocketRef = useRef(null);
+  const autosaveTimerRef = useRef(null);
+  const lastLocalSnapshotRef = useRef(null);
+  const lastServerSavedAtRef = useRef(null);
+  const isApplyingRemoteRef = useRef(false);
+
+  // upload progress (fraction 0..1) for current save operation (visual in Studio)
+  const [saveProgress, setSaveProgress] = useState(0);
+
   const safeDate = useCallback(() => new Date().toISOString().replace(/[:.]/g, "-"), []);
+
+  /* ---------- API base & helpers (centralized) ---------- */
+  const IS_LOCALHOST = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+
+  const getAuthHeaders = useCallback(() => {
+    // match the token key used in your AuthContext: "objekta_token"
+    const token = localStorage.getItem("objekta_token") || localStorage.getItem("token");
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    return headers;
+  }, []);
+
+  const safeJson = async (res) => {
+    // resilient JSON/text parser
+    const text = await res.text();
+    try { return JSON.parse(text); } catch { return text; }
+  };
+
+  /* ---------- IndexedDB helpers for backup storage on upload failure ---------- */
+  const BACKUP_DB_NAME = 'objekta_backups_db_v1';
+  const BACKUP_STORE_NAME = 'backups';
+
+  const initBackupDB = async () => {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(BACKUP_DB_NAME, 1);
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => resolve(req.result);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(BACKUP_STORE_NAME)) {
+          db.createObjectStore(BACKUP_STORE_NAME, { keyPath: 'id' });
+        }
+      };
+    });
+  };
+
+  const saveBackupToIndexedDB = async (projectId, projectData) => {
+    try {
+      const db = await initBackupDB();
+      const tx = db.transaction(BACKUP_STORE_NAME, 'readwrite');
+      const store = tx.objectStore(BACKUP_STORE_NAME);
+      const backup = {
+        id: `${projectId}_${Date.now()}`,
+        projectId,
+        data: projectData,
+        createdAt: new Date().toISOString(),
+      };
+      return new Promise((resolve, reject) => {
+        const req = store.add(backup);
+        req.onerror = () => reject(req.error);
+        req.onsuccess = () => {
+          console.info(`[OBJEKTA] Backup saved to IndexedDB: ${backup.id}`);
+          resolve(backup.id);
+        };
+      });
+    } catch (err) {
+      console.warn('[OBJEKTA] IndexedDB backup failed:', err);
+      return null;
+    }
+  };
 
   /* ---------- probe workspace helper ---------- */
   const probeWorkspace = useCallback(() => {
@@ -333,7 +563,7 @@ export default function Studio() {
                 postApiRef.current = setupPostProcessing({
                   renderer,
                   scene,
-                  camera,
+                 
                   width: dom.clientWidth || renderer.domElement.clientWidth || 800,
                   height: dom.clientHeight || renderer.domElement.clientHeight || 600,
                   options: { bloomStrength: 0.6, bloomRadius: 0.5, bloomThreshold: 0.9 },
@@ -372,7 +602,7 @@ export default function Studio() {
               } catch (e) { console.warn("material editor init failed", e); }
             }
 
-            // Camera controls: avoid double-init
+            // Camera controls
             if (!cameraControlsApiRef.current) {
               try {
                 if (!(workspaceRef.current && (workspaceRef.current.getControls || workspaceRef.current.controls))) {
@@ -388,8 +618,10 @@ export default function Studio() {
               } catch (e) { console.warn("camera controls init failed", e); }
             }
 
-            // TransformControls fallback (attach to scene root)
-            if (!transformControlsRef.current) {
+            // If the Workspace already manages TransformControls, prefer that.
+            // Only create a local TransformControls instance when the workspace
+            // does not expose `attachTransformToSelection` (legacy fallback).
+            if (!transformControlsRef.current && !workspaceRef.current?.attachTransformToSelection) {
               try {
                 const tc = new TransformControls(camera, dom);
                 tc.addEventListener("dragging-changed", (event) => {
@@ -401,7 +633,6 @@ export default function Studio() {
                 tc.addEventListener("objectChange", () => {
                   const obj = tc.object;
                   try { workspaceRef.current?.onObjectTransformed?.(obj); } catch (e) {}
-                  // notify React state (selected may be same object reference; updating will nudge UI)
                   setSelected((s) => (s === obj ? s : s));
                 });
                 scene.add(tc);
@@ -433,7 +664,64 @@ export default function Studio() {
     };
   }, [probeWorkspace]);
 
-  /* ---------- Transform mode & snapping sync ---------- */
+  /* robust async screenshot helper */
+  const captureThumbnailAsync = useCallback(async (opts = { quality: 0.9, mime: "image/png" }) => {
+    try {
+      const { renderer, scene, camera } = probeWorkspace();
+      if (!renderer || !scene || !camera) {
+        console.warn("[OBJEKTA] captureThumbnailAsync: missing renderer/scene/camera");
+        return null;
+      }
+
+      try {
+        if (postApiRef.current && typeof postApiRef.current.render === "function") {
+          postApiRef.current.render();
+        } else {
+          renderer.render(scene, camera);
+        }
+      } catch (e) {
+        console.warn("[OBJEKTA] post render for thumbnail failed", e);
+      }
+
+      // wait two animation frames to ensure browser compositing finished
+      await new Promise((r) => requestAnimationFrame(r));
+      await new Promise((r) => requestAnimationFrame(r));
+
+      const srcCanvas = renderer.domElement;
+      if (!srcCanvas) return null;
+
+      const w = srcCanvas.width || srcCanvas.clientWidth || srcCanvas.offsetWidth;
+      const h = srcCanvas.height || srcCanvas.clientHeight || srcCanvas.offsetHeight;
+      if (!w || !h) return null;
+
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      try {
+        ctx.drawImage(srcCanvas, 0, 0, w, h);
+      } catch (drawErr) {
+        console.warn("[OBJEKTA] captureThumbnail drawImage failed", drawErr);
+        return null;
+      }
+
+      // Promise wrapper for toBlob to guarantee Blob output
+      const blob = await new Promise((resolve) => {
+        try {
+          canvas.toBlob((b) => resolve(b || null), opts.mime || "image/png", opts.quality ?? 0.92);
+        } catch (e) {
+          console.warn("[OBJEKTA] canvas.toBlob failed", e);
+          resolve(null);
+        }
+      });
+      return blob;
+    } catch (err) {
+      console.warn("captureThumbnailAsync failed", err);
+      return null;
+    }
+  }, [probeWorkspace]);
+
+  /* Transform mode & snapping sync */
   useEffect(() => {
     try { if (workspaceRef.current?.setTransformMode) workspaceRef.current.setTransformMode(activeMode); } catch (e) {}
     try {
@@ -444,30 +732,35 @@ export default function Studio() {
   }, [activeMode]);
 
   useEffect(() => {
+    try { workspaceRef.current?.setShadingMode?.(viewMode); } catch (e) {}
+  }, [viewMode]);
+
+  useEffect(() => {
     try {
       if (workspaceRef.current?.setSnapValue) workspaceRef.current.setSnapValue(snapSize);
       if (transformControlsRef.current) {
         transformControlsRef.current.setTranslationSnap(snapEnabled ? snapSize : null);
-        // rotation snap (deg -> rad)
         transformControlsRef.current.setRotationSnap(snapEnabled ? (Math.PI / 180) * 15 : null);
       }
     } catch (e) {}
   }, [snapEnabled, snapSize]);
 
-  /* ---------- attach/detach transform controls on selection change ---------- */
+  /* attach/detach transform controls on selection change */
   useEffect(() => {
     try {
       const attachTo = selected ?? null;
-      if (transformControlsRef.current) {
+      // Prefer workspace-managed transform controls when available
+      if (workspaceRef.current?.attachTransformToSelection) {
+        if (attachTo) workspaceRef.current.attachTransformToSelection(attachTo);
+        else workspaceRef.current.detachTransformControls?.();
+      } else if (transformControlsRef.current) {
         if (attachTo) transformControlsRef.current.attach(attachTo);
         else transformControlsRef.current.detach();
-      } else {
-        if (workspaceRef.current?.attachTransformToSelection) workspaceRef.current.attachTransformToSelection(selected);
       }
     } catch (e) {}
   }, [selected]);
 
-  /* ---------- reveal observer to prevent everything popping at once ---------- */
+  /* reveal observer to prevent everything popping at once */
   useEffect(() => {
     const revealEls = containerRef.current ? containerRef.current.querySelectorAll(".reveal, .studio-panel, .studio-toolbar, .palette-panel") : [];
     if (!revealEls || revealEls.length === 0) return;
@@ -483,7 +776,7 @@ export default function Studio() {
     return () => obs.disconnect();
   }, []);
 
-  /* ---------- importGLTF wrapper ---------- */
+  /* importGLTF wrapper */
   const importGLTF = useCallback(async (file) => {
     if (!file) return;
     setLoading(true); setLoadProgress(0);
@@ -505,29 +798,50 @@ export default function Studio() {
     }
   }, [pushToast]);
 
-  /* ---------- applyEnvironmentFromFile ---------- */
+  /* applyEnvironmentFromFile */
   const applyEnvironmentFromFile = useCallback(async (file) => {
-    if (!file) return;
+    // Allow passing an event accidentally; extract first file
+    if (file && file.target && file.target.files) {
+      file = file.target.files[0];
+    }
+    if (!file || !(file instanceof Blob)) return;
     setLoading(true);
+    const name = (file.name || "").toLowerCase();
+    let url = null;
     try {
-      const name = (file.name || "").toLowerCase();
-      if ((name.endsWith(".hdr") || name.endsWith(".exr")) && envApiRef.current?.setEnvFromEquirect) {
-        const url = URL.createObjectURL(file);
+      if ((name.endsWith(".hdr") || name.endsWith(".exr")) && envApiRef.current?.setHDR) {
+        url = URL.createObjectURL(file);
         try {
-          await envApiRef.current.setEnvFromEquirect(url);
-          pushToast({ type: "info", message: "HDR loaded" });
-        } finally { try { URL.revokeObjectURL(url); } catch (e) {} }
+          await envApiRef.current.setHDR(url);
+          pushToast({ type: "info", message: "HDR environment loaded" });
+          setSceneVersion((v) => v + 1);
+          envFileRef.current = file; // keep original for save
+          setEnvironmentActive(true);
+        } finally {
+          setTimeout(() => { try { url && url.startsWith && url.startsWith('blob:') && URL.revokeObjectURL(url); } catch (e) {} }, 1500);
+        }
       } else {
         const loader = new THREE.TextureLoader();
-        const url = URL.createObjectURL(file);
+        url = URL.createObjectURL(file);
         const tex = await new Promise((res, rej) => loader.load(url, (t) => res(t), undefined, (err) => rej(err)));
-        try { URL.revokeObjectURL(url); } catch (e) {}
-        const scene = workspaceRef.current?.scene;
-        if (scene) { scene.background = tex; pushToast({ type: "info", message: "Background applied" }); }
+        try {
+          const scene = workspaceRef.current?.scene;
+          if (scene) {
+            scene.background = tex;
+            pushToast({ type: "info", message: "Background image applied" });
+            setSceneVersion((v) => v + 1);
+            envFileRef.current = file;
+            setEnvironmentActive(true);
+          }
+        } finally {
+          setTimeout(() => { try { url && url.startsWith && url.startsWith('blob:') && URL.revokeObjectURL(url); } catch (e) {} }, 1500);
+        }
       }
     } catch (e) {
       console.error("applyEnvironmentFromFile failed", e);
       pushToast({ type: "error", message: "Environment load failed" });
+      try { if (url && url.startsWith && url.startsWith('blob:')) URL.revokeObjectURL(url); } catch (e) {}
+      setEnvironmentActive(false);
     } finally { setLoading(false); }
   }, [pushToast]);
 
@@ -543,7 +857,7 @@ export default function Studio() {
     } catch (e) { pushToast({ type: "error", message: "Failed to set color" }); }
   }, [pushToast]);
 
-  /* ---------- toggle bloom ---------- */
+  /* toggleBloom */
   const toggleBloom = useCallback((enabled) => {
     setBloomEnabled(enabled);
     try {
@@ -565,20 +879,86 @@ export default function Studio() {
       }
       EventBus?.emit?.('postfx:bloom:toggle', { enabled });
       pushToast({ type: "info", message: `Bloom ${enabled ? 'enabled' : 'disabled'}` });
+      // persist toggle if scene save endpoint available
+      if (projectId) {
+        try {
+          fetch(apiUrl(`/api/scenes/${projectId}/update`), {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Accept': 'application/json' },
+            body: (() => { const fd = new FormData(); fd.append('bloomEnabled', String(enabled)); return fd; })()
+          }).catch(()=>{});
+        } catch (e) {}
+      }
     } catch (e) { pushToast({ type: "error", message: "Failed to toggle bloom" }); }
   }, [probeWorkspace, pushToast]);
 
-  /* ---------- quick stats (placeholder) ---------- */
-  const updateStatsOnce = useCallback(() => {
+  // Ocean effect toggle
+  const toggleOcean = useCallback((enabled) => {
+    setOceanEnabled(enabled);
     try {
       const scene = workspaceRef.current?.scene;
-      if (scene && (scene._user_group || scene._userGroup)) {
-        // compute stats if wanted
+      if (!scene) return;
+      const existing = scene.getObjectByName('_oceanEffect');
+      if (enabled && !existing) {
+        const geo = new THREE.PlaneGeometry(60, 60, 256, 256);
+        const uniforms = { time: { value: 0 }, amplitude: { value: 0.5 }, shininess: { value: 0.3 } };
+        const mat = new THREE.ShaderMaterial({
+          uniforms,
+          vertexShader: `uniform float time; uniform float amplitude; varying vec2 vUv; varying float vHeight; void main(){ vUv=uv; vec3 p=position; float wave=sin((p.x*0.22+time)*1.6)+cos((p.y*0.18+time*0.9)); wave += sin((p.x*0.35 - time*0.4))*0.5; p.z = wave*amplitude; vHeight=p.z; gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.0); }`,
+          fragmentShader: `uniform float shininess; varying vec2 vUv; varying float vHeight; void main(){ float g = 0.4 + 0.6*vUv.y; float fres = pow(1.0 - abs(vHeight), 3.0); vec3 base = mix(vec3(0.02,0.18,0.35), vec3(0.05,0.32,0.55), g); base += fres*0.25; gl_FragColor = vec4(base,1.0); }`,
+          transparent: false
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.rotation.x = -Math.PI/2;
+        mesh.position.y = -1.2;
+        mesh.name = '_oceanEffect';
+        scene.add(mesh);
+      } else if (!enabled && existing) {
+        scene.remove(existing);
+        existing.geometry?.dispose?.();
+        existing.material?.dispose?.();
       }
-    } catch (e) {}
-  }, []);
+      pushToast({ type: 'info', message: `Ocean ${enabled? 'enabled':'disabled'}` });
+      setSceneVersion(v=>v+1);
+      if (projectId) {
+        const fd = new FormData(); fd.append('oceanEnabled', String(enabled));
+        fetch(apiUrl(`/api/scenes/${projectId}/update`), { method:'POST', credentials:'include', body: fd }).catch(()=>{});
+      }
+    } catch (e) { pushToast({ type:'error', message:'Ocean toggle failed' }); }
+  }, [pushToast, projectId]);
 
-  /* ---------- selection handler ---------- */
+  // Rain effect toggle
+  const toggleRain = useCallback((enabled) => {
+    setRainEnabled(enabled);
+    try {
+      const scene = workspaceRef.current?.scene;
+      if (!scene) return;
+      const existing = scene.getObjectByName('_rainEffect');
+      if (enabled && !existing) {
+        const group = new THREE.Group();
+        group.name = '_rainEffect';
+        for (let i=0;i<400;i++) {
+          const geom = new THREE.BufferGeometry();
+          const verts = new Float32Array([ (Math.random()-0.5)*40, Math.random()*10+2, (Math.random()-0.5)*40 ]);
+          geom.setAttribute('position', new THREE.BufferAttribute(verts,3));
+          const mat = new THREE.PointsMaterial({ color:0x99bbff, size:0.08 });
+          const pts = new THREE.Points(geom, mat);
+          pts.userData.v = 0.03 + Math.random()*0.08;
+          group.add(pts);
+        }
+        scene.add(group);
+      } else if (!enabled && existing) {
+        existing.children.forEach(c=>{ c.geometry?.dispose?.(); c.material?.dispose?.(); });
+        scene.remove(existing);
+      }
+      pushToast({ type:'info', message:`Rain ${enabled? 'enabled':'disabled'}` });
+      setSceneVersion(v=>v+1);
+      if (projectId) { const fd = new FormData(); fd.append('rainEnabled', String(enabled)); fetch(apiUrl(`/api/scenes/${projectId}/update`), { method:'POST', credentials:'include', body: fd }).catch(()=>{}); }
+    } catch (e) { pushToast({ type:'error', message:'Rain toggle failed' }); }
+  }, [pushToast, projectId]);
+
+  /* selection handler */
   const handleWorkspaceSelect = useCallback((obj) => {
     setSelected(obj);
     try { materialEditorApiRef.current?.refresh?.(); } catch (e) {}
@@ -602,7 +982,7 @@ export default function Studio() {
     }
   }, []);
 
-  /* ---------- applyMaterialToSelection ---------- */
+  /* applyMaterialToSelection */
   const applyMaterialToSelection = useCallback(async ({ color, roughness, metalness, mapFile } = {}) => {
     const sel = workspaceRef.current?.getSelectedMesh?.() ?? selected;
     if (!sel) { pushToast({ type: "error", message: "No selection to apply material" }); return; }
@@ -641,7 +1021,7 @@ export default function Studio() {
           pushToast({ type: "info", message: "Texture applied" });
         }, undefined, (err) => {
           pushToast({ type: "error", message: "Failed to load texture" });
-          try { if (url.startsWith('blob:')) URL.revokeObjectURL(url); } catch (e) {}
+          try { if (url && url.startsWith && url.startsWith('blob:')) URL.revokeObjectURL(url); } catch (e) {}
         });
       } else {
         sel.traverse((n) => {
@@ -665,7 +1045,7 @@ export default function Studio() {
     }
   }, [selected, pushToast]);
 
-  /* ---------- save/export ---------- */
+  /* saveJSON & exportGLTF (unchanged) */
   const saveJSON = useCallback(() => {
     const data = workspaceRef.current?.serializeScene?.();
     if (!data) { pushToast({ type: "error", message: "Nothing to save" }); return; }
@@ -674,7 +1054,10 @@ export default function Studio() {
     const a = document.createElement("a");
     a.href = url;
     a.download = `Objekta_Scene_${safeDate()}.json`;
+    // append for safety in some browsers
+    document.body.appendChild(a);
     a.click();
+    a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1500);
     pushToast({ type: "info", message: "Scene saved (JSON)" });
   }, [pushToast, safeDate]);
@@ -684,7 +1067,7 @@ export default function Studio() {
     pushToast({ type: "error", message: "Export not implemented in workspace" });
   }, [pushToast]);
 
-  /* ---------- drag/drop on container ---------- */
+  /* drag/drop on container (unchanged) */
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -696,7 +1079,8 @@ export default function Studio() {
         const name = (file.name || "").toLowerCase();
         if (name.endsWith(".glb") || name.endsWith(".gltf")) importGLTF(file);
         else if (name.endsWith(".json")) loadJSON(file);
-        else pushToast({ type: "error", message: "Unsupported file. Drop a .glb, .gltf, or .json file." });
+        else if (name.endsWith(".hdr") || name.endsWith(".exr") || name.endsWith(".jpg") || name.endsWith(".png")) applyEnvironmentFromFile(file);
+        else pushToast({ type: "error", message: "Unsupported file. Drop a .glb, .gltf, .json, or .hdr file." });
       }
     };
     container.addEventListener("dragover", onDragOver);
@@ -705,9 +1089,9 @@ export default function Studio() {
       container.removeEventListener("dragover", onDragOver);
       container.removeEventListener("drop", onDrop);
     };
-  }, [importGLTF, pushToast]);
+  }, [importGLTF, pushToast, applyEnvironmentFromFile]);
 
-  /* ---------- loadJSON implementation ---------- */
+  /* loadJSON (unchanged) */
   const loadJSON = useCallback(async (file) => {
     if (!file) return;
     setLoading(true);
@@ -727,35 +1111,7 @@ export default function Studio() {
     } finally { setLoading(false); }
   }, [pushToast]);
 
-  /* ---------- keyboard shortcuts ---------- */
-  useEffect(() => {
-    const onKey = (e) => {
-      const meta = e.ctrlKey || e.metaKey;
-      if (meta && e.key.toLowerCase() === "s") { e.preventDefault(); saveJSON(); return; }
-      if (meta && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); workspaceRef.current?.undo?.(); return; }
-      if ((meta && e.key.toLowerCase() === "y") || (meta && e.shiftKey && e.key.toLowerCase() === "z")) { e.preventDefault(); workspaceRef.current?.redo?.(); return; }
-      if (e.key === "Delete") { requestDeleteSelected(); return; }
-      if (!meta && e.key.toLowerCase() === "p") { setPaletteCollapsed((v) => !v); return; }
-      if (!meta && e.key.toLowerCase() === "i") { setPropsCollapsed((v) => !v); return; }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [saveJSON]);
-
-  /* ---------- context menu ---------- */
-  const [ctxMenu, setCtxMenu] = useState(null);
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const onContext = (ev) => { ev.preventDefault(); setCtxMenu({ x: ev.clientX, y: ev.clientY }); };
-    el.addEventListener("contextmenu", onContext);
-    return () => el.removeEventListener("contextmenu", onContext);
-  }, []);
-
-  const closeContext = useCallback(() => setCtxMenu(null), []);
-  const duplicateWrapper = useCallback(() => { workspaceRef.current?.duplicateSelected?.(); pushToast({ type: "info", message: "Duplicated selection" }); }, [pushToast]);
-
-  /* ---------- resource dispose helper ---------- */
+  /* disposeObjectResources (unchanged) */
   const disposeObjectResources = useCallback((obj) => {
     if (!obj) return;
     obj.traverse(n => {
@@ -773,7 +1129,7 @@ export default function Studio() {
     });
   }, []);
 
-  /* ---------- delete / reset ---------- */
+  /* delete / reset (unchanged) */
   const requestDeleteSelected = useCallback(() => {
     const sel = workspaceRef.current?.getSelectedMesh?.() ?? selected;
     if (!sel) return;
@@ -810,7 +1166,7 @@ export default function Studio() {
     });
   }, [disposeObjectResources, pushToast]);
 
-  /* ---------- collaboration (kept) ---------- */
+  /* collaboration (unchanged dynamic import for client) */
   const startCollab = useCallback(async () => {
     if (collabSocketRef.current) {
       try { collabSocketRef.current.disconnect(); } catch (e) {}
@@ -819,15 +1175,27 @@ export default function Studio() {
     setCollabLoading(true);
     try {
       const module = await import("socket.io-client");
-      const io = module.io || module.default || module;
-      const url = window.location.origin;
-      const socket = io(url, { autoConnect: true });
+      const ioClient = module.io || module.default || module;
+      // use same backend base as API calls
+  const base = API_BASE || window.location.origin;
+  const socket = ioClient(base, { autoConnect: true, transports: ["websocket", "polling"], withCredentials: true });
       collabSocketRef.current = socket;
       socket.on("connect", () => {
         setCollabConnected(true); setCollabLoading(false); pushToast({ type: "info", message: "Connected to collab server" });
         try { const data = workspaceRef.current?.serializeScene?.(); socket.emit("scene:push", { scene: data || { snaps: [] } }); } catch (e) {}
       });
-      socket.on("connect_error", (err) => { setCollabLoading(false); pushToast({ type: "error", message: "Collab connect failed" }); console.error("collab connect err", err); });
+      socket.on("connect_error", (err) => {
+        setCollabLoading(false);
+        const now = Date.now();
+        if (now - (collabErrorGateRef.current.lastToast || 0) > 60000) {
+          pushToast({ type: "error", message: "Collab connect failed" });
+          collabErrorGateRef.current.lastToast = now;
+        }
+        if (!collabErrorGateRef.current.logged) {
+          collabErrorGateRef.current.logged = true;
+          console.error("collab connect err", err);
+        }
+      });
       socket.on("scene:push", (payload) => {
         try {
           if (!payload || !payload.scene) return;
@@ -840,75 +1208,73 @@ export default function Studio() {
     } catch (e) { console.error("collab start failed", e); pushToast({ type: "error", message: "Failed to start collab (see console)" }); setCollabLoading(false); }
   }, [pushToast]);
 
-  /* ---------- outliner refresh helper ---------- */
-const refreshLightListFromScene = useCallback(() => {
-  try {
-    const scene = workspaceRef.current?.scene;
-    if (!scene) {
-      setLights([]);
-      return;
-    }
-    const acc = [];
-    scene.traverse((n) => {
-      if (n.isLight && n.userData?.__objekta) {
-        acc.push({
-          uuid: n.uuid,
-          name: n.name || n.type,
-          type: n.type,
-          color: '#' + new THREE.Color(n.color || 0xffffff).getHexString(),
-          intensity: typeof n.intensity === 'number' ? n.intensity : 1,
-        });
+  /* refreshLightListFromScene (unchanged) */
+  const refreshLightListFromScene = useCallback(() => {
+    try {
+      const scene = workspaceRef.current?.scene;
+      if (!scene) {
+        setLights([]);
+        return;
       }
-    });
-    setLights(acc);
-  } catch (e) {
-    setLights([]);
-  }
-}, []);
+      const acc = [];
+      scene.traverse((n) => {
+        if (n.isLight && n.userData?.__objekta) {
+          acc.push({
+            uuid: n.uuid,
+            name: n.name || n.type,
+            type: n.type,
+            color: '#' + new THREE.Color(n.color || 0xffffff).getHexString(),
+            intensity: typeof n.intensity === 'number' ? n.intensity : 1,
+          });
+        }
+      });
+      setLights(acc);
+    } catch (e) {
+      setLights([]);
+    }
+  }, []);
 
-/* ---------- EventBus integration ---------- */
-useEffect(() => {
-  const onSceneUpdated = () => {
-    setSceneVersion((v) => v + 1);
-    updateStatsOnce();
-    refreshLightListFromScene(); // Safe now
-  };
+  /* EventBus integration */
+  useEffect(() => {
+    const onSceneUpdated = () => {
+      setSceneVersion((v) => v + 1);
+      refreshLightListFromScene();
+      setIsDirty(true);
+    };
 
-  const onObjectsSelected = (payload) => {
-    try {
-      const ids = Array.isArray(payload) ? payload : payload?.ids || [];
-      const obj = ids.length ? SceneGraphStore.objects[ids[0]]?.object : null;
-      setSelected(obj || null);
-    } catch (e) {}
-  };
+    const onObjectsSelected = (payload) => {
+      try {
+        const ids = Array.isArray(payload) ? payload : payload?.ids || [];
+        const obj = ids.length ? SceneGraphStore.objects[ids[0]]?.object : null;
+        setSelected(obj || null);
+      } catch (e) {}
+    };
 
-  const onObjectSelected = (p) => {
-    try {
-      const id = p?.id ?? p;
-      const obj = id ? SceneGraphStore.objects?.[id]?.object || null : null;
-      setSelected(obj);
-    } catch (e) {}
-  };
+    const onObjectSelected = (p) => {
+      try {
+        const id = p?.id ?? p;
+        const obj = id ? SceneGraphStore.objects?.[id]?.object || null : null;
+        setSelected(obj);
+      } catch (e) {}
+    };
 
-  EventBus.on?.("scene:updated", onSceneUpdated);
-  EventBus.on?.("objects:selected", onObjectsSelected);
-  EventBus.on?.("object:selected", onObjectSelected);
+    EventBus.on?.("scene:updated", onSceneUpdated);
+    EventBus.on?.("objects:selected", onObjectsSelected);
+    EventBus.on?.("object:selected", onObjectSelected);
 
-  return () => {
-    try {
-      EventBus.off?.("scene:updated", onSceneUpdated);
-      EventBus.off?.("objects:selected", onObjectsSelected);
-      EventBus.off?.("object:selected", onObjectSelected);
-    } catch (e) {}
-  };
-}, [updateStatsOnce, refreshLightListFromScene]);
+    return () => {
+      try {
+        EventBus.off?.("scene:updated", onSceneUpdated);
+        EventBus.off?.("objects:selected", onObjectsSelected);
+        EventBus.off?.("object:selected", onObjectSelected);
+      } catch (e) {}
+    };
+  }, [refreshLightListFromScene]);
 
-/* ---------- Initial lights refresh ---------- */
-useEffect(() => {
-  refreshLightListFromScene();
-}, [refreshLightListFromScene]);
+  useEffect(() => {
+    refreshLightListFromScene();
+  }, [refreshLightListFromScene]);
 
-  /* ---------- helpers referenced earlier ---------- */
   const handleOutlinerSelect = useCallback((obj) => {
     try {
       if (!obj) return;
@@ -922,6 +1288,7 @@ useEffect(() => {
     } catch (e) { console.warn("handleOutlinerSelect failed", e); }
   }, []);
 
+  /* Sculpt toggle (unchanged) */
   const toggleSculpt = useCallback(() => {
     const on = !!(workspaceRef.current?.isSculptMode?.() ?? false);
     const next = !on;
@@ -930,6 +1297,9 @@ useEffect(() => {
     pushToast({ type: "info", message: `Sculpt ${next ? 'enabled' : 'disabled'}` });
   }, [pushToast]);
 
+  // Sculpt events handled in toggleSculpt; no inspector collapse behavior.
+
+  /* setDevicePixelRatio (unchanged) */
   const setDevicePixelRatio = useCallback((dpr) => {
     try {
       const { renderer } = probeWorkspace();
@@ -943,7 +1313,7 @@ useEffect(() => {
     } catch (e) { console.warn("setDevicePixelRatio failed", e); }
   }, [probeWorkspace, pushToast]);
 
-  /* ---------- panel drag/resize ---------- */
+  /* panel drag/resize (unchanged) */
   useEffect(() => {
     const onMove = (ev) => {
       if (!draggingRef.current) return;
@@ -963,15 +1333,1126 @@ useEffect(() => {
     };
   }, []);
 
-  /* ---------- render ---------- */
+  /* runValidation (unchanged) */
+  const runValidation = useCallback(() => {
+    try {
+      const scene = workspaceRef.current?.scene;
+      if (!scene) {
+        setValidationResult({ ok: false, issues: ["No scene loaded"] });
+        pushToast({ type: "info", message: "Validation complete" });
+        return;
+      }
+      let tris = 0;
+      let meshes = 0;
+      scene.traverse((n) => {
+        if (n.isMesh) {
+          meshes++;
+          const geom = n.geometry;
+          if (geom && geom.index) tris += (geom.index.count / 3);
+          else if (geom && geom.attributes?.position) tris += (geom.attributes.position.count / 3);
+        }
+      });
+      const issues = [];
+      if (meshes === 0) issues.push("Scene contains no mesh objects.");
+      if (tris > 500000) issues.push("High triangle count (>500k) — consider decimating or LOD.");
+      setValidationResult({ ok: issues.length === 0, meshes, tris, issues });
+      pushToast({ type: "info", message: "Validation complete" });
+    } catch (e) {
+      console.error("runValidation failed", e);
+      setValidationResult({ ok: false, issues: ["Validation error (see console)"] });
+      pushToast({ type: "error", message: "Validation failed" });
+    }
+  }, [pushToast]);
+
+  /* screenshot helper (improved) */
+  const captureThumbnail = useCallback(() => {
+    try {
+      const { renderer, scene, camera } = probeWorkspace();
+      if (!renderer) return null;
+
+      // Try to force a render (if possible)
+      try {
+        if (postApiRef.current?.render) {
+          // if you created a post processing wrapper exposing render, call it
+          postApiRef.current.render();
+        } else if (renderer && scene && camera) {
+          renderer.render(scene, camera);
+        }
+      } catch (e) {
+        // ignore, we still try to capture below
+      }
+
+      const srcCanvas = renderer.domElement;
+      if (!srcCanvas) return null;
+      const w = srcCanvas.width || srcCanvas.clientWidth || srcCanvas.offsetWidth;
+      const h = srcCanvas.height || srcCanvas.clientHeight || srcCanvas.offsetHeight;
+      if (!w || !h) return null;
+
+      // Draw current WebGL canvas onto an offscreen canvas to get a stable dataURL
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      // drawImage accepts a canvas as source
+      try {
+        ctx.drawImage(srcCanvas, 0, 0, w, h);
+      } catch (err) {
+        // drawImage may fail in some exotic scenarios; fallback to direct toDataURL
+        try {
+          const data = srcCanvas.toDataURL && srcCanvas.toDataURL("image/jpeg", 0.9);
+          return data || null;
+        } catch (e) {
+          return null;
+        }
+      }
+
+      // Quick pixel check: sample a pixel to see if it's blank/transparent
+      try {
+        const px = ctx.getImageData(Math.max(0, Math.floor(w / 2)), Math.max(0, Math.floor(h / 2)), 1, 1).data;
+        const isMostlyEmpty = px[3] === 0 || (px[0] < 8 && px[1] < 8 && px[2] < 8); // transparent or near-black
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+        if (!isMostlyEmpty) return dataUrl;
+        // if mostly empty, still return it - but higher level will retry
+        return dataUrl;
+      } catch (e) {
+        // if getImageData fails (rare), still return the image
+        return canvas.toDataURL("image/jpeg", 0.9);
+      }
+    } catch (e) {
+      console.warn("captureThumbnail failed", e);
+      return null;
+    }
+  }, [probeWorkspace]);
+
+  /* fullscreen changes -> keep state accurate */
+  useEffect(() => {
+    const onFS = () => setIsFullScreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onFS);
+    return () => document.removeEventListener("fullscreenchange", onFS);
+  }, []);
+
+  /* keyboard shortcuts (unchanged) */
+  useEffect(() => {
+    const onKey = (e) => {
+      const meta = e.ctrlKey || e.metaKey;
+      if (meta && e.key.toLowerCase() === "s") { e.preventDefault(); saveJSON(); return; }
+      if (meta && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); workspaceRef.current?.undo?.(); return; }
+      if ((meta && e.key.toLowerCase() === "y") || (meta && e.shiftKey && e.key.toLowerCase() === "z")) { e.preventDefault(); workspaceRef.current?.redo?.(); return; }
+      if (e.key === "Delete") { requestDeleteSelected(); return; }
+      if (!meta && e.key.toLowerCase() === "p") { setPaletteCollapsed((v) => !v); return; }
+      // inspector collapse shortcut removed
+      if (!meta && e.key.toLowerCase() === "b") { toggleBloom(!bloomEnabled); return; }
+      if (!meta && e.key.toLowerCase() === "f") { cameraControlsApiRef.current?.frameObject?.(selected, { padding: 1 }); return; }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [saveJSON, requestDeleteSelected, bloomEnabled, toggleBloom, selected]);
+
+  /* context menu */
+  const [ctxMenu, setCtxMenu] = useState(null);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onContext = (ev) => { ev.preventDefault(); setCtxMenu({ x: ev.clientX, y: ev.clientY }); };
+    el.addEventListener("contextmenu", onContext);
+    return () => el.removeEventListener("contextmenu", onContext);
+  }, []);
+
+  const closeContext = useCallback(() => setCtxMenu(null), []);
+  const duplicateWrapper = useCallback(() => { workspaceRef.current?.duplicateSelected?.(); pushToast({ type: "info", message: "Duplicated selection" }); }, [pushToast]);
+
+  /* ---------------- Backend / Dashboard helpers ---------------- */
+
+  // Fetch helpers (use apiUrl)
+  const fetchProjects = useCallback(async () => {
+    try {
+      const res = await fetch(apiUrl("/api/projects"), { headers: getAuthHeaders(), credentials: "include" });
+      const data = await safeJson(res);
+      if (res.status === 0) {
+        console.debug("fetchProjects aborted/failed (status 0)");
+        return;
+      }
+      if (res.status === 401) {
+        forceLogoutDueTo401();
+        return;
+      }
+      if (!res.ok) {
+        console.warn("fetchProjects: non-ok", res.status, data);
+        const fallback = Array.isArray(data) ? data : (data?.projects || []);
+        // normalize fallback
+        const normalized = (fallback || []).map((p) => ({
+          _id: p._id || p.id || p.project?._id || null,
+          name: p.name || p.title || p.project?.name || p.scene?.name || `Project ${p._id || p.id || ""}`,
+          thumbnailUrl: p.thumbnailUrl ?? null,
+          lastSavedAt: p.lastSavedAt || p.updatedAt || p.modifiedAt || null,
+          raw: p,
+        }));
+        setProjects(normalized);
+        return;
+      }
+      let list = [];
+      if (Array.isArray(data)) list = data;
+      else if (data?.projects && Array.isArray(data.projects)) list = data.projects;
+      else if (data?.success && Array.isArray(data.projects)) list = data.projects;
+      else if (data?.length) list = data;
+      // normalize results into consistent shape
+      const normalized = (list || []).map((p) => ({
+        _id: p._id || p.id || p.project?._id || null,
+        name: p.name || p.title || p.project?.name || p.scene?.name || `Project ${p._id || p.id || ""}`,
+  thumbnailUrl: p.thumbnailUrl ?? null,
+        lastSavedAt: p.lastSavedAt || p.updatedAt || p.modifiedAt || null,
+        raw: p,
+      }));
+      setProjects(normalized || []);
+    } catch (err) {
+      console.error("Failed to list projects:", err);
+      // no crash — keep existing list
+    }
+  }, [getAuthHeaders, forceLogoutDueTo401]);
+
+  const getProject = useCallback(async (id) => {
+    if (!id) throw new Error("Project id required");
+    const res = await fetch(apiUrl(`/api/projects/${id}`), { headers: getAuthHeaders(), credentials: "include" });
+    const data = await safeJson(res);
+    if (res.status === 401) {
+      forceLogoutDueTo401();
+      throw new Error("Session expired");
+    }
+    if (!res.ok) {
+      const msg = data?.message || data?.error || JSON.stringify(data);
+      throw new Error(msg || "Failed fetching project");
+    }
+    if (data?.project) return data.project;
+    return data;
+  }, [getAuthHeaders, forceLogoutDueTo401]);
+
+  /* ----------------
+     UPLOAD helpers
+     ---------------- */
+
+  // convert dataURL to blob
+  const dataUrlToBlob = useCallback(async (dataUrl) => {
+    if (!dataUrl) return null;
+    try {
+      const r = await fetch(dataUrl);
+      return await r.blob();
+    } catch (e) {
+      console.warn("dataUrlToBlob failed", e);
+      return null;
+    }
+  }, []);
+
+  const transparentPlaceholderBlob = useCallback(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, 1, 1);
+    return new Promise((resolve) => {
+      try {
+        canvas.toBlob((b) => resolve(b || null), 'image/png');
+      } catch (e) {
+        resolve(null);
+      }
+    });
+  }, []);
+
+  // send JSON or FormData (uses XHR if onUploadProgress provided for progress reporting)
+  const sendJsonOrForm = useCallback(async (path, method = "POST", payload = {}, { thumbnailBlob = null, onUploadProgress = null, projectIdHint = null, extraFiles = null, sceneFile = null, sceneMeta = null } = {}) => {
+    // AbortController with 60s timeout for upload safety
+    const controller = new AbortController();
+    // Dynamic timeout: larger payloads get more time (up to 3m)
+    let estSize = 0;
+    try { if (payload && typeof payload.data === 'string') estSize = payload.data.length; else if (payload && payload.data) estSize = JSON.stringify(payload.data).length; } catch (e) {}
+    const baseMs = 60000;
+    const extraMs = Math.min(120000, Math.floor(estSize / (5 * 1024 * 1024)) * 30000); // +30s per 5MB up to +120s
+    const timeoutMs = baseMs + extraMs;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      // multipart/form-data path when thumbnailBlob provided and valid
+      const allowedTypes = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
+      const maxThumbBytes = 10 * 1024 * 1024; // 10MB
+      const useThumb = !!(thumbnailBlob && (thumbnailBlob.type ? allowedTypes.has(thumbnailBlob.type) : true) && (typeof thumbnailBlob.size !== 'number' || thumbnailBlob.size <= maxThumbBytes));
+      const useSceneFile = !!sceneFile;
+      if (useThumb || extraFiles || useSceneFile) {
+        const fd = new FormData();
+        if (typeof payload.data !== 'undefined' && !useSceneFile) fd.append("data", typeof payload.data === 'string' ? payload.data : JSON.stringify(payload.data));
+        if (payload.name) fd.append("name", payload.name);
+        if (payload.title) fd.append("title", payload.title);
+        if (payload.lastSavedAt) fd.append("lastSavedAt", payload.lastSavedAt);
+        if (payload.dataEncoding) fd.append("dataEncoding", payload.dataEncoding);
+        if (payload.dataCompressed) fd.append("dataCompressed", String(payload.dataCompressed));
+        if (typeof payload.bloomEnabled !== 'undefined') fd.append('bloomEnabled', String(payload.bloomEnabled));
+        if (typeof payload.oceanEnabled !== 'undefined') fd.append('oceanEnabled', String(payload.oceanEnabled));
+        if (typeof payload.rainEnabled !== 'undefined') fd.append('rainEnabled', String(payload.rainEnabled));
+        if (typeof payload.cameraState !== 'undefined') fd.append('cameraState', payload.cameraState);
+        if (typeof payload.environmentColor !== 'undefined') fd.append('environmentColor', payload.environmentColor);
+        try { fd.append("thumbnail", thumbnailBlob, `thumb_${safeDate()}.png`); } catch (e) { console.warn("thumbnail append failed", e); }
+        if (useSceneFile) {
+          try { fd.append('scene', sceneFile, sceneFile.name || 'scene.deflate'); } catch (e) { console.warn('scene append failed', e); }
+          if (sceneMeta?.encoding) fd.append('sceneEncoding', sceneMeta.encoding);
+          if (sceneMeta?.originalSize) fd.append('sceneOriginalSize', String(sceneMeta.originalSize));
+          if (sceneMeta?.compressedSize) fd.append('sceneCompressedSize', String(sceneMeta.compressedSize));
+        }
+        if (extraFiles) {
+          Object.entries(extraFiles).forEach(([field, file]) => {
+            if (file) {
+              try { fd.append(field, file, file.name || `env_${Date.now()}`); } catch (e) { console.warn('append extra file failed', field, e); }
+            }
+          });
+        }
+
+        // include auth headers except content-type
+        const authHeaders = getAuthHeaders() || {};
+        const fetchHeaders = {};
+        Object.keys(authHeaders).forEach((h) => { if (h.toLowerCase() === "content-type") return; fetchHeaders[h] = authHeaders[h]; });
+
+        const fetchOpts = {
+          method,
+          headers: fetchHeaders,
+          credentials: "include",
+          body: fd,
+          signal: controller.signal,
+        };
+
+        if (typeof onUploadProgress === "function") {
+          // XHR path for progress
+          return await new Promise((resolve, reject) => {
+            let xhr = null;
+            try {
+              xhr = new XMLHttpRequest();
+              const onAbort = () => { try { xhr && xhr.abort(); } catch (e) {} };
+              controller.signal.addEventListener?.("abort", onAbort);
+
+              xhr.open(method, apiUrl(path));
+              const authHeadersForXHR = getAuthHeaders();
+              Object.keys(authHeadersForXHR || {}).forEach((h) => {
+                if (h.toLowerCase() === "content-type") return;
+                try { xhr.setRequestHeader(h, authHeadersForXHR[h]); } catch (e) {}
+              });
+
+              xhr.upload.onprogress = (ev) => {
+                if (ev.lengthComputable) {
+                  const p = ev.loaded / ev.total;
+                  try { onUploadProgress(p); } catch (e) {}
+                  try { projectSocketRef.current?.emit?.("project_save_progress", { projectId: projectIdHint || null, progress: p }); } catch (e) {}
+                }
+              };
+
+              xhr.onload = () => {
+                try { controller.signal.removeEventListener?.("abort", onAbort); } catch (e) {}
+                const status = xhr.status;
+                const text = xhr.responseText;
+                try {
+                  const json = JSON.parse(text);
+                  if (status >= 200 && status < 300) resolve(json);
+                  else {
+                    if (status === 401) forceLogoutDueTo401();
+                    console.warn("[OBJEKTA] upload non-ok XHR", { status, body: json });
+                    reject({ status, body: json });
+                  }
+                } catch (err) {
+                  if (status >= 200 && status < 300) resolve(text);
+                  else {
+                    if (status === 401) forceLogoutDueTo401();
+                    console.warn("[OBJEKTA] upload non-ok XHR (text)", { status, body: text });
+                    reject({ status, body: text });
+                  }
+                }
+              };
+
+              xhr.onerror = (e) => {
+                try { controller.signal.removeEventListener?.("abort", onAbort); } catch (err) {}
+                reject(e);
+              };
+
+              xhr.onabort = () => {
+                try { controller.signal.removeEventListener?.("abort", onAbort); } catch (err) {}
+                reject(new Error("Upload aborted (timeout or user cancelled)"));
+              };
+
+              xhr.send(fd);
+            } catch (e) {
+              try { controller.signal.removeEventListener?.("abort", () => {}); } catch (err) {}
+              reject(e);
+            }
+          });
+        } else {
+          // fetch fallback (no progress)
+          const res = await fetch(apiUrl(path), fetchOpts);
+          const json = await safeJson(res);
+          if (res.status === 401) {
+            forceLogoutDueTo401();
+            throw { status: 401, body: json };
+          }
+          if (!res.ok) {
+            console.warn("[OBJEKTA] upload failed (fetch)", { url: apiUrl(path), status: res.status, body: json });
+            throw { status: res.status, body: json };
+          }
+          return json;
+        }
+      }
+
+      // JSON path (no thumbnail)
+      const bodyToSend = JSON.stringify(payload);
+      const res = await fetch(apiUrl(path), {
+        method,
+        headers: getAuthHeaders(),
+        credentials: "include",
+        body: bodyToSend,
+        signal: controller.signal,
+      });
+      const json = await safeJson(res);
+      if (res.status === 401) {
+        forceLogoutDueTo401();
+        throw { status: 401, body: json };
+      }
+      if (!res.ok) {
+        console.warn("[OBJEKTA] API JSON request failed", { url: apiUrl(path), status: res.status, body: json });
+        throw { status: res.status, body: json };
+      }
+      return json;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }, [getAuthHeaders, safeDate, forceLogoutDueTo401]);
+
+  // Compress snapshot off the main thread when possible.
+  const compressSceneSnapshot = useCallback(async (snapshot) => {
+    if (!snapshot) return { ok: false, reason: "no-snapshot" };
+
+    const encodeScene = () => {
+      const json = JSON.stringify(snapshot);
+      const encoded = new TextEncoder().encode(json);
+      return { json, encoded };
+    };
+
+    // First choice: worker offloads work from the main thread
+    if (typeof Worker === "function") {
+      try {
+        if (!compressSceneSnapshot.worker) {
+          compressSceneSnapshot.worker = new Worker(new URL('../workers/sceneCompress.worker.js', import.meta.url), { type: 'module' });
+        }
+        const worker = compressSceneSnapshot.worker;
+        const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        return await new Promise((resolve) => {
+          const timer = setTimeout(() => resolve({ ok: false, reason: "timeout" }), 30000);
+          const handler = (ev) => {
+            if (!ev?.data || ev.data.id !== id) return;
+            worker.removeEventListener('message', handler);
+            clearTimeout(timer);
+            resolve(ev.data);
+          };
+          worker.addEventListener('message', handler);
+          worker.postMessage({ scene: snapshot, id });
+        });
+      } catch (err) {
+        console.warn('[OBJEKTA] worker compress failed, falling back', err);
+      }
+    }
+
+    // Built-in CompressionStream when available (Chrome/Edge)
+    if (typeof CompressionStream === "function") {
+      try {
+        const { json } = encodeScene();
+        const stream = new CompressionStream("deflate");
+        const writer = stream.writable.getWriter();
+        writer.write(new TextEncoder().encode(json));
+        writer.close();
+        const compressed = await new Response(stream.readable).arrayBuffer();
+        return { ok: true, buffer: compressed, compressedSize: compressed.byteLength, originalSize: json.length };
+      } catch (err) {
+        console.warn('[OBJEKTA] CompressionStream deflate failed, continuing to pako', err);
+      }
+    }
+
+    // Final fallback: synchronous deflate via static pako import
+    try {
+      const { encoded } = encodeScene();
+      const deflated = deflate(encoded);
+      return { ok: true, buffer: deflated.buffer, compressedSize: deflated.byteLength, originalSize: encoded.byteLength };
+    } catch (err) {
+      return { ok: false, reason: err?.message || 'deflate-fail' };
+    }
+  }, []);
+
+  // Create / update project on server (now support thumbnail + progress)
+  const createProjectOnServer = useCallback(async (name, data, { thumbnail = null, onUploadProgress = null } = {}) => {
+    const payload = { name, title: name, data, lastSavedAt: new Date().toISOString() };
+    const json = await sendJsonOrForm("/api/projects", "POST", payload, { thumbnailBlob: thumbnail, onUploadProgress });
+    return json?.project || json;
+  }, [sendJsonOrForm]);
+
+  const updateProjectOnServer = useCallback(async (id, name, data, { thumbnail = null, onUploadProgress = null } = {}) => {
+    if (!id) throw new Error("Project id required");
+    const payload = { name, title: name, data, lastSavedAt: new Date().toISOString() };
+    const json = await sendJsonOrForm(`/api/projects/${id}`, "PUT", payload, { thumbnailBlob: thumbnail, onUploadProgress, projectIdHint: id });
+    return json?.project || json;
+  }, [sendJsonOrForm]);
+
+  const deleteProjectOnServer = useCallback(async (id) => {
+    const res = await fetch(apiUrl(`/api/projects/${id}`), {
+      method: "DELETE",
+      headers: getAuthHeaders(),
+      credentials: "include",
+    });
+    const json = await safeJson(res);
+    if (res.status === 401) {
+      forceLogoutDueTo401();
+      throw new Error("Session expired");
+    }
+    if (!res.ok) {
+      const msg = json?.message || json?.error || JSON.stringify(json);
+      throw new Error(msg || "Delete project failed");
+    }
+    return json;
+  }, [getAuthHeaders, forceLogoutDueTo401]);
+
+  // Fallback local storage for offline saves (improved to handle quota + IndexedDB fallback)
+  const saveLocalBackup = useCallback(async (name, data) => {
+    const label = name || "untitled";
+    const attemptIndexedDb = async (reason = "") => {
+      try {
+        const id = await saveBackupToIndexedDB("local-fallback", { name: label, data });
+        if (id) return { ok: true, target: "indexedDB" };
+        return { ok: false, reason: reason || "indexeddb-unavailable" };
+      } catch (idxErr) {
+        console.warn("IndexedDB backup failed", idxErr);
+        return { ok: false, reason: reason || idxErr?.message || "indexeddb-error" };
+      }
+    };
+
+    let approxBytes = 0;
+    try {
+      const serialized = JSON.stringify(data || {});
+      approxBytes = serialized ? serialized.length : 0;
+    } catch (sizeErr) {
+      console.warn("Failed to estimate snapshot size, skipping localStorage", sizeErr);
+      return attemptIndexedDb("serialize-failed");
+    }
+
+    const LOCAL_STORAGE_BUDGET = 4 * 1024 * 1024; // 4 MB safety margin
+    if (approxBytes > LOCAL_STORAGE_BUDGET) {
+      return attemptIndexedDb("payload-too-large");
+    }
+
+    try {
+      let store = [];
+      try { store = JSON.parse(localStorage.getItem("objekta_local_backups") || "[]"); } catch (e) { store = []; }
+      store.unshift({ id: "local-" + Date.now(), name: label, lastSavedAt: new Date().toISOString(), data });
+      localStorage.setItem("objekta_local_backups", JSON.stringify(store.slice(0, 15)));
+      return { ok: true, target: "localStorage" };
+    } catch (err) {
+      console.warn("localStorage backup failed, trying IndexedDB", err);
+      return attemptIndexedDb("localstorage-failed");
+    }
+  }, [saveBackupToIndexedDB]);
+
+  const joinProjectRoom = (id) => {
+    if (!projectSocketRef.current) return;
+    if (!id) return;
+    projectSocketRef.current.emit("join", { projectId: id });
+  };
+  const leaveProjectRoom = () => {
+    if (!projectSocketRef.current) return;
+    projectSocketRef.current.emit("leave");
+  };
+
+  // Initialize project socket (realtime sync) -> dynamic import to avoid build error
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      if (typeof window !== 'undefined') {
+        if (window.__OBJEKTA_SOCKET_INITIALIZED) return;
+        window.__OBJEKTA_SOCKET_INITIALIZED = true;
+      }
+      try {
+  const base = API_BASE || window.location.origin;
+  const module = await import("socket.io-client").catch(() => null);
+        if (!module) {
+
+
+
+          // socket lib missing — silently skip realtime
+          return;
+        }
+        const ioClient = module.io || module.default || module;
+        const socket = ioClient(base, { path: "/socket.io", transports: ["websocket", "polling"], autoConnect: true, withCredentials: true });
+        projectSocketRef.current = socket;
+
+        socket.on("connect", () => {
+          if (!mounted) return;
+          setIsConnectedToServer(true);
+          if (projectId) socket.emit("join", { projectId });
+        });
+
+        socket.on("disconnect", () => { if (!mounted) return; setIsConnectedToServer(false); });
+
+        socket.on("project:patched", async (payload) => {
+          try {
+            if (!payload || !payload.projectId) return;
+            if (!projectId || payload.projectId !== projectId) return;
+            if (isApplyingRemoteRef.current) return;
+            const serverTs = payload.lastSavedAt ? new Date(payload.lastSavedAt).getTime() : Date.now();
+            const lastKnown = lastServerSavedAtRef.current ? new Date(lastServerSavedAtRef.current).getTime() : 0;
+            if (serverTs > lastKnown) {
+              const proj = await getProject(payload.projectId);
+              if (!proj) return;
+              isApplyingRemoteRef.current = true;
+              if (workspaceRef.current?.loadFromData) await workspaceRef.current.loadFromData(proj.data || {});
+              else if (workspaceRef.current?.applyScene) await workspaceRef.current.applyScene?.(proj.data || {});
+              isApplyingRemoteRef.current = false;
+              lastLocalSnapshotRef.current = proj.data || {};
+              lastServerSavedAtRef.current = proj.lastSavedAt || new Date().toISOString();
+              setLastSavedAt(lastServerSavedAtRef.current);
+              setIsDirty(false);
+              pushToast({ type: "info", message: "Project updated by collaborator; reloaded." });
+            }
+          } catch (err) {
+            console.warn("Failed to apply remote project patch:", err);
+          }
+        });
+
+        socket.on("projects:changed", () => fetchProjects());
+
+        // NEW: update UI on asset registration
+        socket.on("project_asset_added", ({ projectId: pid, asset }) => {
+          try {
+            if (!pid) return;
+            if (projectId && pid === projectId) {
+              pushToast({ type: asset?.source === 's3' ? 'info' : 'warn', message: `Asset added${asset?.source ? ` (${asset.source})` : ''}` });
+            }
+          } catch (e) {}
+        });
+
+        projectSocketRef.current = socket;
+      } catch (e) { console.warn("project socket init failed", e); }
+    })();
+
+    return () => {
+      mounted = false;
+      try { projectSocketRef.current?.disconnect(); } catch (e) {}
+      projectSocketRef.current = null;
+    };
+    // NOTE: intentionally no deps to run once
+  }, []);
+
+  // Join/leave when projectId changes
+  useEffect(() => {
+    if (!projectSocketRef.current) return;
+    try {
+      if (projectId) projectSocketRef.current.emit("join", { projectId });
+      else projectSocketRef.current.emit("leave");
+    } catch (e) { console.warn("socket join/leave err", e); }
+  }, [projectId]);
+
+  // Save project (create or update) using fetch + local fallback
+  const saveProject = useCallback(async (opts = { saveAs: false, name: null, returnToDashboard: false }) => {
+    setIsSaving(true);
+    setSaveProgress(0);
+
+    let snapshot = null;
+    let nameToUse = projectName;
+
+    try {
+      snapshot = workspaceRef.current?.serializeScene?.();
+      if (!snapshot) {
+        pushToast({ type: "error", message: "No scene snapshot available" });
+        return null;
+      }
+
+      // inject meta (effects + camera + environment + animation + bloom tags)
+      try {
+        const { camera } = probeWorkspace();
+        const camState = camera ? { position: camera.position.toArray(), quaternion: camera.quaternion.toArray(), fov: camera.fov } : null;
+        const animApi = workspaceRef.current?.getAnimationApi?.();
+        const tracks = animApi ? animApi.listTracks() : [];
+        const bloomTagged = [];
+        try {
+          const scene = workspaceRef.current?.scene;
+          if (scene) scene.traverse(o => { if (o.isMesh && o.userData?.__bloom) bloomTagged.push(o.uuid); });
+        } catch (err) {}
+        snapshot = { ...snapshot, meta: { ...(snapshot.meta || {}), effects: { bloomEnabled, oceanEnabled, rainEnabled }, cameraState: camState, environmentColor: envColor, animationTracks: tracks, bloomTagged } };
+      } catch (e) {}
+
+      nameToUse = opts.saveAs ? (opts.name || prompt("Save as project name:", projectName || "Untitled Project")) : projectName;
+      if (!nameToUse) {
+        pushToast({ type: "error", message: "Save cancelled (no name)" });
+        return null;
+      }
+
+      // capture thumbnail: prefer workspaceRef.captureThumbnail (async) then robust async helper
+      let thumbnail = null;
+      try {
+        const captureFromWorkspace = workspaceRef.current?.captureThumbnail;
+        if (typeof captureFromWorkspace === "function") {
+          for (let attempt = 0; attempt < 3 && !thumbnail; attempt++) {
+            if (attempt > 0) await new Promise((r) => requestAnimationFrame(r));
+            const data = await Promise.resolve(captureFromWorkspace.call(workspaceRef.current, 0.6, "image/png", 0.95));
+            if (!data) continue;
+            if (data instanceof Blob) { thumbnail = data; break; }
+            if (typeof data === "string") {
+              const b = await dataUrlToBlob(data);
+              if (b) { thumbnail = b; break; }
+            }
+          }
+        }
+
+        if (!thumbnail) {
+          for (let attempt = 0; attempt < 3 && !thumbnail; attempt++) {
+            if (attempt > 0) await new Promise((r) => requestAnimationFrame(r));
+            const blob = await captureThumbnailAsync();
+            if (blob instanceof Blob) { thumbnail = blob; break; }
+          }
+        }
+      } catch (e) {
+        console.warn('[OBJEKTA] thumbnail capture failed', e);
+        thumbnail = null;
+      }
+
+      if (!thumbnail) {
+        thumbnail = await transparentPlaceholderBlob();
+      }
+
+      try { console.log(`[OBJEKTA] saveProject captured thumbnail size=${(thumbnail && (thumbnail.size || (thumbnail.length || 0))) || 0}`); } catch (e) {}
+
+      const onUploadProgress = (p) => {
+        setSaveProgress(Math.max(0, Math.min(1, p)));
+        setLoadProgress?.(p);
+        try { projectSocketRef.current?.emit?.("project_save_progress", { projectId: projectId || null, progress: p }); } catch (e) {}
+      };
+
+      let saved = null;
+      const compressResult = await compressSceneSnapshot(snapshot);
+      const allowThumb = true;
+      let snapshotPayload = snapshot;
+      let extraFields = {};
+      let sceneFile = null;
+      let sceneMeta = null;
+
+      if (compressResult && compressResult.ok && compressResult.buffer) {
+        const blob = new Blob([compressResult.buffer], { type: 'application/octet-stream' });
+        sceneFile = new File([blob], `scene_${Date.now()}.deflate`, { type: 'application/octet-stream' });
+        sceneMeta = { encoding: 'deflate', originalSize: compressResult.originalSize || 0, compressedSize: compressResult.compressedSize || blob.size };
+        snapshotPayload = undefined; // prefer uploading compressed file instead of inline
+        extraFields = { dataEncoding: 'deflate', dataCompressed: true };
+      } else {
+        console.warn('[OBJEKTA] compression unavailable, falling back to raw JSON file upload');
+        try {
+          const jsonString = JSON.stringify(snapshot);
+          const rawBlob = new Blob([jsonString], { type: 'application/json' });
+          sceneFile = new File([rawBlob], `scene_${Date.now()}.json`, { type: 'application/json' });
+          sceneMeta = { encoding: 'json', originalSize: rawBlob.size, compressedSize: rawBlob.size };
+          snapshotPayload = undefined;
+          extraFields = { dataEncoding: 'json', dataCompressed: false };
+        } catch (jsonErr) {
+          let inlineSize = 0;
+          try { inlineSize = JSON.stringify(snapshot).length; } catch (e) { inlineSize = 0; }
+          const INLINE_LIMIT = 12_000_000; // mirrors backend inline cap
+          if (inlineSize > INLINE_LIMIT) {
+            pushToast({ type: "error", message: "Scene too large to save without compression. Try reducing scene size or reloading." });
+            setIsSaving(false);
+            setSaveProgress(0);
+            return null;
+          }
+          try {
+            const jsonString = JSON.stringify(snapshot);
+            snapshotPayload = JSON.parse(jsonString);
+          } catch (e) {
+            snapshotPayload = snapshot;
+          }
+        }
+      }
+
+      if (!projectId || opts.saveAs) {
+        saved = await sendJsonOrForm('/api/projects', 'POST', { name: nameToUse, title: nameToUse, data: snapshotPayload, lastSavedAt: new Date().toISOString(), ...extraFields, bloomEnabled, oceanEnabled, rainEnabled, cameraState: snapshot.meta?.cameraState ? JSON.stringify(snapshot.meta.cameraState) : undefined, environmentColor: envColor }, { thumbnailBlob: allowThumb ? thumbnail : null, onUploadProgress, extraFiles: envFileRef.current ? { environment: envFileRef.current } : null, sceneFile, sceneMeta });
+        if (saved && saved._id) {
+          setProjectId(saved._id);
+          setProjectName(saved.name || saved.title || nameToUse);
+          if (projectSocketRef.current && saved._id) projectSocketRef.current.emit("join", { projectId: saved._id });
+        }
+      } else {
+        saved = await sendJsonOrForm(`/api/projects/${projectId}`, 'PUT', { name: nameToUse, title: nameToUse, data: snapshotPayload, lastSavedAt: new Date().toISOString(), ...extraFields, bloomEnabled, oceanEnabled, rainEnabled, cameraState: snapshot.meta?.cameraState ? JSON.stringify(snapshot.meta.cameraState) : undefined, environmentColor: envColor }, { thumbnailBlob: allowThumb ? thumbnail : null, onUploadProgress, projectIdHint: projectId, extraFiles: envFileRef.current ? { environment: envFileRef.current } : null, sceneFile, sceneMeta });
+      }
+
+      setIsDirty(false);
+      lastLocalSnapshotRef.current = snapshot;
+      lastServerSavedAtRef.current = saved?.lastSavedAt || new Date().toISOString();
+      setLastSavedAt(lastServerSavedAtRef.current);
+      fetchProjects();
+
+      try {
+        if (saved && saved._id) {
+          const thumbUrl = saved.thumbnailUrl ?? null;
+          if (thumbUrl) {
+            projectSocketRef.current?.emit?.("project_thumbnail_updated", { projectId: saved._id, thumbnailUrl: thumbUrl });
+          }
+          projectSocketRef.current?.emit?.("project_updated", { projectId: saved._id, lastSavedAt: saved.lastSavedAt, project: saved });
+        }
+      } catch (e) {}
+
+      pushToast({ type: "info", message: "Project saved to server" });
+
+      if (opts.returnToDashboard) navigate("/dashboard");
+
+      return saved;
+    } catch (err) {
+      console.warn("server save failed, performing local backup", err);
+      try {
+        if (err && typeof err === "object" && err.body) console.warn("server response body:", err.body);
+      } catch (e) {}
+
+      let backupResult = null;
+      try {
+        backupResult = await saveLocalBackup(nameToUse, snapshot);
+      } catch (e) {
+        console.warn("saveLocalBackup threw", e);
+        backupResult = { ok: false, reason: e?.message || "local-backup-error" };
+      }
+
+      if (backupResult?.ok) {
+        const targetLabel = backupResult.target === "indexedDB" ? "IndexedDB" : "local storage";
+        pushToast({ type: "warn", message: `Server save failed — backup stored in ${targetLabel}` });
+      } else {
+        const reasonSuffix = backupResult?.reason ? ` (${backupResult.reason})` : "";
+        pushToast({ type: "error", message: `Server save failed — backup storage failed${reasonSuffix}` });
+      }
+
+      setIsSaving(false);
+      setIsDirty(false);
+      lastLocalSnapshotRef.current = snapshot;
+      setSaveProgress(0);
+      return null;
+    } finally {
+      setIsSaving(false);
+      setSaveProgress(0);
+    }
+  }, [projectId, projectName, createProjectOnServer, updateProjectOnServer, fetchProjects, saveLocalBackup, captureThumbnail, navigate]);
+
+  const saveAsProject = useCallback(async () => {
+    const name = prompt("Save as project name:", projectName || "Untitled Project");
+    if (!name) return null;
+    return saveProject({ saveAs: true, name });
+  }, [projectName, saveProject]);
+
+  const newProject = useCallback(async (opts = { promptSaveIfDirty: true }) => {
+    try {
+      if (isDirty && opts.promptSaveIfDirty) {
+        const ok = confirm("You have unsaved changes. Save before creating a new project?");
+        if (ok) await saveProject();
+      }
+      setProjectId(null);
+      setProjectName("Untitled Project");
+      setIsDirty(false);
+      setLastSavedAt(null);
+      lastLocalSnapshotRef.current = null;
+      lastServerSavedAtRef.current = null;
+      if (projectSocketRef.current) projectSocketRef.current.emit("leave");
+      if (workspaceRef.current?.resetScene) workspaceRef.current.resetScene();
+      pushToast({ type: "info", message: "New project created (local)" });
+    } catch (e) { console.error(e); }
+  }, [isDirty, saveProject]);
+
+  const loadProject = useCallback(async (id) => {
+    if (!id) return;
+    try {
+      if (isDirty) {
+        const ok = confirm("You have unsaved changes. Save before loading another project?");
+        if (ok) await saveProject();
+      }
+      setLoading(true);
+      const proj = await getProject(id);
+      if (!proj) throw new Error("Project not found");
+      isApplyingRemoteRef.current = true;
+      if (workspaceRef.current?.loadFromData) await workspaceRef.current.loadFromData(proj.data || {});
+      else if (workspaceRef.current?.applyScene) await workspaceRef.current.applyScene?.(proj.data || {});
+      isApplyingRemoteRef.current = false;
+
+      // Reapply environment (color or HDR) & effects & camera POV if metadata present
+      try {
+        const meta = (proj.data && proj.data.meta) ? proj.data.meta : {};
+        // Restore animation tracks
+        if (Array.isArray(meta.animationTracks)) {
+          try {
+            const animApi = workspaceRef.current?.getAnimationApi?.();
+            if (animApi) {
+              animApi.clear();
+              meta.animationTracks.forEach(t => animApi.addTrack(t));
+              animApi.seek(0);
+            }
+          } catch (e) { console.warn('restore animation tracks failed', e); }
+        }
+        // Restore bloom tags
+        if (Array.isArray(meta.bloomTagged) && postApiRef.current?.tagForBloom) {
+          try {
+            const scene = workspaceRef.current?.scene;
+            if (scene) meta.bloomTagged.forEach(id => { const o = scene.getObjectByProperty('uuid', id); if (o) postApiRef.current.tagForBloom(o, true); });
+          } catch (e) { console.warn('restore bloom tags failed', e); }
+        }
+        const envColorVal = meta.environmentColor || proj.environmentColor || null;
+        if (envColorVal) {
+          if (envApiRef.current?.setBackgroundColor) envApiRef.current.setBackgroundColor(envColorVal);
+          setEnvColor(envColorVal);
+        }
+        // Attempt to load environment map file (only if HDR/EXR and server path exists)
+        const envMapPath = proj.environmentMap || (meta.environmentMap) || null;
+        if (envMapPath && envApiRef.current?.setHDR && /\.(hdr|exr)$/i.test(envMapPath)) {
+          try { await envApiRef.current.setHDR(envMapPath); } catch (e) { console.warn('Reload envMap failed', e); }
+        }
+        // Effects toggles
+        const effects = meta.effects || proj.effects || {};
+        if (typeof effects.bloomEnabled === 'boolean' && effects.bloomEnabled !== bloomEnabled) toggleBloom(effects.bloomEnabled);
+        if (typeof effects.oceanEnabled === 'boolean' && effects.oceanEnabled !== oceanEnabled) toggleOcean(effects.oceanEnabled);
+        if (typeof effects.rainEnabled === 'boolean' && effects.rainEnabled !== rainEnabled) toggleRain(effects.rainEnabled);
+        // Camera state
+        const camState = meta.cameraState || proj.cameraState || null;
+        if (camState && Array.isArray(camState.position) && Array.isArray(camState.quaternion)) {
+          try {
+            const { camera } = probeWorkspace();
+            if (camera) {
+              camera.position.fromArray(camState.position);
+              camera.quaternion.fromArray(camState.quaternion);
+              if (typeof camState.fov === 'number') { camera.fov = camState.fov; camera.updateProjectionMatrix(); }
+              if (cameraControlsApiRef.current?.controls) {
+                const forward = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+                const target = camera.position.clone().add(forward.multiplyScalar(5));
+                cameraControlsApiRef.current.controls.target.copy(target);
+                cameraControlsApiRef.current.controls.update();
+              }
+            }
+          } catch (e) { console.warn('apply cameraState failed', e); }
+        }
+      } catch (e) { console.warn('restore meta failed', e); }
+
+      setProjectId(proj._id);
+      setProjectName(proj.name || proj.title || "Untitled Project");
+      setIsDirty(false);
+      lastLocalSnapshotRef.current = proj.data || {};
+      lastServerSavedAtRef.current = proj.lastSavedAt || new Date().toISOString();
+      setLastSavedAt(lastServerSavedAtRef.current);
+      if (projectSocketRef.current) projectSocketRef.current.emit("join", { projectId: proj._id });
+      pushToast({ type: "info", message: `Loaded project '${proj.name || proj.title || ""}'` });
+      fetchProjects();
+    } catch (err) {
+      console.error("loadProject failed", err);
+      pushToast({ type: "error", message: "Failed to load project" });
+    } finally {
+      setLoading(false);
+    }
+  }, [isDirty, saveProject, getProject, fetchProjects]);
+
+  const deleteProject = useCallback(async (id) => {
+    if (!id) return;
+    if (!confirm("Delete this project permanently?")) return;
+    try {
+      await deleteProjectOnServer(id);
+      if (id === projectId) {
+        setProjectId(null);
+        setProjectName("Untitled Project");
+        setIsDirty(false);
+        setLastSavedAt(null);
+        lastLocalSnapshotRef.current = null;
+        lastServerSavedAtRef.current = null;
+        if (workspaceRef.current?.resetScene) workspaceRef.current.resetScene();
+        if (projectSocketRef.current) projectSocketRef.current.emit("leave");
+      }
+      fetchProjects();
+      pushToast({ type: "info", message: "Project deleted" });
+    } catch (err) {
+      console.error("deleteProject failed", err);
+      pushToast({ type: "error", message: "Delete failed" });
+    }
+  }, [projectId, fetchProjects, deleteProjectOnServer]);
+
+  // Export/Import project JSON (unchanged)
+  const exportProjectJSON = useCallback(async () => {
+    try {
+      const snapshot = workspaceRef.current?.serializeScene?.();
+      if (!snapshot) { pushToast({ type: "error", message: "Nothing to export" }); return; }
+      const payload = { name: projectName || "untitled", data: snapshot, exportedAt: new Date().toISOString() };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(projectName || "project").replace(/\s+/g, "_")}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      pushToast({ type: "info", message: "Exported project JSON" });
+    } catch (err) {
+      console.error("exportProjectJSON failed", err);
+      pushToast({ type: "error", message: "Export failed" });
+    }
+  }, [projectName, pushToast]);
+
+  const importProjectJSON = useCallback((file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const text = e.target.result;
+        const obj = JSON.parse(text);
+        if (obj && obj.data) {
+          if (workspaceRef.current?.loadFromData) workspaceRef.current.loadFromData(obj.data);
+          else if (workspaceRef.current?.applyScene) workspaceRef.current.applyScene?.(obj.data);
+          setProjectName(obj.name || "Imported Project");
+          setIsDirty(true);
+          lastLocalSnapshotRef.current = obj.data;
+          pushToast({ type: "info", message: "Imported project JSON" });
+        } else {
+          pushToast({ type: "error", message: "Invalid project file." });
+        }
+      } catch (err) {
+        console.error("Import failed:", err);
+        pushToast({ type: "error", message: "Import failed" });
+      }
+    };
+    reader.readAsText(file);
+  }, [pushToast]);
+
+  // Autosave logic: uses saveProject (which itself has fallback)
+  useEffect(() => {
+    if (autosaveTimerRef.current) {
+      clearInterval(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+    if (isAutosave) {
+      autosaveTimerRef.current = setInterval(async () => {
+        try {
+          if (!isDirty) return;
+          if (isSaving) return;
+          await saveProject({ saveAs: false });
+        } catch (err) {
+          console.warn("Autosave error:", err);
+        }
+      }, Math.max(2000, 5000));
+    }
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearInterval(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+    };
+  }, [isAutosave, isDirty, isSaving, saveProject]);
+
+  // expose small setDirty method (unchanged)
+  useEffect(() => {
+    window.__studio_set_dirty = (val = true) => setIsDirty(Boolean(val));
+    return () => { try { delete window.__studio_set_dirty; } catch {} };
+  }, []);
+
+  // Fetch initial project list on mount
+  useEffect(() => { fetchProjects(); }, [fetchProjects]);
+
+  /* --------------------- AUTO-LOAD when navigated from Dashboard --------------------- */
+  // If Dashboard passes { state: { projectId } } or { sceneId }, load that project automatically
+  useEffect(() => {
+    const st = location?.state || {};
+    if (!st) return;
+    const pid = st.projectId || null;
+    const sid = st.sceneId || null;
+    if (pid) {
+      // ensure workspace is ready - give it a short delay if needed
+      setTimeout(() => {
+        try {
+          loadProject(pid);
+        } catch (e) {
+          console.warn("Auto load project failed", e);
+        }
+      }, 120);
+    } else if (sid) {
+      setTimeout(() => {
+        (async () => {
+          try {
+            const res = await fetch(apiUrl(`/api/scenes/${encodeURIComponent(sid)}`), { headers: getAuthHeaders(), credentials: "include" });
+            const body = await safeJson(res);
+            const sceneData = body?.scene || body;
+            if (sceneData) {
+              if (workspaceRef.current?.loadFromData) workspaceRef.current.loadFromData(sceneData);
+              else if (workspaceRef.current?.applyScene) workspaceRef.current.applyScene(sceneData);
+              pushToast({ type: "info", message: "Loaded scene from link" });
+            }
+          } catch (e) {
+            console.warn("Auto-load scene failed", e);
+          }
+        })();
+      }, 120);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location?.state]);
+
+  /* --------------------- UI render --------------------- */
+
   const panelTopOffset = (toolbarRef.current?.getBoundingClientRect?.()?.height ?? 64) + 12;
-  const stats = { objects: 0, tris: 0 };
+
+  const CenterWelcomeCard = () => {
+    const sceneSummary = workspaceRef.current?.getSceneSummary?.();
+    return (
+      <div className="welcome-card reveal" style={{
+        position: "absolute", left: 12, top: panelTopOffset + 12, width: 420, maxWidth: "40%", minHeight: 220,
+        borderRadius: 12, padding: 14, background: "linear-gradient(180deg, rgba(28,10,36,0.95), rgba(12,6,18,0.85))", color: "#fff", zIndex: 40,
+        boxShadow: "0 20px 60px rgba(0,0,0,0.6)"
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <div style={{ fontSize: 18, fontWeight: 800 }}>Welcome to Objekta</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="studio-btn icon-btn" onClick={() => { workspaceRef.current?.resetScene?.(); pushToast({ type: "info", message: "Reset scene" }); }} title="Reset scene" aria-label="Reset scene"><FiRefreshCcw /></button>
+            <button className="studio-btn icon-btn" onClick={() => {
+              (async () => {
+                const url = await captureThumbnailAsync();
+                if (url) {
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = 'thumbnail.jpg';
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                } else {
+                  pushToast({ type: "error", message: "Screenshot failed — no canvas available" });
+                }
+              })();
+            }} title="Screenshot" aria-label="Screenshot"><FiCamera /></button>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12, color: 'var(--text-muted)' }}>
+          Use the palette (left) to add primitives and lights, or drag-and-drop a GLB into the viewport.
+        </div>
+
+        <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
+          <button className="launch-btn" onClick={() => { workspaceRef.current?.addItem?.('Cube'); pushToast({ type: "info", message: "Cube added" }); }}>Add Cube</button>
+          <button className="studio-btn" onClick={() => { workspaceRef.current?.addItem?.('Sphere'); pushToast({ type: "info", message: "Sphere added" }); }}>Add Sphere</button>
+          <label style={{ display: "inline-block", marginLeft: 6 }}>
+            <input aria-label="Import GLB" type="file" accept=".glb,.gltf" style={{ display: 'none' }} onChange={(e) => importGLTF(e.target.files?.[0])} />
+            <button className="studio-btn">Import GLB</button>
+          </label>
+        </div>
+
+        <div style={{ marginTop: 12, display: "flex", gap: 12, alignItems: "center" }}>
+          <div style={{ fontWeight: 700 }}>Scene</div>
+          <div style={{ color: "var(--text-muted)" }}>{sceneSummary ? `${sceneSummary.objects} objects · ${sceneSummary.totalTris} tris` : 'No objects yet'}</div>
+        </div>
+      </div>
+    );
+  };
+
+  // Resize workspace when panels change
+  useEffect(() => {
+    if (workspaceRef.current && workspaceRef.current.resize) {
+      // small delay to allow CSS transition to finish or start
+      const t = setTimeout(() => workspaceRef.current.resize(), 50);
+      const t2 = setTimeout(() => workspaceRef.current.resize(), 200); // backup
+      return () => { clearTimeout(t); clearTimeout(t2); };
+    }
+  }, [paletteCollapsed, paletteWidth, propsWidth, isFullScreen]);
 
   return (
     <DndProvider backend={HTML5Backend}>
-      <div ref={containerRef} className="studio-container">
-        <ToastList toasts={toasts} remove={removeToast} />
-        <Loader active={loading || collabLoading} message={loading ? `Importing model...` : (collabLoading ? "Connecting to collab..." : "")} progress={loadProgress} />
+      <div ref={containerRef} className="studio-container" role="region" aria-label="3D Studio">
+        <StudioToast toasts={toasts} onDismiss={removeToast} />
+          <Loader active={loading || collabLoading} message={loading ? `Importing model...` : (collabLoading ? "Connecting to collab..." : "")} progress={loadProgress} />
         <ConfirmModal
           open={confirmState.open}
           title={confirmState.title}
@@ -980,92 +2461,180 @@ useEffect(() => {
           onConfirm={() => { confirmState.onConfirm?.(); setConfirmState((s) => ({ ...s, open: false })); }}
         />
 
-        <div className="studio-panel palette-panel reveal" style={{ width: paletteCollapsed ? 44 : paletteWidth, minWidth: paletteCollapsed ? 44 : 120 }}>
-          {!paletteCollapsed ? (
+        {/* Palette panel */}
+        <div className="studio-panel palette-panel reveal" style={{ width: paletteWidth, minWidth: 44 }}>
+          <div className="palette-inner" style={{ display: 'flex', flex: '1 1 auto', minHeight: 0, flexDirection: 'column' }}>
             <Palette
               items={PALETTE_ITEMS.map((it) => ({ ...it, fav: false }))}
               onAction={(name, client) => workspaceRef.current?.addItem?.(name, client)}
             />
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "center", paddingTop: 8 }} />
-          )}
-
-          {!paletteCollapsed && (<div className="palette-resizer" onMouseDown={(e) => {
-            e.preventDefault();
-            resizingRef.current = true;
-            const startX = e.clientX;
-            const startW = paletteWidthRef.current ?? paletteWidth;
-            const onMove = (ev) => {
-              if (!resizingRef.current) return;
-              const newWidth = Math.max(120, Math.min(420, startW + ev.clientX - startX));
-              setPaletteWidth(newWidth);
-              paletteWidthRef.current = newWidth;
-              localStorage.setItem("objekta_palette_width", String(newWidth));
-            };
-            const onUp = () => {
-              resizingRef.current = false;
-              window.removeEventListener("mousemove", onMove);
-              window.removeEventListener("mouseup", onUp);
-            };
-            window.addEventListener("mousemove", onMove);
-            window.addEventListener("mouseup", onUp);
-          }} />)}
-
-          <div style={{ position: "absolute", right: 8, top: 8 }}>
-            <button title={paletteCollapsed ? "Open Palette (P)" : "Collapse Palette (P)"} onClick={() => setPaletteCollapsed((v) => !v)} className="studio-btn icon-btn"><FiSidebar /></button>
+            {!paletteCollapsed && (
+              <div className="palette-resizer" onMouseDown={(e) => {
+                e.preventDefault();
+                resizingRef.current = true;
+                const startX = e.clientX;
+                const startW = paletteWidthRef.current ?? paletteWidth;
+                const onMove = (ev) => {
+                  if (!resizingRef.current) return;
+                  const newWidth = Math.max(120, Math.min(420, startW + ev.clientX - startX));
+                  setPaletteWidth(newWidth);
+                  paletteWidthRef.current = newWidth;
+                  localStorage.setItem("objekta_palette_width", String(newWidth));
+                };
+                const onUp = () => {
+                  resizingRef.current = false;
+                  window.removeEventListener("mousemove", onMove);
+                  window.removeEventListener("mouseup", onUp);
+                };
+                window.addEventListener("mousemove", onMove);
+                window.addEventListener("mouseup", onUp);
+              }} />
+            )}
           </div>
+          {/* palette collapse removed per request */}
         </div>
 
-        <div className="workspace-area">
-          <div ref={toolbarRef} className="studio-toolbar reveal">
-            <button className="studio-btn icon-btn" onClick={() => workspaceRef.current?.undo?.()} title="Undo (Ctrl/Cmd+Z)"><FiRotateCcw /></button>
-            <button className="studio-btn icon-btn" onClick={() => workspaceRef.current?.redo?.()} title="Redo (Ctrl/Cmd+Y)"><FiRotateCw /></button>
+        {/* Workspace area */}
+        <div className="workspace-area studio-canvas-wrap card-3d">
+          <div ref={toolbarRef} className="studio-toolbar reveal studio-hud" role="toolbar" aria-label="Studio toolbar">
+            <button className="studio-btn icon-btn" onClick={() => workspaceRef.current?.undo?.()} title="Undo (Ctrl/Cmd+Z)" aria-label="Undo"><FiRotateCcw /></button>
+            <button className="studio-btn icon-btn" onClick={() => workspaceRef.current?.redo?.()} title="Redo (Ctrl/Cmd+Y)" aria-label="Redo"><FiRotateCw /></button>
 
-            <div className="segmented-control">
+            <div className="segmented-control" role="group" aria-label="Transform modes">
               {[["translate", "Move"], ["rotate", "Rotate"], ["scale", "Scale"]].map(([m, label]) => (
-                <button key={m} onClick={() => setActiveMode(m)} className={activeMode === m ? 'active' : ''} title={`${label} mode`}>{label}</button>
+                <button key={m} onClick={() => setActiveMode(m)} className={activeMode === m ? 'active' : ''} title={`${label} mode`} aria-pressed={activeMode === m}>{label}</button>
               ))}
             </div>
 
-            <div className="studio-btn snap-control">
-              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }} title="Toggle snapping">
-                <input type="checkbox" checked={snapEnabled} onChange={() => { setSnapEnabled((v) => !v); workspaceRef.current?.toggleSnap?.(); }} />
-                Snap
-              </label>
-              <input type="number" value={snapSize} step={0.1} min={0} onChange={(e) => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) setSnapSize(v); }} title="Snap size" />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontWeight: 600, fontSize: 12 }}>Shading</span>
+              <div className="segmented-control" role="group" aria-label="Viewport shading">
+                {[ ['rendered', 'Rendered'], ['material', 'Material'], ['wireframe', 'Wireframe'] ].map(([mode, label]) => (
+                  <button key={mode} onClick={() => setViewMode(mode)} className={viewMode === mode ? 'active' : ''} title={`${label} view`} aria-pressed={viewMode === mode}>{label}</button>
+                ))}
+              </div>
             </div>
 
-            <button className="studio-btn icon-btn" onClick={() => duplicateWrapper()} title="Duplicate (Ctrl/Cmd+D)"><FiCopy /></button>
+            <div className="studio-btn snap-control" role="group" aria-label="Snap controls">
+              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }} title="Toggle snapping">
+                <input aria-label="Toggle snap" type="checkbox" checked={snapEnabled} onChange={() => { setSnapEnabled((v) => !v); workspaceRef.current?.toggleSnap?.(); }} />
+                Snap
+              </label>
+              <input aria-label="Snap size" type="number" value={snapSize} step={0.1} min={0} onChange={(e) => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) setSnapSize(v); }} title="Snap size" />
+            </div>
 
-            <label className="studio-btn icon-btn" title="Import GLB/GLTF">
+            <button className="studio-btn icon-btn" onClick={() => duplicateWrapper()} title="Duplicate (Ctrl/Cmd+D)" aria-label="Duplicate"><FiCopy /></button>
+
+            <label className="studio-btn icon-btn" title="Import GLB/GLTF" aria-label="Import">
               <FiUpload />
-              <input type="file" accept=".glb,.gltf" style={{ display: "none" }} onChange={(e) => { const file = e.target.files?.[0]; if (file) { importGLTF(file); e.target.value = ""; } }} />
+              <input aria-label="Import GLB or GLTF" type="file" accept=".glb,.gltf" style={{ display: "none" }} onChange={(e) => { const file = e.target.files?.[0]; if (file) { importGLTF(file); e.target.value = ""; } }} />
             </label>
 
-            <button className="studio-btn icon-btn" onClick={() => exportGLTF(true)} title="Export as GLB"><FiSave /></button>
+            <button className="studio-btn icon-btn" onClick={() => exportGLTF(true)} title="Export as GLB" aria-label="Export"><FiSave /></button>
 
-            <button className="studio-btn icon-btn" onClick={() => saveJSON()} title="Save JSON (Ctrl/Cmd+S)"><FiPlusSquare /></button>
-            <button className="studio-btn icon-btn" onClick={() => requestResetScene()} title="Reset Scene"><FiRefreshCcw /></button>
+            <button className="studio-btn icon-btn" onClick={() => saveJSON()} title="Save JSON (Ctrl/Cmd+S)" aria-label="Save JSON"><FiPlusSquare /></button>
+            <button className="studio-btn icon-btn" onClick={() => requestResetScene()} title="Reset Scene" aria-label="Reset Scene"><FiRefreshCcw /></button>
 
             <button className="studio-btn icon-btn" onClick={() => {
               const el = containerRef.current; if (!el) return;
               if (!document.fullscreenElement) el.requestFullscreen(); else document.exitFullscreen();
-            }} title={isFullScreen ? "Exit Fullscreen" : "Fullscreen"}>
+            }} title={isFullScreen ? "Exit Fullscreen" : "Fullscreen"} aria-label={isFullScreen ? "Exit fullscreen" : "Enter fullscreen"}>
               {isFullScreen ? <FiMinimize /> : <FiMaximize />}
             </button>
 
-            <button className="studio-btn icon-btn" onClick={() => setPropsCollapsed((v) => !v)} title="Toggle Inspector (I)"><FiLayers /></button>
+            {/* Inspector collapse toggle removed */}
 
-            <button className={`studio-btn icon-btn ${collabConnected ? 'connected' : ''}`} onClick={() => startCollab()} title={collabConnected ? "Disconnect collaboration" : "Start collaboration"}>
+            <button className={`studio-btn icon-btn ${collabConnected ? 'connected' : ''}`} onClick={() => startCollab()} title={collabConnected ? "Disconnect collaboration" : "Start collaboration"} aria-pressed={collabConnected}>
               {collabConnected ? <FiWifi /> : <FiWifiOff />}
             </button>
 
-            <button className="studio-btn icon-btn" onClick={() => toggleSculpt()} title="Sculpt (placeholder)">🪵</button>
+            <button className="studio-btn icon-btn" onClick={() => toggleSculpt()} title="Sculpt (placeholder)" aria-label="Toggle sculpt">🪵</button>
 
-            <div style={{ marginLeft: 8, display: "flex", gap: 6 }}>
-              <button className="studio-btn" onClick={() => { setDevicePixelRatio(0.75); }}>Low DPR</button>
-              <button className="studio-btn" onClick={() => { setDevicePixelRatio(1); }}>Normal DPR</button>
-              <button className="studio-btn" onClick={() => setDevicePixelRatio(window.devicePixelRatio || 2)}>High DPR</button>
+            {/* new helpers to fill empty space */}
+            <div style={{ display: "flex", gap: 8, marginLeft: 12 }}>
+              <button className="studio-btn icon-btn" onClick={() => { try { workspaceRef.current?.frameAll?.(); cameraControlsApiRef.current?.resetView?.(); } catch (e) { workspaceRef.current?.onFullScreenChange?.(true); } }} title="Fit to view" aria-label="Fit to view"><FiMove /></button>
+              <button className="studio-btn icon-btn" onClick={() => {
+                (async () => {
+                  const url = await captureThumbnailAsync();
+                  if (url) {
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'scene.jpg';
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                  } else pushToast({ type: "error", message: "Screenshot failed" });
+                })();
+              }} title="Capture" aria-label="Capture"><FiCamera /></button>
+              <label className={`studio-btn icon-btn ${environmentActive ? 'active' : ''}`} title="Load Environment" aria-label="Load environment" style={environmentActive ? { boxShadow:'0 0 0 2px #7f5af0 inset' } : {}}>
+                {environmentActive ? '🌌*' : '🌌'}
+                <input type="file" accept=".hdr,.exr,.jpg,.jpeg,.png" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) { applyEnvironmentFromFile(f); e.target.value=''; } }} />
+              </label>
+              <button className="studio-btn icon-btn" title="View Selected Camera" aria-label="View camera POV" onClick={() => {
+                if (selected && selected.isCamera) {
+                  workspaceRef.current?.setActiveCamera?.(selected.uuid);
+                  pushToast({ type: 'info', message: 'Viewing through selected camera' });
+                } else {
+                  pushToast({ type: 'error', message: 'Select a camera object first' });
+                }
+              }}>🎥</button>
+              <button className="studio-btn icon-btn" onClick={() => { setPaletteCollapsed(false); }} title="Reset UI" aria-label="Reset UI">UI</button>
+              <button className="studio-btn icon-btn" onClick={() => toggleBloom(!bloomEnabled)} title="Toggle Bloom" aria-label="Toggle bloom"><FiZap /></button>
+              <button className={`studio-btn ${oceanEnabled? 'active':''}`} onClick={()=>toggleOcean(!oceanEnabled)} title="Toggle Ocean" aria-label="Toggle ocean">🌊</button>
+              <button className={`studio-btn ${rainEnabled? 'active':''}`} onClick={()=>toggleRain(!rainEnabled)} title="Toggle Rain" aria-label="Toggle rain">🌧</button>
+              <button className="studio-btn icon-btn" onClick={() => {
+                try {
+                  const scene = workspaceRef.current?.scene;
+                  const grid = scene?._editorGroup?.getObjectByName("_grid");
+                  if (grid) { grid.visible = !grid.visible; pushToast({ type: "info", message: `Grid ${grid.visible ? 'shown' : 'hidden'}` }); }
+                } catch (e) {}
+              }} title="Toggle Grid" aria-label="Toggle grid"><FiGrid /></button>
+            </div>
+
+            {/* Project cloud controls */}
+            <div style={{ marginLeft: "12px", display: "flex", gap: 8, alignItems: "center" }}>
+              <select
+                aria-label="Open project"
+                value={projectId || ""}
+                onChange={(e) => {
+                  const id = e.target.value || null;
+                  if (id) loadProject(id);
+                }}
+                style={{ padding: "6px 10px", borderRadius: 8, background: "#111" }}
+              >
+                <option value="">-- Open Project --</option>
+                {projects.map((p) => {
+                  const displayName = p.name || p.title || `Project ${p._id || ""}`;
+                  const hover = displayName + (p.lastSavedAt ? ` — ${new Date(p.lastSavedAt).toLocaleString()}` : "");
+                  return <option key={p._id || (p.raw && (p.raw._id || p.raw.id))} value={p._id || (p.raw && (p.raw._id || p.raw.id))} title={hover}>{displayName}</option>;
+                })}
+              </select>
+
+              <button className="studio-btn" onClick={() => saveProject({ saveAs: false })} disabled={isSaving}>{isSaving ? "Saving…" : "Save to Cloud"}</button>
+              <button className="studio-btn" onClick={saveAsProject}>Save As</button>
+
+              {/* NEW: Save & Return, Back to Dashboard, Preview */}
+              <button className="studio-btn" onClick={() => saveProject({ saveAs: false, returnToDashboard: true })} disabled={isSaving}>Save & Return</button>
+              <button className="studio-btn" onClick={() => navigate("/dashboard")}>Back to Dashboard</button>
+              <button className="studio-btn" onClick={() => {
+                const thumb = captureThumbnail?.();
+                if (thumb) {
+                  const w = window.open("", "_blank");
+                  if (w) {
+                    w.document.write(`<title>Preview</title><img src="${thumb}" style="max-width:100%;height:auto;display:block;margin:20px auto;background:#111;padding:18px;border-radius:12px" />`);
+                    w.document.close();
+                  } else pushToast({ type: "error", message: "Could not open preview window (popup blocked?)" });
+                } else pushToast({ type: "error", message: "No preview available" });
+              }}>Preview</button>
+
+              <button className="studio-btn" onClick={() => { if (confirm("Create new blank project?")) newProject(); }}>New</button>
+              <button className="studio-btn" onClick={() => deleteProject(projectId)} disabled={!projectId}>Delete</button>
+            </div>
+
+            <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+              <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
+                {lastSavedAt ? `Last saved: ${new Date(lastSavedAt).toLocaleString()}` : (isDirty ? "Unsaved changes" : "No saves yet")}
+              </div>
             </div>
           </div>
 
@@ -1076,11 +2645,19 @@ useEffect(() => {
             selected={selected}
             onSelect={handleWorkspaceSelect}
             panelTopOffset={panelTopOffset}
-            onSceneChange={(v) => { setSceneVersion((s) => s + 1); refreshLightListFromScene(); updateStatsOnce(); }}
+            onSceneChange={(v) => { setSceneVersion((s) => s + 1); refreshLightListFromScene(); setIsDirty(true); }}
           />
 
-          {!propsCollapsed && (
-            <div ref={panelRef} className="studio-panel properties-panel reveal" style={{ width: propsWidth, top: panelPos.top, right: panelPos.right }} role="region" aria-label="Inspector">
+          {!selected && <CenterWelcomeCard />}
+          <Timeline workspaceRef={workspaceRef} selected={selected} />
+
+          {/* Floating action button: Fit to view */}
+          <button className="floating-fab" title="Fit to view" aria-label="Fit to view" onClick={() => { try { workspaceRef.current?.frameAll?.(); cameraControlsApiRef.current?.resetView?.(); } catch (e) {} }}>
+            <FiMove />
+          </button>
+
+          {/* render properties panel always; use collapsed class and narrow width when collapsed */}
+          <div ref={panelRef} className={`studio-panel properties-panel reveal`} style={{ width: propsWidth, top: panelPos.top, right: panelPos.right }} role="region" aria-label="Inspector">
               <div className="properties-resizer" onMouseDown={(e) => {
                 e.preventDefault();
                 const startX = e.clientX;
@@ -1100,12 +2677,13 @@ useEffect(() => {
                 window.addEventListener("mousemove", onMove);
                 window.addEventListener("mouseup", onUp);
               }} />
-              <div className="properties-drag-handle" onMouseDown={(e) => {
+                  <div className="properties-drag-handle" onMouseDown={(e) => {
                 draggingRef.current = true;
                 const rect = panelRef.current.getBoundingClientRect();
                 offsetRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
                 e.preventDefault(); e.stopPropagation();
               }}><div /><div /><div /></div>
+                  {/* inspector collapse UI removed */}
 
               <div role="tablist" aria-label="Inspector Tabs" style={{ display: 'flex', gap: 6, padding: 8 }}>
                 <button role="tab" aria-selected={propsTab === 'props'} onClick={() => setPropsTab('props')} className={propsTab === 'props' ? 'active' : ''}>Transform</button>
@@ -1116,25 +2694,39 @@ useEffect(() => {
                 <button role="tab" aria-selected={propsTab === 'environment'} onClick={() => setPropsTab('environment')} className={propsTab === 'environment' ? 'active' : ''}>Environment</button>
               </div>
 
-              <div style={{ padding: 8, overflowY: 'auto', height: 'calc(100% - 72px)' }}>
-                {/* Transform */}
+              <div className="object-properties" style={{ padding: 8, flex: '1 1 auto', minHeight: 0 }}>
+                {/* Transform (ObjectProperties component) */}
                 {propsTab === 'props' && (selected ? (
-                  <ObjectProperties
-                    selected={selected}
-                    onTransformChange={(prop, axis, val) => workspaceRef.current?.handleTransformChange?.(prop, axis, val)}
-                    onColorChange={(col) => {
-                      if (selected) {
-                        selected.traverse((n) => { if (n.isMesh && n.material) try { n.material.color.set(col); } catch (e) {} });
-                        pushToast({ type: "info", message: "Color updated" });
-                      }
-                    }}
-                    onVisibilityToggle={(vis) => { if (selected) selected.visible = vis; }}
-                    onDelete={requestDeleteSelected}
-                    onRename={(name) => {
-                      if (workspaceRef.current?.renameSelected) workspaceRef.current.renameSelected(name);
-                      else selected.name = name;
-                    }}
-                  />
+                  <>
+                    <ObjectProperties
+                      selected={selected}
+                      onTransformChange={(prop, axis, val) => workspaceRef.current?.handleTransformChange?.(prop, axis, val)}
+                      onMaterialChange={(patch) => { applyMaterialToSelection(patch); }}
+                      onApplyTexture={(file, slot) => { applyMaterialToSelection({ mapFile: file }); }}
+                      onApplyGLB={(file) => importGLTF(file)}
+                      onRemoveTexture={(slot) => { applyMaterialToSelection({ mapFile: null }); }}
+                      onVisibilityToggle={(vis) => { if (selected) selected.visible = vis; }}
+                      onDelete={requestDeleteSelected}
+                      onRename={(name) => {
+                        if (workspaceRef.current?.renameSelected) workspaceRef.current.renameSelected(name);
+                        else selected.name = name;
+                      }}
+                      onLightChange={(payload) => { /* optional: forward to lighting system */ }}
+                    />
+                    {/* Bloom tagging quick toggle */}
+                    {postApiRef.current?.tagForBloom && selected.isObject3D && (
+                      <div style={{ marginTop: 12, padding: 8, border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>Post FX</div>
+                        <button className="studio-btn" onClick={() => {
+                          const enabled = !selected.userData.__bloom;
+                          postApiRef.current.tagForBloom(selected, enabled);
+                          pushToast({ type: 'info', message: `Bloom tag ${enabled ? 'enabled' : 'disabled'} for '${selected.name || selected.type}'` });
+                        }}>
+                          {selected.userData.__bloom ? 'Disable Bloom Tag' : 'Enable Bloom Tag'}
+                        </button>
+                      </div>
+                    )}
+                  </>
                 ) : <div style={{ color: 'var(--text-muted)' }}>No object selected.</div>)}
 
                 {/* Material */}
@@ -1144,20 +2736,20 @@ useEffect(() => {
                     <form onSubmit={(e) => { e.preventDefault(); const input = document.getElementById("tex-upload-input"); const file = input?.files?.[0] ?? null; applyMaterialToSelection({ color: matColor, roughness: matRough, metalness: matMetal, mapFile: file }); }}>
                       <div style={{ marginBottom: 8 }}>
                         <label style={{ display: 'block', fontSize: 12 }}>Color</label>
-                        <input type="color" value={matColor} onChange={(e) => setMatColor(e.target.value)} />
+                        <input aria-label="Material color" type="color" value={matColor} onChange={(e) => setMatColor(e.target.value)} />
                       </div>
                       <div style={{ marginBottom: 8 }}>
                         <label style={{ display: 'block', fontSize: 12 }}>Roughness: {matRough.toFixed(2)}</label>
-                        <input type="range" min="0" max="1" step="0.01" value={matRough} onChange={(e) => setMatRough(parseFloat(e.target.value))} style={{ width: '100%' }} />
+                        <input aria-label="Material roughness" type="range" min="0" max="1" step="0.01" value={matRough} onChange={(e) => setMatRough(parseFloat(e.target.value))} style={{ width: '100%' }} />
                       </div>
                       <div style={{ marginBottom: 8 }}>
                         <label style={{ display: 'block', fontSize: 12 }}>Metalness: {matMetal.toFixed(2)}</label>
-                        <input type="range" min="0" max="1" step="0.01" value={matMetal} onChange={(e) => setMatMetal(parseFloat(e.target.value))} style={{ width: '100%' }} />
+                        <input aria-label="Material metalness" type="range" min="0" max="1" step="0.01" value={matMetal} onChange={(e) => setMatMetal(parseFloat(e.target.value))} style={{ width: '100%' }} />
                       </div>
 
                       <div style={{ marginBottom: 8 }}>
                         <label style={{ display: 'block', fontSize: 12 }}>Texture (optional)</label>
-                        <input id="tex-upload-input" type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) setMatMapURL(URL.createObjectURL(f)); }} />
+                        <input id="tex-upload-input" aria-label="Upload texture" type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) setMatMapURL(URL.createObjectURL(f)); }} />
                         {matMapURL && <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
                           <img src={matMapURL} alt="preview" style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 6 }} />
                           <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -1186,9 +2778,9 @@ useEffect(() => {
                   <div>
                     <div style={{ fontWeight: 700, marginBottom: 8 }}>Lighting</div>
                     <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                      <button className="studio-btn" onClick={() => { workspaceRef.current?.addItem?.('PointLight'); pushToast({ type: "info", message: "PointLight added" }); }}>Point</button>
-                      <button className="studio-btn" onClick={() => { workspaceRef.current?.addItem?.('SpotLight'); pushToast({ type: "info", message: "SpotLight added" }); }}>Spot</button>
-                      <button className="studio-btn" onClick={() => { workspaceRef.current?.addItem?.('DirectionalLight'); pushToast({ type: "info", message: "DirectionalLight added" }); }}>Dir</button>
+                      <button className="studio-btn" onClick={() => { workspaceRef.current?.addItem?.('Point Light'); pushToast({ type: "info", message: "PointLight added" }); }}>Point</button>
+                      <button className="studio-btn" onClick={() => { workspaceRef.current?.addItem?.('Spot Light'); pushToast({ type: "info", message: "SpotLight added" }); }}>Spot</button>
+                      <button className="studio-btn" onClick={() => { workspaceRef.current?.addItem?.('Directional Light'); pushToast({ type: "info", message: "DirectionalLight added" }); }}>Dir</button>
                       <button className="studio-btn" onClick={() => { workspaceRef.current?.addItem?.('HemisphereLight'); pushToast({ type: "info", message: "HemisphereLight added" }); }}>Hemi</button>
                     </div>
 
@@ -1201,10 +2793,10 @@ useEffect(() => {
                             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{l.type}</div>
                           </div>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
-                            <input type="color" value={l.color} onChange={(e) => {
+                            <input aria-label={`Color for ${l.name}`} type="color" value={l.color} onChange={(e) => {
                               try { const scene = workspaceRef.current?.scene; const light = scene?.getObjectByProperty('uuid', l.uuid); if (light) light.color.set(e.target.value); refreshLightListFromScene(); } catch (e) {}
                             }} />
-                            <input type="range" min="0" max="4" step="0.01" value={l.intensity} onChange={(e) => {
+                            <input aria-label={`Intensity for ${l.name}`} type="range" min="0" max="4" step="0.01" value={l.intensity} onChange={(e) => {
                               try { const scene = workspaceRef.current?.scene; const light = scene?.getObjectByProperty('uuid', l.uuid); if (light) light.intensity = parseFloat(e.target.value); refreshLightListFromScene(); } catch(e) {}
                             }} />
                             <div style={{ display: 'flex', gap: 6 }}>
@@ -1260,18 +2852,17 @@ useEffect(() => {
                   <div>
                     <div style={{ fontWeight: 700, marginBottom: 8 }}>Environment</div>
                     <div style={{ display: 'flex', gap: 8 }}>
-                      <input type="color" value={envColor} onChange={(e) => setEnvColor(e.target.value)} />
+                      <input aria-label="Environment color" type="color" value={envColor} onChange={(e) => setEnvColor(e.target.value)} />
                       <button className="studio-btn" onClick={() => applyEnvironmentColor(envColor)}>Apply Color</button>
                       <label className="studio-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                        <input type="file" accept=".hdr,.exr,.jpg,.png" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) applyEnvironmentFromFile(f); e.target.value = ''; }} />
-                        Import...
+                        <input aria-label="Import environment image" type="file" accept=".hdr,.exr,.jpg,.png" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) applyEnvironmentFromFile(f); e.target.value = ''; }} />
+                        <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}><FiImage />Import...</span>
                       </label>
                     </div>
                   </div>
                 )}
               </div>
             </div>
-          )}
         </div>
       </div>
     </DndProvider>

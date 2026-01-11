@@ -1,6 +1,7 @@
 // src/components/EnvironmentSetup.jsx
 import * as THREE from "three";
-import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js"; // note the .js extension
+import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
+import { EXRLoader } from "three/examples/jsm/loaders/EXRLoader.js";
 // PMREMGenerator is part of three core
 // no need to import from examples
 // import { PMREMGenerator } from "three"; // optional, already in THREE
@@ -15,7 +16,8 @@ export function setupEnvironment({ scene, renderer }) {
   const pmremGen = new THREE.PMREMGenerator(renderer);
   pmremGen.compileEquirectangularShader && pmremGen.compileEquirectangularShader();
 
-  const rgbe = new RGBELoader();
+  const rgbeLoader = new RGBELoader();
+  const exrLoader = new EXRLoader();
   let currentEnv = null;
 
   async function setHDR(url) {
@@ -28,17 +30,30 @@ export function setupEnvironment({ scene, renderer }) {
       }
       return null;
     }
+    const lower = url.toLowerCase();
+    const isEXR = lower.endsWith('.exr');
 
     return new Promise((resolve, reject) => {
-      rgbe.load(url, (hdr) => {
+      const loader = isEXR ? exrLoader : rgbeLoader;
+      loader.load(url, (tex) => {
         try {
-          const env = pmremGen.fromEquirectangular(hdr).texture;
-          if (currentEnv && typeof currentEnv.dispose === "function") currentEnv.dispose();
-          currentEnv = env;
-          scene.environment = env;
-          scene.background = env;
-          hdr.dispose && hdr.dispose();
-          resolve(env);
+          // Ensure mapping for equirectangular input (EXR may not set automatically)
+          if (tex && tex.mapping !== THREE.EquirectangularReflectionMapping) {
+            tex.mapping = THREE.EquirectangularReflectionMapping;
+          }
+          if (tex && tex.isDataTexture && typeof tex.flipY === 'boolean') {
+            // DataTextures from EXR often need flipY=false
+            tex.flipY = false;
+          }
+          const envTex = pmremGen.fromEquirectangular(tex).texture;
+          if (currentEnv && typeof currentEnv.dispose === 'function') {
+            try { currentEnv.dispose(); } catch (e) {}
+          }
+            currentEnv = envTex;
+            scene.environment = envTex;
+            scene.background = envTex; // background for immediate visual feedback
+            if (tex.dispose) try { tex.dispose(); } catch (e) {}
+            resolve(envTex);
         } catch (e) { reject(e); }
       }, undefined, (err) => reject(err));
     });

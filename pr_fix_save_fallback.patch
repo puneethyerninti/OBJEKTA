@@ -1,0 +1,52 @@
+*** Begin Patch
+*** Update File: src/components/Workspace.jsx
+@@
+ // ---------- Add the new helpers here: saveSceneToProject & saveSceneWithFallback ----------
+ /**
+  * Upload exported GLB blob to project as an asset.
+  * Uses field name "file" so it matches your backend's multer(upload.single("file"))
+  * Returns parsed JSON response or throws.
+  */
+ const saveSceneToProject = async (projectId, { filename = "scene.glb", meta = {} } = {}) => {
+@@
+   // success → return server response
+   console.log("Scene uploaded to project:", json);
+   try {
+     // Inform app about new asset (EventBus / SceneGraph / UI update as needed)
+     EventBus?.emit?.("project_asset_uploaded", { projectId, asset: json.asset || null, raw: json });
+   } catch (e) {}
+   return json;
+ };
+@@
+ const saveSceneWithFallback = async (projectId, { filename = "scene.glb", meta = {} } = {}) => {
+@@
+       const serverResp = await saveSceneToProject(projectId, { filename, meta });
+       return { ok: true, server: serverResp };
+     } catch (err) {
++      // Attempt S3 presign for small files (<50MB) before IndexedDB fallback
++      try {
++        const smallLimit = 50 * 1024 * 1024;
++        const blob = await exportGLTF(true, { download: false, filename });
++        if (blob.size <= smallLimit) {
++          const presignRes = await fetch(apiUrl('/api/uploads/presign'), {
++            method: 'POST',
++            headers: { 'Content-Type': 'application/json' },
++            body: JSON.stringify({ filename, contentType: 'model/gltf-binary', projectId }),
++            credentials: 'include'
++          });
++          if (presignRes.ok) {
++            const { url, key } = await presignRes.json();
++            const putRes = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'model/gltf-binary' }, body: blob });
++            if (putRes.ok) {
++              console.log('[OBJEKTA] Presigned PUT upload succeeded (fallback path)');
++              return { ok: true, server: { presignedKey: key } };
++            }
++          }
++        }
++      } catch (e2) {
++        console.warn('[OBJEKTA] Presigned fallback failed, proceeding to local backup', e2);
++      }
+       // fallback: store real blob in IndexedDB, with object URL backup only if IndexedDB fails
+@@
+ }
+*** End Patch

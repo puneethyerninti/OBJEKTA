@@ -2,7 +2,8 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
-import "../styles/ObjectProperties.css"; // keep your CSS import
+import createSafeGLTFLoader from "../utils/gltfLoader";
+import "../styles/ObjectProperties.css";
 
 /* constants & helpers */
 const CLIP_KEY = "objekta_transform_clipboard_v3";
@@ -86,11 +87,13 @@ function hslToRgb(h, s, l) {
  * ObjectPropertiesTexture
  * Props:
  *  - selected: THREE.Object3D (mesh / group)
- *  - onTransformChange(prop, axis, value) -> called with applied numeric values
+ *  - onTransformChange(prop, axis, value)
  *  - onMaterialChange(patch)
  *  - onApplyTexture(file, slotKey), onApplyGLB(file), onRemoveTexture(slotKey)
  *  - onVisibilityToggle(visible), onDelete(), onRename(name)
- *  - onLightChange(payload)  // optional: receives { type, color, intensity, position, target... }
+ *  - onLightChange(payload)
+ *  - onEnvChange(payload) // New prop
+ *  - onLookThrough(camera) // New prop
  */
 export default function ObjectPropertiesTexture({
   selected,
@@ -102,17 +105,22 @@ export default function ObjectPropertiesTexture({
   onVisibilityToggle,
   onDelete,
   onRename,
-  onLightChange, // optional new callback
+  onLightChange,
+  onEnvChange, // New prop
+  onLookThrough, // New prop
 }) {
   // TRANSFORM / UI
   const [name, setName] = useState("");
   const [visible, setVisible] = useState(true);
   const [position, setPosition] = useState({ x: 0, y: 0, z: 0 });
-  const [rotation, setRotation] = useState({ x: 0, y: 0, z: 0 }); // UI: degrees if useDegrees, else radians
+  const [rotation, setRotation] = useState({ x: 0, y: 0, z: 0 });
   const [scale, setScale] = useState({ x: 1, y: 1, z: 1 });
   const [useDegrees, setUseDegrees] = useState(true);
   const [uniformScale, setUniformScale] = useState(false);
   const [localSpace, setLocalSpace] = useState(true);
+  const [camFov, setCamFov] = useState(50);
+  const [camNear, setCamNear] = useState(0.1);
+  const [camFar, setCamFar] = useState(2000);
 
   // MATERIAL
   const [hex, setHex] = useState("#888888");
@@ -183,7 +191,7 @@ export default function ObjectPropertiesTexture({
   // init loaders
   useEffect(() => {
     try { textureLoaderRef.current = new THREE.TextureLoader(); } catch (e) { textureLoaderRef.current = null; }
-    try { gltfLoaderRef.current = new GLTFLoader(); } catch (e) { gltfLoaderRef.current = null; }
+    try { gltfLoaderRef.current = createSafeGLTFLoader(); } catch (e) { gltfLoaderRef.current = null; }
     return () => { textureLoaderRef.current = null; gltfLoaderRef.current = null; };
   }, []);
 
@@ -204,6 +212,7 @@ export default function ObjectPropertiesTexture({
       setPosition({ x: 0, y: 0, z: 0 });
       setRotation({ x: 0, y: 0, z: 0 });
       setScale({ x: 1, y: 1, z: 1 });
+      setCamFov(50); setCamNear(0.1); setCamFar(2000);
       setHex("#888888"); setRgb({ r: 136, g: 136, b: 136 }); setHsl(rgbToHsl(136, 136, 136));
       setRoughness(0.5); setMetalness(0); setOpacity(1); setEmissiveHex("#000000"); setEmissiveIntensity(1); setWireframe(false);
       mapsRef.current = {}; setMapVersion(v => v+1);
@@ -214,6 +223,14 @@ export default function ObjectPropertiesTexture({
 
     setName(selected.name || "");
     setVisible(typeof selected.visible === "boolean" ? selected.visible : true);
+
+    if (selected.isCamera) {
+      setCamFov(toNum(selected.fov ?? 50, 50));
+      setCamNear(toNum(selected.near ?? 0.1, 0.1));
+      setCamFar(toNum(selected.far ?? 2000, 2000));
+    } else {
+      setCamFov(50); setCamNear(0.1); setCamFar(2000);
+    }
 
     // position (local)
     const pos = selected.position || new THREE.Vector3();
@@ -311,7 +328,6 @@ export default function ObjectPropertiesTexture({
   }, [selected, useDegrees, toNum]);
 
   // --- TRANSFORM logic: immediate apply for UI feedback + batched onTransformChange callback ---
-
   const applyToSelected = useCallback((prop, axis, numericValue) => {
     if (!selected) return;
     try {
@@ -326,18 +342,6 @@ export default function ObjectPropertiesTexture({
       selected.updateMatrixWorld?.();
     } catch (e) {}
   }, [selected]);
-
-  const queueTransform = useCallback((prop, axis, numericValue) => {
-    if (!prop || !axis) return;
-    if (!pendingRef.current[prop]) pendingRef.current[prop] = {};
-    pendingRef.current[prop][axis] = Number(numericValue);
-    applyToSelected(prop, axis, Number(numericValue));
-    if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
-    flushTimerRef.current = setTimeout(() => {
-      flushTimerRef.current = null;
-      try { flushPending(); } catch (e) {}
-    }, 80);
-  }, [applyToSelected]);
 
   const flushPending = useCallback(() => {
     if (!mountedRef.current) return;
@@ -357,31 +361,51 @@ export default function ObjectPropertiesTexture({
     } catch (e) {}
   }, [onTransformChange]);
 
-  const handleInputChange = useCallback((prop, axis) => (e) => {
-    const raw = e.target.value;
-    const parsed = raw === "" ? 0 : Number(parseFloat(raw));
-    if (prop === "position") {
-      const v = isNaN(parsed) ? 0 : parsed;
-      setPosition((s) => ({ ...s, [axis]: v }));
-      queueTransform("position", axis, v);
-    } else if (prop === "rotation") {
-      const v = isNaN(parsed) ? 0 : parsed;
-      setRotation((s) => ({ ...s, [axis]: v }));
-      const numeric = useDegrees ? (v * Math.PI) / 180 : v;
-      queueTransform("rotation", axis, numeric);
-    } else if (prop === "scale") {
-      const v = isNaN(parsed) ? 0 : parsed;
-      if (uniformScale) {
-        setScale({ x: v, y: v, z: v });
-        queueTransform("scale", "x", v);
-        queueTransform("scale", "y", v);
-        queueTransform("scale", "z", v);
-      } else {
-        setScale((s) => ({ ...s, [axis]: v }));
-        queueTransform("scale", axis, v);
-      }
+  const queueTransform = useCallback((prop, axis, numericValue) => {
+    if (!prop || !axis) return;
+    if (!pendingRef.current[prop]) pendingRef.current[prop] = {};
+    pendingRef.current[prop][axis] = Number(numericValue);
+    applyToSelected(prop, axis, Number(numericValue));
+    if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+    flushTimerRef.current = setTimeout(() => {
+      flushTimerRef.current = null;
+      try { flushPending(); } catch (e) {}
+    }, 80);
+  }, [applyToSelected, flushPending]);
+
+  const isInterimEmpty = (raw) => raw === "" || raw === "-" || raw === "." || raw === "-.";
+
+  const updateTransformInput = useCallback((prop, axis, raw, { commit = false } = {}) => {
+    const parsed = parseFloat(raw);
+    const hasNumber = Number.isFinite(parsed);
+    const displayValue = isInterimEmpty(raw) ? raw : (hasNumber ? parsed : raw);
+
+    if (prop === "position") setPosition((s) => ({ ...s, [axis]: displayValue }));
+    else if (prop === "rotation") setRotation((s) => ({ ...s, [axis]: displayValue }));
+    else if (prop === "scale") {
+      if (uniformScale) setScale({ x: displayValue, y: displayValue, z: displayValue });
+      else setScale((s) => ({ ...s, [axis]: displayValue }));
     }
-  }, [queueTransform, useDegrees, uniformScale]);
+
+    if (!hasNumber && !commit) return;
+    const base = hasNumber ? parsed : 0;
+    const numeric = prop === "rotation" && useDegrees ? (base * Math.PI) / 180 : base;
+
+    if (prop === "scale" && uniformScale) {
+      queueTransform("scale", "x", base);
+      queueTransform("scale", "y", base);
+      queueTransform("scale", "z", base);
+    } else {
+      queueTransform(prop, axis, numeric);
+    }
+
+    if (commit) {
+      try { flushPending(); } catch (e) {}
+    }
+  }, [flushPending, queueTransform, uniformScale, useDegrees]);
+
+  const handleInputChange = useCallback((prop, axis) => (e) => updateTransformInput(prop, axis, e.target.value), [updateTransformInput]);
+  const handleInputBlur = useCallback((prop, axis) => (e) => updateTransformInput(prop, axis, e.target.value, { commit: true }), [updateTransformInput]);
 
   useEffect(() => {
     if (!selected) return;
@@ -408,7 +432,7 @@ export default function ObjectPropertiesTexture({
     }
   }, [uniformScale, queueTransform, toNum]);
 
-  // --- MATERIAL helpers (kept largely same with small safety tweaks) ---
+  // --- MATERIAL helpers (unchanged but robust) ---
   const applyMaterialPatch = useCallback((patch = {}) => {
     try {
       selected?.traverse((n) => {
@@ -442,11 +466,11 @@ export default function ObjectPropertiesTexture({
     }, 120);
   }, [applyMaterialPatch]);
 
-  // snapshots undo/redo
+  // snapshots undo/redo (unchanged)...
   const snapshotMaterialState = useCallback((label = 'mat-edit') => {
     try {
       const snap = {
-        hex, roughness, metalness, opacity, emissiveHex, emissiveIntensity, wireframe, normalScale, aoIntensity,
+        hex, roughness, metalness, opacity, emissiveHex, emissiveIntensity, normalScale, aoIntensity,
         invertRoughness, invertMetalness,
         maps: JSON.parse(JSON.stringify(Object.fromEntries(Object.entries(mapsRef.current || {}).map(([k,v]) => [k, { url: v?.url || null, settings: v?.settings || {} }])))),
         label,
@@ -455,7 +479,7 @@ export default function ObjectPropertiesTexture({
       if (materialUndoRef.current.length > MAT_UNDO_LIMIT) materialUndoRef.current.shift();
       materialRedoRef.current = [];
     } catch (e) {}
-  }, [hex, roughness, metalness, opacity, emissiveHex, emissiveIntensity, wireframe, normalScale, aoIntensity, invertRoughness, invertMetalness]);
+  }, [hex, roughness, metalness, opacity, emissiveHex, emissiveIntensity, normalScale, aoIntensity, invertRoughness, invertMetalness]);
 
   const applySnapshotToMaterial = useCallback((snap) => {
     if (!snap) return;
@@ -530,7 +554,7 @@ export default function ObjectPropertiesTexture({
     } catch (e) {}
   }, [applySnapshotToMaterial, hex, roughness, metalness, opacity, emissiveHex, emissiveIntensity, wireframe, normalScale]);
 
-  // APPLY MAP FILE (local)
+  // APPLY MAP FILE (local) - unchanged but robust
   const applyMapFile = useCallback(async (file, slotKey) => {
     if (!file || !slotKey) return;
     snapshotMaterialState('apply-map');
@@ -543,7 +567,6 @@ export default function ObjectPropertiesTexture({
     const url = URL.createObjectURL(file);
     const entry = { url, file, texture: null, settings: { repeatX: 1, repeatY: 1, offsetX: 0, offsetY: 0, rotation: 0, flipH: false, flipV: false, wrap: 'repeat', filter: 'linear' } };
 
-    // revoke previous blob for this slot if we created it
     try {
       const old = mapsRef.current?.[slotKey];
       if (old && old.file && old.url) {
@@ -574,7 +597,6 @@ export default function ObjectPropertiesTexture({
 
             mapsRef.current = { ...(mapsRef.current || {}), [slotKey]: { ...entry, texture: tex } };
 
-            // apply to selected materials
             selected?.traverse((n) => {
               if (n.isMesh && n.material) {
                 const mats = Array.isArray(n.material) ? n.material : [n.material];
@@ -675,33 +697,42 @@ export default function ObjectPropertiesTexture({
     if (typeof onMaterialChange === 'function') onMaterialChange({ color: hex, roughness, metalness, opacity });
   }, [selected, snapshotMaterialState, hex, roughness, metalness, opacity, onMaterialChange]);
 
-  // GLB import
+  // GLB import - unchanged except robust URL revoke
   const applyGLBFile = useCallback(async (file) => {
     if (!file) return;
     if (typeof onApplyGLB === 'function') { try { onApplyGLB(file); } catch (e) {} return; }
-    const url = URL.createObjectURL(file);
     const loader = gltfLoaderRef.current;
-    if (!loader) { URL.revokeObjectURL(url); return; }
+    if (!loader) return;
     try {
-      loader.load(url, (gltf) => {
-        try {
-          const scene = gltf.scene || gltf.scenes?.[0];
-          if (!scene) return;
-          if (selected && (selected.isMesh || selected.isGroup || selected.isObject3D)) {
-            try {
-              if (typeof selected.clear === "function") selected.clear();
-              scene.children.forEach((c) => { selected.add(c.clone(true)); });
-            } catch (e) {
-              scene.children.forEach((c) => { selected.add(c.clone(true)); });
+      const arrayBuffer = await file.arrayBuffer();
+      // parse directly from ArrayBuffer to avoid creating blob: URLs that may be revoked
+      loader.parse(
+        arrayBuffer,
+        '',
+        (gltf) => {
+          try {
+            const scene = gltf.scene || gltf.scenes?.[0];
+            if (!scene) return;
+            if (selected && (selected.isMesh || selected.isGroup || selected.isObject3D)) {
+              try {
+                if (typeof selected.clear === "function") selected.clear();
+                scene.children.forEach((c) => { selected.add(c.clone(true)); });
+              } catch (e) {
+                scene.children.forEach((c) => { selected.add(c.clone(true)); });
+              }
             }
-          }
-          URL.revokeObjectURL(url);
-        } catch (e) { URL.revokeObjectURL(url); }
-      }, undefined, (err) => { console.warn('glb load failed', err); URL.revokeObjectURL(url); });
-    } catch (e) { try { URL.revokeObjectURL(url); } catch(_) {} }
+          } catch (e) {}
+        },
+        (err) => {
+          console.warn('glb parse failed', err);
+        }
+      );
+    } catch (e) {
+      console.warn('applyGLBFile failed', e);
+    }
   }, [onApplyGLB, selected]);
 
-  // drag/drop handlers
+  // drag/drop handlers - unchanged
   const onDrop = useCallback((e) => {
     e.preventDefault();
     setDragActive(false);
@@ -751,7 +782,7 @@ export default function ObjectPropertiesTexture({
     };
   }, []);
 
-  // Presets: load/save/delete
+  // Presets: load/save/delete (unchanged)
   const loadPresets = useCallback(() => {
     try {
       const keys = Object.keys(localStorage).filter(k => k.startsWith(PRESET_PREFIX));
@@ -852,13 +883,13 @@ export default function ObjectPropertiesTexture({
   const closePreview = () => { setPreviewUrl(null); };
 
   // ----- ENHANCED Numeric input with wheel + drag support -----
-  const Numeric = ({ value, onChange, step = 0.1, min, max, ariaLabel }) => {
+  // (unchanged, same as you had)...
+  const Numeric = ({ value, onChange, onBlur, step = 0.1, min, max, ariaLabel }) => {
     const dragRef = useRef({ active: false, startY: 0, startVal: 0 });
     const inputRef = useRef(null);
 
     useEffect(() => {
       return () => {
-        // cleanup (in case)
         dragRef.current.active = false;
       };
     }, []);
@@ -869,18 +900,21 @@ export default function ObjectPropertiesTexture({
       return v;
     };
 
-    // helper to call parent onChange with event-like object
     const emit = (newVal) => {
       const ev = { target: { value: String(Number(Number(newVal).toFixed(4))) } };
       try { onChange && onChange(ev); } catch (e) {}
     };
 
+    const safeNumber = (v) => {
+      const n = parseFloat(v);
+      return Number.isFinite(n) ? n : 0;
+    };
+
     const onWheel = (e) => {
       e.preventDefault();
-      // wheel deltaY: positive (down) -> decrease; negative (up) -> increase
       const dir = Math.sign(-e.deltaY || 0);
       const delta = dir * step;
-      let next = Number(value) + delta;
+      let next = safeNumber(value) + delta;
       next = clampVal(next);
       emit(next);
     };
@@ -889,13 +923,12 @@ export default function ObjectPropertiesTexture({
       e.preventDefault();
       dragRef.current.active = true;
       dragRef.current.startY = e.clientY;
-      dragRef.current.startVal = Number(value || 0);
+      dragRef.current.startVal = safeNumber(value);
       document.body.style.cursor = "ns-resize";
 
       const onMove = (ev) => {
         if (!dragRef.current.active) return;
         const dy = ev.clientY - dragRef.current.startY;
-        // sensitivity: pixels -> value change (tweak as needed)
         const sens = Math.max(0.0001, Math.abs(step) / 2);
         const newVal = clampVal(dragRef.current.startVal - dy * sens);
         emit(newVal);
@@ -912,12 +945,11 @@ export default function ObjectPropertiesTexture({
       window.addEventListener("mouseup", onUp);
     };
 
-    // touch support
     const onTouchStart = (e) => {
       if (!e.touches || !e.touches[0]) return;
       dragRef.current.active = true;
       dragRef.current.startY = e.touches[0].clientY;
-      dragRef.current.startVal = Number(value || 0);
+      dragRef.current.startVal = safeNumber(value);
       const onTouchMove = (ev) => {
         if (!dragRef.current.active) return;
         const dy = ev.touches[0].clientY - dragRef.current.startY;
@@ -930,21 +962,22 @@ export default function ObjectPropertiesTexture({
         window.removeEventListener("touchmove", onTouchMove);
         window.removeEventListener("touchend", onTouchEnd);
       };
-      window.addEventListener("touchmove", onTouchMove, { passive: true });
+      window.addEventListener("touchmove", onTouchMove, { passive: false });
       window.addEventListener("touchend", onTouchEnd);
     };
 
     return (
       <input
         ref={inputRef}
-        className="op-numeric"
+        className="op-numeric prop-input"
         type="number"
         step={step}
-        value={value}
+        value={value === null || typeof value === "undefined" ? "" : value}
         onChange={onChange}
         onWheel={onWheel}
         onMouseDown={onMouseDown}
         onTouchStart={onTouchStart}
+        onBlur={onBlur}
         min={min}
         max={max}
         aria-label={ariaLabel}
@@ -956,12 +989,17 @@ export default function ObjectPropertiesTexture({
   const [openTransform, setOpenTransform] = useState(true);
   const [openMaterial, setOpenMaterial] = useState(true);
   const [openTextures, setOpenTextures] = useState(true);
+  
 
-  // header actions (copy/paste transforms)
+  // header actions
   const copyTransformsToClipboard = useCallback(() => {
     try {
       const rotRad = { x: selected?.rotation?.x ?? 0, y: selected?.rotation?.y ?? 0, z: selected?.rotation?.z ?? 0 };
-      const payload = { position, rotation: rotRad, scale };
+      const payload = {
+        position: { x: toNum(position.x), y: toNum(position.y), z: toNum(position.z) },
+        rotation: rotRad,
+        scale: { x: toNum(scale.x, 1), y: toNum(scale.y, 1), z: toNum(scale.z, 1) }
+      };
       localStorage.setItem(CLIP_KEY, JSON.stringify(payload));
     } catch (e) {}
   }, [position, rotation, scale, selected]);
@@ -998,12 +1036,32 @@ export default function ObjectPropertiesTexture({
     } catch (e) {}
   }, [queueTransform, toNum, useDegrees]);
 
+  
+
   // sync workspace visible toggle
   const toggleVisibility = (v) => {
     setVisible(v);
     try { if (selected) selected.visible = v; } catch(e) {}
     if (typeof onVisibilityToggle === 'function') onVisibilityToggle(v);
   };
+
+  const handleCameraPropChange = useCallback((prop) => (e) => {
+    const raw = typeof e === "number" ? e : parseFloat(e?.target?.value);
+    const val = Number.isFinite(raw) ? raw : 0;
+    if (prop === "fov") setCamFov(val);
+    if (prop === "near") setCamNear(val);
+    if (prop === "far") setCamFar(val);
+
+    if (selected?.isCamera) {
+      try {
+        selected[prop] = val;
+        selected.updateProjectionMatrix?.();
+      } catch (err) {}
+    }
+    if (typeof onTransformChange === 'function') {
+      try { onTransformChange(prop, "x", val); } catch (err) {}
+    }
+  }, [onTransformChange, selected]);
 
   // header rename
   const handleRename = (n) => {
@@ -1034,21 +1092,118 @@ export default function ObjectPropertiesTexture({
     }, 100);
   }, [onLightChange]);
 
+  // Call scheduleLightApply whenever the light controls change.
   useEffect(() => {
-    // when user toggles the light UI (or initial load), send initial payload once
-    if (onLightChange) {
-      scheduleLightApply({ type: lightType, color: lightColor, intensity: lightIntensity });
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onLightChange]);
+    if (!onLightChange) return;
+    scheduleLightApply({ type: lightType, color: lightColor, intensity: lightIntensity });
+  }, [lightType, lightColor, lightIntensity, onLightChange, scheduleLightApply]);
 
-  // -- Render UI (keeps your layout & classes but uses the fixed transform handlers) --
-  return selected ? (
-    <div className={`op-container ${dragActive ? "drag-active" : ""}`} onDrop={onDrop} onDragOver={onDragOver} onDragEnter={onDragEnter} onDragLeave={onDragLeave}>
+  // -- Render UI --
+  if (!selected) {
+      return (
+        <div className="op-container object-properties">
+            <div className="op-header">
+                <strong>Environment</strong>
+            </div>
+            <div className="op-sections">
+                <div className="op-panel" data-depth="1">
+                    <div className="op-panel-header"><strong>World Settings</strong></div>
+                    <div className="op-material-body">
+                        <div className="op-texture-row">
+                            <label>Background</label>
+                            <input className="op-color-swatch" type="color" onChange={(e) => onEnvChange && onEnvChange({ background: e.target.value })} />
+                        </div>
+                        <div className="op-texture-row">
+                            <label>Intensity</label>
+                            <input className="op-range prop-slider" type="range" min="0" max="2" step="0.05" defaultValue="1" onChange={(e) => onEnvChange && onEnvChange({ intensity: parseFloat(e.target.value) })} />
+                        </div>
+                         <div className="op-texture-row">
+                            <label>Blur</label>
+                            <input className="op-range prop-slider" type="range" min="0" max="1" step="0.05" defaultValue="0" onChange={(e) => onEnvChange && onEnvChange({ blur: parseFloat(e.target.value) })} />
+                        </div>
+                         <div className="op-texture-row">
+                            <button className="op-btn" onClick={() => document.getElementById('env-hdr-upload').click()}>Upload HDR</button>
+                            <input id="env-hdr-upload" type="file" accept=".hdr,.exr" style={{display:'none'}} onChange={(e) => {
+                                if(e.target.files?.[0] && onEnvChange) onEnvChange({ file: e.target.files[0] });
+                            }} />
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+      );
+  }
+
+  if (selected.isCamera) {
+      return (
+        <div className="op-container object-properties">
+             <div className="op-header">
+                <input
+                  className="op-name-input prop-input"
+                  type="text"
+                  value={name}
+                  onChange={(e) => handleRename(e.target.value)}
+                  placeholder="Camera name"
+                />
+                 <div className="op-header-actions">
+                    <button className="op-btn op-btn-danger" title="Delete" onClick={() => onDelete && onDelete()}>Delete</button>
+                </div>
+            </div>
+            <div className="op-sections">
+                <div className="op-panel">
+                    <div className="op-panel-header"><strong>Camera Settings</strong></div>
+                    <div className="op-material-body">
+                        <div className="op-texture-row">
+                          <button className="op-btn" style={{width:'100%', marginBottom: 8}} onClick={() => onLookThrough && onLookThrough(selected)}>Look Through</button>
+                        </div>
+                        <div className="op-texture-row">
+                            <label>FOV</label>
+                          <Numeric value={camFov} onChange={handleCameraPropChange('fov')} onBlur={handleCameraPropChange('fov')} step={0.5} min={10} max={170} />
+                        </div>
+                        <div className="op-texture-row">
+                            <label>Near</label>
+                          <Numeric value={camNear} onChange={handleCameraPropChange('near')} onBlur={handleCameraPropChange('near')} step={0.01} min={0.001} />
+                        </div>
+                        <div className="op-texture-row">
+                            <label>Far</label>
+                          <Numeric value={camFar} onChange={handleCameraPropChange('far')} onBlur={handleCameraPropChange('far')} step={1} min={1} />
+                        </div>
+                    </div>
+                </div>
+                 {/* Transform Panel Reuse */}
+                 <div className="op-panel" data-depth="2">
+                    <div className="op-panel-header">
+                        <button className="op-collapse" onClick={() => setOpenTransform(v => !v)}>{openTransform ? '▾' : '▸'}</button>
+                        <strong>Transform</strong>
+                    </div>
+                    {openTransform && (
+                        <div className="op-transform-body">
+                             <div className="op-transform-row">
+                                <label className="op-transform-label">Pos</label>
+                                <Numeric value={position.x} onChange={handleInputChange('position','x')} onBlur={handleInputBlur('position','x')} />
+                                <Numeric value={position.y} onChange={handleInputChange('position','y')} onBlur={handleInputBlur('position','y')} />
+                                <Numeric value={position.z} onChange={handleInputChange('position','z')} onBlur={handleInputBlur('position','z')} />
+                              </div>
+                              <div className="op-transform-row">
+                                <label className="op-transform-label">Rot</label>
+                                <Numeric value={rotation.x} onChange={handleInputChange('rotation','x')} onBlur={handleInputBlur('rotation','x')} />
+                                <Numeric value={rotation.y} onChange={handleInputChange('rotation','y')} onBlur={handleInputBlur('rotation','y')} />
+                                <Numeric value={rotation.z} onChange={handleInputChange('rotation','z')} onBlur={handleInputBlur('rotation','z')} />
+                              </div>
+                        </div>
+                    )}
+                 </div>
+            </div>
+        </div>
+      );
+  }
+
+  return (
+    <div className={`op-container object-properties ${dragActive ? "drag-active" : ""}`} onDrop={onDrop} onDragOver={onDragOver} onDragEnter={onDragEnter} onDragLeave={onDragLeave}>
       {/* Header */}
       <div className="op-header">
         <input
-          className="op-name-input"
+          className="op-name-input prop-input"
           type="text"
           value={name}
           onChange={(e) => handleRename(e.target.value)}
@@ -1065,228 +1220,250 @@ export default function ObjectPropertiesTexture({
         </div>
       </div>
 
-      {/* Transform */}
-      <div className="op-panel">
-        <div className="op-panel-header">
-          <button className="op-collapse" onClick={() => setOpenTransform(v => !v)}>{openTransform ? '▾' : '▸'}</button>
-          <strong>Transform</strong>
+      {/* SINGLE SCROLLABLE SECTIONS AREA */}
+      <div className="op-sections">
+        {/* Transform */}
+        <div className="op-panel" data-depth="2" aria-label="Transform panel">
+          <div className="op-panel-header">
+            <button className="op-collapse" onClick={() => setOpenTransform(v => !v)}>{openTransform ? '▾' : '▸'}</button>
+            <strong>Transform</strong>
 
-          <div className="op-panel-right">
-            <button className="op-small-btn" onClick={copyTransformsToClipboard}>Copy</button>
-            <button className="op-small-btn" onClick={pasteTransformsFromClipboard}>Paste</button>
+            <div className="op-panel-right">
+              <button className="op-small-btn" onClick={copyTransformsToClipboard}>Copy</button>
+              <button className="op-small-btn" onClick={pasteTransformsFromClipboard}>Paste</button>
 
-            <input id={glbIdRef.current} type="file" accept="model/gltf,model/glb,.gltf,.glb" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) applyGLBFile(f); e.target.value=''; }} />
-            <button className="op-small-btn" onClick={() => document.getElementById(glbIdRef.current)?.click()}>Import .glb</button>
-          </div>
-        </div>
-
-        {openTransform && (
-          <div className="op-transform-body">
-            <div className="op-transform-left">
-              <div className="op-transform-row">
-                <label className="op-transform-label">Pos</label>
-                <Numeric value={position.x} onChange={handleInputChange('position','x')} />
-                <Numeric value={position.y} onChange={handleInputChange('position','y')} />
-                <Numeric value={position.z} onChange={handleInputChange('position','z')} />
-              </div>
-
-              <div className="op-transform-row">
-                <label className="op-transform-label">Rot</label>
-                <Numeric value={rotation.x} onChange={handleInputChange('rotation','x')} />
-                <Numeric value={rotation.y} onChange={handleInputChange('rotation','y')} />
-                <Numeric value={rotation.z} onChange={handleInputChange('rotation','z')} />
-                <label className="op-inline-checkbox"><input type="checkbox" checked={useDegrees} onChange={(e) => setUseDegrees(e.target.checked)} />deg</label>
-              </div>
-
-              <div className="op-transform-row">
-                <label className="op-transform-label">Scl</label>
-                <Numeric value={scale.x} onChange={handleInputChange('scale','x')} />
-                <Numeric value={scale.y} onChange={handleInputChange('scale','y')} />
-                <Numeric value={scale.z} onChange={handleInputChange('scale','z')} />
-                <label className="op-inline-checkbox"><input type="checkbox" checked={uniformScale} onChange={(e) => setUniformScale(e.target.checked)} />uniform</label>
-              </div>
-            </div>
-
-            <div className="op-transform-right">
-              <label className="op-small-label">Space</label>
-              <label className="op-inline-checkbox"><input type="checkbox" checked={localSpace} onChange={(e) => setLocalSpace(e.target.checked)} />Local</label>
+              <input id={glbIdRef.current} type="file" accept="model/gltf,model/glb,.gltf,.glb" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) applyGLBFile(f); e.target.value=''; }} />
+              <button className="op-small-btn" onClick={() => document.getElementById(glbIdRef.current)?.click()}>Import .glb</button>
             </div>
           </div>
-        )}
-      </div>
 
-      {/* Material */}
-      <div className="op-panel">
-        <div className="op-panel-header">
-          <button className="op-collapse" onClick={() => setOpenMaterial(v => !v)}>{openMaterial ? '▾' : '▸'}</button>
-          <strong>Material</strong>
-          <div className="op-panel-right">
-            <button className="op-small-btn" onClick={() => { snapshotMaterialState('copy-mat'); try { localStorage.setItem(MAT_CLIP_KEY, JSON.stringify({ hex, roughness, metalness, opacity, emissiveHex })); } catch (e) {} }}>Copy Mat</button>
-            <button className="op-small-btn" onClick={() => { try { const s = localStorage.getItem(MAT_CLIP_KEY); if (!s) return; const raw = JSON.parse(s); if (raw.hex) setHex(raw.hex); if (typeof raw.roughness === 'number') setRoughness(raw.roughness); if (typeof raw.metalness === 'number') setMetalness(raw.metalness); if (typeof raw.opacity === 'number') setOpacity(raw.opacity); if (raw.emissiveHex) setEmissiveHex(raw.emissiveHex); if (typeof onMaterialChange === 'function') onMaterialChange(raw); } catch (e) {} }}>Paste Mat</button>
-            <label className="op-inline-checkbox">
-              <input type="checkbox" checked={wireframe} onChange={(e) => { setWireframe(e.target.checked); scheduleMaterialApply({ wireframe: e.target.checked }); try { selected?.traverse(n => { if (n.isMesh && n.material) { const mats = Array.isArray(n.material) ? n.material : [n.material]; mats.forEach(m => { try { m.wireframe = e.target.checked; m.needsUpdate = true; } catch (e) {} }); } }); } catch (e) {} }} />
-              <span>Wireframe</span>
-            </label>
-          </div>
+          {openTransform && (
+            /* NEW: panel-scoped scroll wrapper for transform controls */
+            <div
+              className="op-transform-scroll"
+              tabIndex={0}
+              aria-label="Transform controls scroll area"
+            >
+              <div className="op-transform-body">
+                <div className="op-transform-left">
+                  <div className="op-transform-row">
+                    <label className="op-transform-label">Pos</label>
+                    <Numeric value={position.x} onChange={handleInputChange('position','x')} onBlur={handleInputBlur('position','x')} />
+                    <Numeric value={position.y} onChange={handleInputChange('position','y')} onBlur={handleInputBlur('position','y')} />
+                    <Numeric value={position.z} onChange={handleInputChange('position','z')} onBlur={handleInputBlur('position','z')} />
+                    <button className="op-small-btn" title="Reset Position" style={{padding:'2px 6px', fontSize:10, minWidth:20}} onClick={() => {
+                        queueTransform('position','x',0); queueTransform('position','y',0); queueTransform('position','z',0);
+                        setPosition({x:0,y:0,z:0});
+                    }}>↺</button>
+                  </div>
+
+                  <div className="op-transform-row">
+                    <label className="op-transform-label">Rot</label>
+                    <Numeric value={rotation.x} onChange={handleInputChange('rotation','x')} onBlur={handleInputBlur('rotation','x')} />
+                    <Numeric value={rotation.y} onChange={handleInputChange('rotation','y')} onBlur={handleInputBlur('rotation','y')} />
+                    <Numeric value={rotation.z} onChange={handleInputChange('rotation','z')} onBlur={handleInputBlur('rotation','z')} />
+                    <button className="op-small-btn" title="Reset Rotation" style={{padding:'2px 6px', fontSize:10, minWidth:20}} onClick={() => {
+                        queueTransform('rotation','x',0); queueTransform('rotation','y',0); queueTransform('rotation','z',0);
+                        setRotation({x:0,y:0,z:0});
+                    }}>↺</button>
+                    <label className="op-inline-checkbox"><input type="checkbox" checked={useDegrees} onChange={(e) => setUseDegrees(e.target.checked)} />deg</label>
+                  </div>
+
+                  <div className="op-transform-row">
+                    <label className="op-transform-label">Scl</label>
+                    <Numeric value={scale.x} onChange={handleInputChange('scale','x')} onBlur={handleInputBlur('scale','x')} />
+                    <Numeric value={scale.y} onChange={handleInputChange('scale','y')} onBlur={handleInputBlur('scale','y')} />
+                    <Numeric value={scale.z} onChange={handleInputChange('scale','z')} onBlur={handleInputBlur('scale','z')} />
+                    <button className="op-small-btn" title="Reset Scale" style={{padding:'2px 6px', fontSize:10, minWidth:20}} onClick={() => {
+                        queueTransform('scale','x',1); queueTransform('scale','y',1); queueTransform('scale','z',1);
+                        setScale({x:1,y:1,z:1});
+                    }}>↺</button>
+                    <label className="op-inline-checkbox"><input type="checkbox" checked={uniformScale} onChange={(e) => setUniformScale(e.target.checked)} />uniform</label>
+                  </div>
+                </div>
+
+                <div className="op-transform-right">
+                  <label className="op-small-label">Space</label>
+                  <label className="op-inline-checkbox"><input type="checkbox" checked={localSpace} onChange={(e) => setLocalSpace(e.target.checked)} />Local</label>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
-        {openMaterial && (
+        {/* Material */}
+        <div className="op-panel" data-depth="3" aria-label="Material panel">
+          <div className="op-panel-header">
+            <button className="op-collapse" onClick={() => setOpenMaterial(v => !v)}>{openMaterial ? '▾' : '▸'}</button>
+            <strong>Material</strong>
+            <div className="op-panel-right">
+              <button className="op-small-btn" onClick={() => { snapshotMaterialState('copy-mat'); try { localStorage.setItem(MAT_CLIP_KEY, JSON.stringify({ hex, roughness, metalness, opacity, emissiveHex })); } catch (e) {} }}>Copy Mat</button>
+              <button className="op-small-btn" onClick={() => { try { const s = localStorage.getItem(MAT_CLIP_KEY); if (!s) return; const raw = JSON.parse(s); if (raw.hex) setHex(raw.hex); if (typeof raw.roughness === 'number') setRoughness(raw.roughness); if (typeof raw.metalness === 'number') setMetalness(raw.metalness); if (typeof raw.opacity === 'number') setOpacity(raw.opacity); if (raw.emissiveHex) setEmissiveHex(raw.emissiveHex); if (typeof onMaterialChange === 'function') onMaterialChange(raw); } catch (e) {} }}>Paste Mat</button>
+              <label className="op-inline-checkbox">
+                <input type="checkbox" checked={wireframe} onChange={(e) => { setWireframe(e.target.checked); scheduleMaterialApply({ wireframe: e.target.checked }); try { selected?.traverse(n => { if (n.isMesh && n.material) { const mats = Array.isArray(n.material) ? n.material : [n.material]; mats.forEach(m => { try { m.wireframe = e.target.checked; m.needsUpdate = true; } catch (e) {} }); } }); } catch (e) {} }} />
+                <span>Wireframe</span>
+              </label>
+            </div>
+          </div>
+
+          {openMaterial && (
+            <div className="op-material-body">
+              <div className="op-color-block">
+                <input className="op-color-swatch" type="color" value={hex} onChange={(e) => { setHex(e.target.value); scheduleMaterialApply({ hex: e.target.value }); }} />
+                <div className="op-color-controls">
+                  <input className="op-text" value={hex.toUpperCase()} onChange={(e) => setHex(e.target.value)} onBlur={() => { const h = safeHex(hex); setHex(h); scheduleMaterialApply({ hex: h }); }} />
+                  <div className="op-rgb-row">
+                    <label>R</label><Numeric value={rgb.r} onChange={(e) => onRgbChange({ r: Number(e.target.value || 0) })} step={1} min={0} max={255} />
+                    <label>G</label><Numeric value={rgb.g} onChange={(e) => onRgbChange({ g: Number(e.target.value || 0) })} step={1} min={0} max={255} />
+                    <label>B</label><Numeric value={rgb.b} onChange={(e) => onRgbChange({ b: Number(e.target.value || 0) })} step={1} min={0} max={255} />
+                  </div>
+                  <div className="op-hsl-row">
+                    <label>H</label><Numeric value={hsl.h} onChange={(e) => onHslChange({ h: Number(e.target.value || 0) })} step={1} min={0} max={360} />
+                    <label>S</label><Numeric value={hsl.s} onChange={(e) => onHslChange({ s: Number(e.target.value || 0) })} step={1} min={0} max={100} />
+                    <label>L</label><Numeric value={hsl.l} onChange={(e) => onHslChange({ l: Number(e.target.value || 0) })} step={1} min={0} max={100} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="op-slider-block">
+                <label>Roughness {roughness.toFixed(2)}</label>
+                <input className="op-range prop-slider" type="range" min="0" max="1" step="0.01" value={roughness} onChange={(e) => { const r = Number(e.target.value); setRoughness(r); scheduleMaterialApply({ roughness: r, invertRoughness }); }} />
+                <label className="op-inline-checkbox"><input type="checkbox" checked={invertRoughness} onChange={(e) => { setInvertRoughness(e.target.checked); scheduleMaterialApply({ invertRoughness: e.target.checked, roughness }); }} /> Invert Roughness</label>
+              </div>
+
+              <div className="op-slider-block">
+                <label>Metalness {metalness.toFixed(2)}</label>
+                <input className="op-range prop-slider" type="range" min="0" max="1" step="0.01" value={metalness} onChange={(e) => { const m = Number(e.target.value); setMetalness(m); scheduleMaterialApply({ metalness: m, invertMetalness }); }} />
+                <label className="op-inline-checkbox"><input type="checkbox" checked={invertMetalness} onChange={(e) => { setInvertMetalness(e.target.checked); scheduleMaterialApply({ invertMetalness: e.target.checked, metalness }); }} /> Invert Metalness</label>
+              </div>
+
+              <div className="op-slider-block">
+                <label>Opacity {opacity.toFixed(2)}</label>
+                <input className="op-range prop-slider" type="range" min="0" max="1" step="0.01" value={opacity} onChange={(e) => { const o = Number(e.target.value); setOpacity(o); scheduleMaterialApply({ opacity: o }); }} />
+              </div>
+
+              <div className="op-emissive-block">
+                <label>Emissive</label>
+                <input className="op-color-swatch small" type="color" value={emissiveHex} onChange={(e) => { setEmissiveHex(e.target.value); scheduleMaterialApply({ emissiveHex: e.target.value, emissiveIntensity }); }} />
+                <label>Intensity {emissiveIntensity.toFixed(2)}</label>
+                <input className="op-range prop-slider" type="range" min="0" max="5" step="0.01" value={emissiveIntensity} onChange={(e) => { const v = Number(e.target.value); setEmissiveIntensity(v); scheduleMaterialApply({ emissiveIntensity: v, emissiveHex }); }} />
+              </div>
+
+              <div className="op-slider-block">
+                <label>Normal Strength {normalScale.toFixed(2)}</label>
+                <input className="op-range prop-slider" type="range" min="0" max="4" step="0.01" value={normalScale} onChange={(e) => { const v = Number(e.target.value); setNormalScale(v); scheduleMaterialApply({ normalScale: v }); }} />
+                <label>AO Intensity {aoIntensity.toFixed(2)}</label>
+                <input className="op-range prop-slider" type="range" min="0" max="2" step="0.01" value={aoIntensity} onChange={(e) => { const v = Number(e.target.value); setAoIntensity(v); scheduleMaterialApply({ aoIntensity: v }); }} />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Lighting */}
+        <div className="op-panel" data-depth="1" aria-label="Lighting panel">
+          <div className="op-panel-header">
+            <strong>Lighting</strong>
+            <div className="op-panel-right note">Live update (if scene passed <code>onLightChange</code>)</div>
+          </div>
+
           <div className="op-material-body">
-            <div className="op-color-block">
-              <input className="op-color-swatch" type="color" value={hex} onChange={(e) => { setHex(e.target.value); scheduleMaterialApply({ hex: e.target.value }); }} />
-              <div className="op-color-controls">
-                <input className="op-text" value={hex.toUpperCase()} onChange={(e) => setHex(e.target.value)} onBlur={() => { const h = safeHex(hex); setHex(h); scheduleMaterialApply({ hex: h }); }} />
-                <div className="op-rgb-row">
-                  <label>R</label><Numeric value={rgb.r} onChange={(e) => onRgbChange({ r: Number(e.target.value || 0) })} step={1} min={0} max={255} />
-                  <label>G</label><Numeric value={rgb.g} onChange={(e) => onRgbChange({ g: Number(e.target.value || 0) })} step={1} min={0} max={255} />
-                  <label>B</label><Numeric value={rgb.b} onChange={(e) => onRgbChange({ b: Number(e.target.value || 0) })} step={1} min={0} max={255} />
-                </div>
-                <div className="op-hsl-row">
-                  <label>H</label><Numeric value={hsl.h} onChange={(e) => onHslChange({ h: Number(e.target.value || 0) })} step={1} min={0} max={360} />
-                  <label>S</label><Numeric value={hsl.s} onChange={(e) => onHslChange({ s: Number(e.target.value || 0) })} step={1} min={0} max={100} />
-                  <label>L</label><Numeric value={hsl.l} onChange={(e) => onHslChange({ l: Number(e.target.value || 0) })} step={1} min={0} max={100} />
-                </div>
-              </div>
+            <div className="op-texture-row">
+              <label>Type</label>
+              <select className="op-select" value={lightType} onChange={(e) => { const t = e.target.value; setLightType(t); }}>
+                <option value="directional">Directional</option>
+                <option value="point">Point</option>
+                <option value="ambient">Ambient</option>
+                <option value="spot">Spot</option>
+              </select>
             </div>
 
-            <div className="op-slider-block">
-              <label>Roughness {roughness.toFixed(2)}</label>
-              <input className="op-range" type="range" min="0" max="1" step="0.01" value={roughness} onChange={(e) => { const r = Number(e.target.value); setRoughness(r); scheduleMaterialApply({ roughness: r, invertRoughness }); }} />
-              <label className="op-inline-checkbox"><input type="checkbox" checked={invertRoughness} onChange={(e) => { setInvertRoughness(e.target.checked); scheduleMaterialApply({ invertRoughness: e.target.checked, roughness }); }} /> Invert Roughness</label>
-            </div>
-
-            <div className="op-slider-block">
-              <label>Metalness {metalness.toFixed(2)}</label>
-              <input className="op-range" type="range" min="0" max="1" step="0.01" value={metalness} onChange={(e) => { const m = Number(e.target.value); setMetalness(m); scheduleMaterialApply({ metalness: m, invertMetalness }); }} />
-              <label className="op-inline-checkbox"><input type="checkbox" checked={invertMetalness} onChange={(e) => { setInvertMetalness(e.target.checked); scheduleMaterialApply({ invertMetalness: e.target.checked, metalness }); }} /> Invert Metalness</label>
-            </div>
-
-            <div className="op-slider-block">
-              <label>Opacity {opacity.toFixed(2)}</label>
-              <input className="op-range" type="range" min="0" max="1" step="0.01" value={opacity} onChange={(e) => { const o = Number(e.target.value); setOpacity(o); scheduleMaterialApply({ opacity: o }); }} />
-            </div>
-
-            <div className="op-emissive-block">
-              <label>Emissive</label>
-              <input className="op-color-swatch small" type="color" value={emissiveHex} onChange={(e) => { setEmissiveHex(e.target.value); scheduleMaterialApply({ emissiveHex: e.target.value, emissiveIntensity }); }} />
-              <label>Intensity {emissiveIntensity.toFixed(2)}</label>
-              <input className="op-range" type="range" min="0" max="5" step="0.01" value={emissiveIntensity} onChange={(e) => { const v = Number(e.target.value); setEmissiveIntensity(v); scheduleMaterialApply({ emissiveIntensity: v, emissiveHex }); }} />
-            </div>
-
-            <div className="op-slider-block">
-              <label>Normal Strength {normalScale.toFixed(2)}</label>
-              <input className="op-range" type="range" min="0" max="4" step="0.01" value={normalScale} onChange={(e) => { const v = Number(e.target.value); setNormalScale(v); scheduleMaterialApply({ normalScale: v }); }} />
-              <label>AO Intensity {aoIntensity.toFixed(2)}</label>
-              <input className="op-range" type="range" min="0" max="2" step="0.01" value={aoIntensity} onChange={(e) => { const v = Number(e.target.value); setAoIntensity(v); scheduleMaterialApply({ aoIntensity: v }); }} />
+            <div className="op-texture-row">
+              <label>Color</label>
+              <input className="op-color-swatch small" type="color" value={lightColor} onChange={(e) => { setLightColor(e.target.value); }} />
+              <label>Intensity {lightIntensity.toFixed(2)}</label>
+              <input className="op-range prop-slider" type="range" min="0" max="5" step="0.01" value={lightIntensity} onChange={(e) => { const v = Number(e.target.value); setLightIntensity(v); }} />
             </div>
           </div>
-        )}
-      </div>
-
-      {/* Lighting (NEW) */}
-      <div className="op-panel">
-        <div className="op-panel-header">
-          <strong>Lighting</strong>
-          <div className="op-panel-right note">Live update (if scene passed <code>onLightChange</code>)</div>
         </div>
 
-        <div className="op-material-body">
-          <div className="op-texture-row">
-            <label>Type</label>
-            <select className="op-select" value={lightType} onChange={(e) => { const t = e.target.value; setLightType(t); scheduleLightApply({ type: t, color: lightColor, intensity: lightIntensity }); }}>
-              <option value="directional">Directional</option>
-              <option value="point">Point</option>
-              <option value="ambient">Ambient</option>
-              <option value="spot">Spot</option>
-            </select>
+        {/* Presets */}
+        <div className="op-presets-row">
+          <input id="preset-name" className="op-text" placeholder="Preset name" />
+          <button className="op-small-btn" onClick={() => { const n = document.getElementById('preset-name')?.value || `preset-${Date.now()}`; savePreset(n); }}>Save Preset</button>
+          <select className="op-select" onChange={(e) => { if (!e.target.value) return; applyPreset(e.target.value); e.target.value = ""; }} defaultValue="">
+            <option value="">Load Preset</option>
+            {presetList.map(p => <option key={p.key} value={p.key}>{p.name}</option>)}
+          </select>
+        </div>
+
+        {/* Textures */}
+        <div className={`op-panel ${dragActive ? "op-drag-active" : ""}`} data-depth="2" aria-label="Textures panel">
+          <div className="op-panel-header">
+            <button className="op-collapse" onClick={() => setOpenTextures(v => !v)}>{openTextures ? '▾' : '▸'}</button>
+            <strong>Textures</strong>
+            <div className="op-panel-right note">Tip: drag & drop images or .glb onto this panel</div>
           </div>
 
-          <div className="op-texture-row">
-            <label>Color</label>
-            <input className="op-color-swatch small" type="color" value={lightColor} onChange={(e) => { setLightColor(e.target.value); scheduleLightApply({ type: lightType, color: e.target.value, intensity: lightIntensity }); }} />
-            <label>Intensity {lightIntensity.toFixed(2)}</label>
-            <input className="op-range" type="range" min="0" max="5" step="0.01" value={lightIntensity} onChange={(e) => { const v = Number(e.target.value); setLightIntensity(v); scheduleLightApply({ type: lightType, color: lightColor, intensity: v }); }} />
-          </div>
-        </div>
-      </div>
+          {openTextures && (
+            <div className="op-textures-body">
+              {MAP_SLOTS.map(slot => {
+                const s = mapsRef.current?.[slot.key] || null;
+                return (
+                  <div key={slot.key} className="op-texture-slot">
+                    <div className="op-texture-left">
+                      <div className="op-texture-label" style={{ color: ACCENT }}>{slot.label}</div>
+                      <div className="op-texture-actions">
+                        <input id={fileIdsRef.current[slot.key]} type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) applyMapFile(f, slot.key); e.target.value = ''; }} />
+                        <button className="op-small-btn" onClick={() => document.getElementById(fileIdsRef.current[slot.key])?.click()}>Upload</button>
+                        {s && s.url ? (
+                          <img src={s.url} alt={slot.key} className="op-thumb" onClick={() => openPreview(s.url)} />
+                        ) : (
+                          <div className="op-thumb-empty">—</div>
+                        )}
+                      </div>
+                    </div>
 
-      {/* Presets panel */}
-      <div className="op-presets-row">
-        <input id="preset-name" className="op-text" placeholder="Preset name" />
-        <button className="op-small-btn" onClick={() => { const n = document.getElementById('preset-name')?.value || `preset-${Date.now()}`; savePreset(n); }}>Save Preset</button>
-        <select className="op-select" onChange={(e) => { if (!e.target.value) return; applyPreset(e.target.value); e.target.value = ""; }} defaultValue="">
-          <option value="">Load Preset</option>
-          {presetList.map(p => <option key={p.key} value={p.key}>{p.name}</option>)}
-        </select>
-      </div>
+                    <div className="op-texture-right">
+                      <div className="op-texture-row">
+                        <label>Tile X</label><Numeric value={(s?.settings?.repeatX ?? 1)} onChange={(e) => updateMapSettings(slot.key, { repeatX: Number(e.target.value || 1) })} step={0.1} min={0.01} />
+                        <label>Tile Y</label><Numeric value={(s?.settings?.repeatY ?? 1)} onChange={(e) => updateMapSettings(slot.key, { repeatY: Number(e.target.value || 1) })} step={0.1} min={0.01} />
+                      </div>
 
-      {/* Textures */}
-      <div className={`op-panel ${dragActive ? "op-drag-active" : ""}`}>
-        <div className="op-panel-header">
-          <button className="op-collapse" onClick={() => setOpenTextures(v => !v)}>{openTextures ? '▾' : '▸'}</button>
-          <strong>Textures</strong>
-          <div className="op-panel-right note">Tip: drag & drop images or .glb onto this panel</div>
-        </div>
+                      <div className="op-texture-row">
+                        <label>Offset X</label><Numeric value={(s?.settings?.offsetX ?? 0)} onChange={(e) => updateMapSettings(slot.key, { offsetX: Number(e.target.value || 0) })} step={0.01} />
+                        <label>Offset Y</label><Numeric value={(s?.settings?.offsetY ?? 0)} onChange={(e) => updateMapSettings(slot.key, { offsetY: Number(e.target.value || 0) })} step={0.01} />
+                      </div>
 
-        {openTextures && (
-          <div className="op-textures-body">
-            {MAP_SLOTS.map(slot => {
-              const s = mapsRef.current?.[slot.key] || null;
-              return (
-                <div key={slot.key} className="op-texture-slot">
-                  <div className="op-texture-left">
-                    <div className="op-texture-label" style={{ color: ACCENT }}>{slot.label}</div>
-                    <div className="op-texture-actions">
-                      <input id={fileIdsRef.current[slot.key]} type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) applyMapFile(f, slot.key); e.target.value = ''; }} />
-                      <button className="op-small-btn" onClick={() => document.getElementById(fileIdsRef.current[slot.key])?.click()}>Upload</button>
-                      {s && s.url ? (
-                        <img src={s.url} alt={slot.key} className="op-thumb" onClick={() => openPreview(s.url)} />
-                      ) : (
-                        <div className="op-thumb-empty">—</div>
-                      )}
+                      <div className="op-texture-row">
+                        <label>Rot</label><Numeric value={(s?.settings?.rotation ?? 0)} onChange={(e) => updateMapSettings(slot.key, { rotation: Number(e.target.value || 0) })} step={1} />
+                        <label>Wrap</label>
+                        <select className="op-select" value={(s?.settings?.wrap || 'repeat')} onChange={(e) => updateMapSettings(slot.key, { wrap: e.target.value })}>
+                          <option value="repeat">Repeat</option>
+                          <option value="clamp">ClampToEdge</option>
+                          <option value="mirror">MirroredRepeat</option>
+                        </select>
+                        <label>Filter</label>
+                        <select className="op-select" value={(s?.settings?.filter || 'linear')} onChange={(e) => updateMapSettings(slot.key, { filter: e.target.value })}>
+                          <option value="linear">Linear</option>
+                          <option value="nearest">Nearest</option>
+                          <option value="mipmap">Mipmap</option>
+                        </select>
+
+                        <label className="op-inline-checkbox">Flip H <input type="checkbox" checked={!!(s?.settings?.flipH)} onChange={(e) => updateMapSettings(slot.key, { flipH: e.target.checked })} /></label>
+                        <label className="op-inline-checkbox">Flip V <input type="checkbox" checked={!!(s?.settings?.flipV)} onChange={(e) => updateMapSettings(slot.key, { flipV: e.target.checked })} /></label>
+
+                        <button className="op-small-btn" onClick={() => removeMap(slot.key)}>Remove</button>
+                      </div>
                     </div>
                   </div>
+                );
+              })}
 
-                  <div className="op-texture-right">
-                    <div className="op-texture-row">
-                      <label>Tile X</label><Numeric value={(s?.settings?.repeatX ?? 1)} onChange={(e) => updateMapSettings(slot.key, { repeatX: Number(e.target.value || 1) })} step={0.1} min={0.01} />
-                      <label>Tile Y</label><Numeric value={(s?.settings?.repeatY ?? 1)} onChange={(e) => updateMapSettings(slot.key, { repeatY: Number(e.target.value || 1) })} step={0.1} min={0.01} />
-                    </div>
-
-                    <div className="op-texture-row">
-                      <label>Offset X</label><Numeric value={(s?.settings?.offsetX ?? 0)} onChange={(e) => updateMapSettings(slot.key, { offsetX: Number(e.target.value || 0) })} step={0.01} />
-                      <label>Offset Y</label><Numeric value={(s?.settings?.offsetY ?? 0)} onChange={(e) => updateMapSettings(slot.key, { offsetY: Number(e.target.value || 0) })} step={0.01} />
-                    </div>
-
-                    <div className="op-texture-row">
-                      <label>Rot</label><Numeric value={(s?.settings?.rotation ?? 0)} onChange={(e) => updateMapSettings(slot.key, { rotation: Number(e.target.value || 0) })} step={1} />
-                      <label>Wrap</label>
-                      <select className="op-select" value={(s?.settings?.wrap || 'repeat')} onChange={(e) => updateMapSettings(slot.key, { wrap: e.target.value })}>
-                        <option value="repeat">Repeat</option>
-                        <option value="clamp">ClampToEdge</option>
-                        <option value="mirror">MirroredRepeat</option>
-                      </select>
-                      <label>Filter</label>
-                      <select className="op-select" value={(s?.settings?.filter || 'linear')} onChange={(e) => updateMapSettings(slot.key, { filter: e.target.value })}>
-                        <option value="linear">Linear</option>
-                        <option value="nearest">Nearest</option>
-                        <option value="mipmap">Mipmap</option>
-                      </select>
-
-                      <label className="op-inline-checkbox">Flip H <input type="checkbox" checked={!!(s?.settings?.flipH)} onChange={(e) => updateMapSettings(slot.key, { flipH: e.target.checked })} /></label>
-                      <label className="op-inline-checkbox">Flip V <input type="checkbox" checked={!!(s?.settings?.flipV)} onChange={(e) => updateMapSettings(slot.key, { flipV: e.target.checked })} /></label>
-
-                      <button className="op-small-btn" onClick={() => removeMap(slot.key)}>Remove</button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-
-            <div className="op-hint">Tip: Drag textures or a .glb file onto this panel. Filenames with "normal", "rough", "metal", "ao", or "emiss" will auto-route.</div>
-          </div>
-        )}
-      </div>
+              <div className="op-hint">Tip: Drag textures or a .glb file onto this panel. Filenames with "normal", "rough", "metal", "ao", or "emiss" will auto-route.</div>
+            </div>
+          )}
+        </div>
+      </div> {/* end op-sections */}
 
       {/* Preview modal */}
       {previewUrl && (
@@ -1301,7 +1478,5 @@ export default function ObjectPropertiesTexture({
         </div>
       )}
     </div>
-  ) : (
-    <div className="op-empty">Select an object</div>
   );
 }

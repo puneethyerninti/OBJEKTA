@@ -5,7 +5,32 @@ import { SceneGraphStore } from "../store/SceneGraphStore";
 import EventBus from "../utils/EventBus";
 
 export const ImportEngine = {
-  loader: new GLTFLoader(),
+  // Use a LoadingManager that gracefully handles blob: texture URLs
+  loader: (() => {
+    const manager = new THREE.LoadingManager();
+    class NullTextureLoader extends THREE.TextureLoader {
+      constructor(mgr) { super(mgr); }
+      load(url, onLoad, onProgress, onError) {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = 1; canvas.height = 1;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = 'rgba(0,0,0,0)'; ctx.fillRect(0,0,1,1);
+          const tex = new THREE.Texture(canvas);
+          tex.encoding = THREE.sRGBEncoding;
+          tex.needsUpdate = true;
+          if (onLoad) setTimeout(() => onLoad(tex), 0);
+          return tex;
+        } catch (e) {
+          if (onError) setTimeout(() => onError(e), 0);
+          return null;
+        }
+      }
+    }
+    manager.addHandler(/blob:/, new NullTextureLoader(manager));
+    manager.addHandler(/\.(jpg|jpeg|png|gif|bmp|tga|dds|ktx|ktx2|webp)$/i, new NullTextureLoader(manager));
+    return new GLTFLoader(manager);
+  })(),
 
   /**
    * Import a .glb/.gltf file from a File input

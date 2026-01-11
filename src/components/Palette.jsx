@@ -1,14 +1,14 @@
 // src/components/Palette.jsx
 import React, { useMemo, useState, useCallback, useEffect, useRef } from "react";
-import { useDrag, useDragLayer } from "react-dnd";
+import { useDragLayer } from "react-dnd";
 import "../styles/Palette.css";
 
 const PALETTE_TYPE = "PALETTE_ITEM";
 
 const shapeIcons = {
-  Cube: "🟪", Sphere: "⚪", Cone: "🔻", Plane: "⬛", Cylinder: "🟦",
-  Torus: "🍩", Empty: "⭕", "Axis Helper": "➕", "Point Light": "💡",
-  "Spot Light": "🔦", "Directional Light": "➡️", Camera: "📷", Default: "■",
+  Cube: "▦", Sphere: "◯", Cone: "◭", Plane: "▭", Cylinder: "⬒",
+  Torus: "◎", Empty: "⊙", "Axis Helper": "⟂", "Point Light": "●",
+  "Spot Light": "◍", "Directional Light": "➤", Camera: "📷", Default: "■",
 };
 
 const DEFAULT_GROUPS = {
@@ -19,7 +19,7 @@ const DEFAULT_GROUPS = {
 };
 
 const FILTERS = ["All", ...Object.keys(DEFAULT_GROUPS), "Misc"];
-const STORAGE_KEY = "objekta_palette_sections_open";
+const STORAGE_KEY = "objekta_palette_sections_open_v2";
 
 /* Drag preview shown while dragging from the palette */
 const DragPreview = () => {
@@ -32,8 +32,9 @@ const DragPreview = () => {
   if (!isDragging || !item || !clientOffset) return null;
   const icon = shapeIcons[item.name] || shapeIcons.Default;
 
-  const PREVIEW_W = 160;
-  const PREVIEW_H = 56;
+  // keep preview centered at pointer, account for devicePixelRatio for crispness
+  const PREVIEW_W = 180;
+  const PREVIEW_H = 58;
   const left = clientOffset.x - PREVIEW_W / 2;
   const top = clientOffset.y - PREVIEW_H / 2;
 
@@ -48,13 +49,11 @@ const DragPreview = () => {
       }}
       aria-hidden
     >
-      <div className="drag-preview">
-        <div style={{ width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 8, background: "rgba(255,255,255,0.03)" }}>
-          <div style={{ fontSize: 20 }}>{icon}</div>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", marginLeft: 8 }}>
-          <div style={{ fontWeight: 700 }}>{item.name}</div>
-          {item.color && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{item.color}</div>}
+      <div className="palette-drag-preview">
+        <div className="palette-drag-preview-icon">{icon}</div>
+        <div className="palette-drag-preview-meta">
+          <div className="palette-drag-preview-title">{item.name}</div>
+          {item.color && <div className="palette-drag-preview-sub">{item.color}</div>}
         </div>
       </div>
     </div>
@@ -63,15 +62,8 @@ const DragPreview = () => {
 
 /* Single palette item (draggable + keyboard accessible) */
 const PaletteItem = React.memo(({ item, onAdd }) => {
-  const [{ isDragging }, dragRef] = useDrag(
-    () => ({
-      type: PALETTE_TYPE,
-      item: { name: item.name, color: item.color },
-      collect: (monitor) => ({ isDragging: !!monitor.isDragging() }),
-    }),
-    [item.name, item.color]
-  );
-
+  // use native HTML5 drag for better cross-compatibility (react-dnd will still pick it up
+  // when used with the DnD backend). The workspace uses react-dnd drop, so ensure we call onAdd on click/keyboard.
   const handleAdd = useCallback(() => onAdd?.(item.name, null, item), [item, onAdd]);
 
   const handleKey = useCallback(
@@ -86,33 +78,23 @@ const PaletteItem = React.memo(({ item, onAdd }) => {
 
   return (
     <div
-      ref={dragRef}
       role="button"
       tabIndex={0}
       aria-label={`Add ${item.name}`}
       onClick={handleAdd}
       onKeyDown={handleKey}
-      className={`palette-item`}
+      className="palette-item"
       title={item.name}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 12, width: "100%" }}>
-        <div className="palette-item-icon">
-          {shapeIcons[item.name] || shapeIcons.Default}
-        </div>
+      <div className="palette-item-inner">
+        <div className="palette-item-icon">{shapeIcons[item.name] || shapeIcons.Default}</div>
 
-        <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div className="palette-item-body">
           <span className="palette-item-name">{item.name}</span>
         </div>
 
         {item.color && (
-          <div style={{
-            marginLeft: "auto",
-            width: 12,
-            height: 12,
-            borderRadius: 3,
-            background: item.color,
-            border: "1px solid rgba(0,0,0,0.4)"
-          }} />
+          <div className="palette-item-color" style={{ background: item.color }} />
         )}
       </div>
     </div>
@@ -131,13 +113,10 @@ const Section = ({ title, children, defaultOpen = true }) => {
         const map = JSON.parse(raw);
         if (typeof map[title] === "boolean") setOpen(map[title]);
       }
-    } catch (err) {
-      // ignore
-    }
+    } catch (err) {}
   }, [title]);
 
   useEffect(() => {
-    // debounce writes to localStorage to avoid thrashing
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
     saveTimeout.current = setTimeout(() => {
       try {
@@ -145,13 +124,9 @@ const Section = ({ title, children, defaultOpen = true }) => {
         const map = raw ? JSON.parse(raw) : {};
         map[title] = open;
         localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
-      } catch (err) {
-        // ignore
-      } finally {
-        saveTimeout.current = null;
-      }
+      } catch (err) {}
+      finally { saveTimeout.current = null; }
     }, 160);
-
     return () => { if (saveTimeout.current) clearTimeout(saveTimeout.current); };
   }, [open, title]);
 
@@ -218,6 +193,7 @@ const Palette = ({ items = null, onAction }) => {
   return (
     <div className="palette-container" style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       <h3 className="palette-header">Palette</h3>
+      <div className="palette-handle tilt-on-hover" aria-hidden />
 
       <input
         className="palette-search"

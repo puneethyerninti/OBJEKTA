@@ -1,10 +1,17 @@
-/* src/styles/ObjectProperties.css */
+/* ObjectProperties.css
+   Cleaned & made safe to live inside Studio.properties-panel
+   - Single scroller: .object-properties (outer container)
+   - Panel-local transform scroller: .op-transform-scroll
+   - Keeps material/texture/emissive/upload UI intact
+*/
+/* design tokens — cyberpunk 3d — modified 2025-11-19 */
 
-/* theme vars */
+/* container */
 .op-container {
   --accent: #7f5af0;
   --border: 1px solid rgba(127,90,240,0.24);
   --field-bg: rgba(12,12,18,0.45);
+
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -15,6 +22,18 @@
   box-sizing: border-box;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  /* allow shrinking inside a parent flex container */
+  min-height: 0;
+  max-height: 100%;
+}
+
+/* Outer scroller wrapper — the single vertical scroll area */
+.object-properties {
+  max-height: 100%;
+  overflow-y: auto;
+  padding-right: 8px; /* scrollbar gutter */
+  box-sizing: border-box;
 }
 
 /* drag active */
@@ -63,22 +82,85 @@
   padding: 8px;
   background: rgba(255,255,255,0.02);
   transition: background .12s ease, transform .06s ease;
+  overflow: visible;
+  min-height: 0;
 }
 .op-panel-header { display:flex; align-items:center; gap:8px; }
 .op-panel-right { margin-left:auto; display:flex; gap:8px; align-items:center; }
 .op-panel-right .note { color: rgba(255,255,255,0.6); font-size: 12px; }
 
-/* transform */
-.op-transform-body { display:flex; gap:8px; margin-top:8px; align-items:flex-start; }
-.op-transform-left { display:flex; flex-direction:column; gap:8px; }
-.op-transform-row { display:flex; gap:6px; align-items:center; }
-.op-transform-label { width:48px; }
-.op-transform-right { margin-left:auto; display:flex; flex-direction:column; gap:8px; align-items:flex-end; }
-.op-small-label { font-size: 12px; }
+/* --------- TRANSFORM LAYOUT FIXES (key area) --------- */
+/* Goal: stable layout with no inputs jumping, clean shrink behavior, correct stacking */
+
+/* container for transform controls */
+.op-transform-body {
+  display:flex;
+  gap:12px;
+  margin-top:8px;
+  /* Use stretch so the left/right columns align top and inputs keep consistent height */
+  align-items: stretch;
+  /* allow wrap so on narrow widths columns stack, but keep predictable widths */
+  flex-wrap: wrap;
+  align-content:flex-start;
+  /* ensure children don't overflow parent */
+  min-width: 0;
+}
+
+/* left column (main group) */
+.op-transform-left {
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  /* allow left column to grow and shrink */
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* each row of controls inside left/right columns */
+.op-transform-row {
+  display:flex;
+  gap:8px;
+  align-items:center;
+  min-width: 0;
+  /* don't force full-width; controls will wrap only if needed */
+  flex-wrap: wrap;
+  /* ensure label + controls line up consistently */
+  justify-content: flex-start;
+}
+
+/* label (fixed width) */
+.op-transform-label {
+  width: 56px;               /* slightly wider for clearer label text */
+  flex: 0 0 56px;
+  text-align: left;
+  margin-right: 4px;
+  box-sizing: border-box;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* right column (optional controls like reset / presets) */
+/* Removed margin-left:auto which caused unpredictable pushing.
+   Make it non-growing so it stays compact to the right of left column. */
+.op-transform-right {
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  align-items:flex-start; /* align start for consistent left edge of controls */
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+/* Ensure inputs and children inside rows can shrink when parent width is small */
+.op-transform-row > * { min-width: 0; }
 
 /* numeric input */
 .op-numeric {
-  width: 88px;
+  /* make width flexible so it can shrink when necessary */
+  width: auto;
+  flex: 0 1 88px; /* prefer 88px but allow shrinking */
+  max-width: 100%;
   padding: 6px 8px;
   border-radius: 8px;
   border: var(--border);
@@ -87,48 +169,48 @@
   text-align:center;
   outline: none;
   transition: box-shadow .08s ease, transform .05s ease;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .op-numeric:focus { box-shadow: 0 6px 18px rgba(0,0,0,0.45) inset, 0 6px 16px rgba(127,90,240,0.08); transform: translateY(-1px); }
 
-/* remove number input spinners for better UX */
+/* remove browser number spin UI */
 .op-numeric {
-  -webkit-appearance: none; /* Chrome, Safari, Edge, Opera */
-  -moz-appearance: textfield; /* Firefox */
-  appearance: none; /* standard modern browsers */
-  margin: 0; /* remove default margins in some browsers */
-}
-
-/* For WebKit browsers */
-.op-numeric::-webkit-outer-spin-button,
-.op-numeric::-webkit-inner-spin-button {
   -webkit-appearance: none;
+  -moz-appearance: textfield;
+  appearance: none;
   margin: 0;
 }
-
+.op-numeric::-webkit-outer-spin-button,
+.op-numeric::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
 /* inline checkbox */
 .op-inline-checkbox { display:flex; gap:6px; align-items:center; margin-left:8px; font-size:12px; }
 
 /* material */
-.op-material-body { display:flex; gap:8px; margin-top:8px; align-items:center; flex-wrap:wrap; }
+.op-material-body { display:flex; gap:8px; margin-top:8px; align-items:center; flex-wrap:wrap; overflow: visible; max-height: none; }
 .op-color-block { display:flex; gap:8px; align-items:center; }
 .op-color-swatch { width:44px; height:44px; border-radius:8px; border: var(--border); cursor:pointer; }
 .op-color-swatch.small { width:32px; height:32px; border-radius:6px; }
 .op-color-controls { display:flex; flex-direction:column; gap:6px; }
-.op-text { padding:6px 8px; border-radius:8px; border:var(--border); background:var(--field-bg); color:#fff; width:120px; outline:none; }
+.op-text { padding:6px 8px; border-radius:8px; border:var(--border); background:var(--field-bg); color:#fff; width:120px; outline:none; box-sizing:border-box; }
 .op-text:focus { box-shadow: 0 6px 18px rgba(127,90,240,0.08); transform: translateY(-1px); }
-.op-rgb-row, .op-hsl-row { display:flex; gap:6px; align-items:center; }
+.op-rgb-row, .op-hsl-row { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
 
 /* sliders/inputs */
 .op-slider-block { display:flex; flex-direction:column; gap:6px; }
-.op-range { width:160px; }
+.op-range { width:160px; max-width: 100%; }
 
 /* presets */
-.op-presets-row { display:flex; gap:8px; align-items:center; }
+.op-presets-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 .op-select { padding:6px 8px; border-radius:8px; border:var(--border); background:var(--field-bg); color:#fff; }
 
 /* textures */
-.op-textures-body { display:flex; flex-direction:column; gap:8px; margin-top:8px; }
+.op-textures-body {
+  display:flex; flex-direction:column; gap:8px; margin-top:8px;
+  max-height: none;
+  overflow: visible;
+}
 .op-texture-slot { display:flex; gap:8px; align-items:center; background: rgba(255,255,255,0.02); padding:8px; border-radius:8px; }
 .op-texture-left { display:flex; gap:12px; align-items:center; min-width:220px; }
 .op-texture-label { font-weight:700; width:110px;}
@@ -136,8 +218,8 @@
 .op-thumb { width:48px; height:48px; object-fit:cover; border-radius:6px; cursor:pointer; border: var(--border); }
 .op-thumb-empty { width:48px; height:48px; border-radius:6px; background: rgba(255,255,255,0.03); display:flex; align-items:center; justify-content:center; color: rgba(255,255,255,0.4); }
 
-.op-texture-right { display:flex; flex-direction:column; gap:6px; flex:1; }
-.op-texture-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.op-texture-right { display:flex; flex-direction:column; gap:6px; flex:1; min-width:0; }
+.op-texture-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; min-width:0; }
 
 /* hint / note */
 .op-hint { font-size:12px; color: rgba(255,255,255,0.6); }
@@ -152,7 +234,6 @@
   background: rgba(0,0,0,0.6);
   z-index: 9999;
   -webkit-tap-highlight-color: transparent;
-  /* ensure clicks on overlay are captured so the toolbar/canvas underneath doesn't react */
   pointer-events: auto;
 }
 .op-preview-box { background:#111; padding:12px; border-radius:8px; max-width: 90vw; max-height: 90vh; box-shadow: 0 20px 60px rgba(0,0,0,0.6); }
@@ -162,18 +243,217 @@
 /* empty */
 .op-empty { padding:12px; color: rgba(200,200,220,0.85); }
 
-/* small responsive tweaks */
+/* responsive tweaks */
 @media (max-width: 700px) {
   .op-material-body { flex-direction:column; }
-  .op-transform-body { flex-direction:column; }
+  .op-transform-body { flex-direction:column; gap:10px; }
+  .op-transform-right { align-items:flex-start; } /* keep right column left-aligned on narrow screens */
   .op-texture-row { flex-direction:column; align-items:flex-start; }
-  .op-numeric { width: 100%; }
+  .op-numeric { width: 100%; flex: 1 1 auto; }
   .op-range { width: 100%; }
 }
 
-/* accessibility: focus-visible outlines for keyboard users */
+/* focus-visible outlines */
 :focus:not(.no-focus-outline) { outline: none; }
 :focus-visible { outline: 3px solid rgba(127,90,240,0.28); outline-offset: 2px; border-radius: 6px; }
 
-/* subtle transitions for a polished feel */
+/* subtle transitions */
 .op-panel, .op-header, .op-button, .op-small-btn, .op-numeric, .op-text { transition: all 90ms ease; }
+
+/* horizontal tablist (safe modern version) */
+[role="tablist"] {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  scroll-behavior: smooth;
+}
+[role="tablist"] > button { flex: 0 0 auto; white-space: nowrap; }
+[role="tablist"]::-webkit-scrollbar { height: 8px; }
+[role="tablist"]::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.08); border-radius: 6px; }
+
+/* ---------- Transform: scrollable content (panel-local scrollbar) ---------- */
+/* Wrap .op-transform-body in .op-transform-scroll (see JSX) */
+.op-transform-scroll {
+  max-height: 240px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 8px;
+  box-sizing: border-box;
+  overscroll-behavior: contain;
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.005));
+  position: relative;
+  touch-action: pan-y;
+  scroll-behavior: smooth; /* smooth scrolling */
+  /* ensure inner .op-transform-body layouts correctly */
+  min-width: 0;
+}
+
+/* Custom scrollbar - WebKit (Chrome/Safari/Edge) */
+.op-transform-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+.op-transform-scroll::-webkit-scrollbar-track { background: transparent; border-radius: 8px; }
+.op-transform-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(127,90,240,0.36), rgba(127,90,240,0.24));
+  border-radius: 8px;
+  border: 2px solid transparent; /* creates a gutter look */
+  background-clip: padding-box;
+}
+.op-transform-scroll::-webkit-scrollbar-thumb:hover {
+  transform: translateX(-1px);
+  box-shadow: 0 4px 12px rgba(127,90,240,0.06);
+}
+
+/* Firefox-only styling (wrapped to avoid editor noise) */
+@supports (scrollbar-width: thin) {
+  .op-transform-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(127,90,240,0.32) transparent;
+  }
+}
+
+/* Focus ring for keyboard users */
+.op-transform-scroll:focus-visible {
+  outline: 3px solid rgba(127,90,240,0.18);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* Make sure the transform body still lays out as before */
+.op-transform-scroll .op-transform-body {
+  padding: 8px 2px; /* small padding to keep controls away from scrollbar */
+  box-sizing: border-box;
+}
+
+/* Prevent transform inputs from being clipped when scrollbar appears */
+.op-transform-row, .op-transform-left, .op-transform-right {
+  min-width: 0; /* keep flex children from growing beyond available width */
+}
+
+/* ================= CYBERPUNK ENHANCEMENTS (append-only) ================= */
+/* Neon glass layer without disrupting original layout */
+.op-container {
+  position: relative;
+  background: linear-gradient(135deg, rgba(20,14,34,0.55), rgba(10,6,24,0.55));
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(127,90,240,0.18);
+  border-radius: 12px;
+  animation: propsPanelIn .55s cubic-bezier(.16,.84,.3,1) both;
+}
+.op-container::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(90deg, rgba(127,90,240,0.06) 0 1px, transparent 1px 110px), repeating-linear-gradient(0deg, rgba(0,215,255,0.07) 0 1px, transparent 1px 110px);
+  mix-blend-mode: screen; opacity: .13;
+  animation: propsGridDrift 44s linear infinite;
+}
+@keyframes propsGridDrift { to { background-position: 120px 120px, 0 130px; } }
+@keyframes propsPanelIn { from { opacity:0; transform: translateY(10px) scale(.985);} to { opacity:1; transform: translateY(0) scale(1);} }
+
+/* Accent on panel headers */
+.op-panel-header { position: relative; }
+.op-panel-header::after {
+  content:""; position:absolute; left:0; bottom:-2px; height:2px; width:38px;
+  background: linear-gradient(90deg, rgba(127,90,240,0.9), rgba(0,215,255,0.6));
+  border-radius: 2px;
+  box-shadow: 0 0 12px -2px rgba(127,90,240,0.6);
+}
+
+/* Panel hologram background */
+.op-panel {
+  background: linear-gradient(120deg, rgba(26,18,48,0.65), rgba(14,10,28,0.65));
+  border: 1px solid rgba(127,90,240,0.22);
+}
+.op-panel:hover { background: linear-gradient(120deg, rgba(40,26,78,0.7), rgba(24,14,52,0.7)); }
+
+/* Inputs neon focus */
+.op-name-input:focus, .op-numeric:focus, .op-text:focus, .op-select:focus {
+  box-shadow: 0 0 0 2px rgba(0,215,255,0.55), 0 0 14px -4px rgba(127,90,240,0.55);
+  border-color: rgba(127,90,240,0.45);
+  transform: translateY(-1px);
+}
+
+/* Slider range track enhancements */
+.op-range {
+  background: linear-gradient(90deg, rgba(127,90,240,0.35), rgba(0,215,255,0.35));
+  height: 6px;
+  border-radius: 4px;
+  outline: none;
+}
+/* For browsers supporting range pseudo elements */
+::-webkit-slider-runnable-track { background: transparent; }
+::-webkit-slider-thumb {
+  -webkit-appearance: none; width:16px; height:16px; border-radius:50%;
+  background: radial-gradient(circle at 30% 30%, rgba(127,90,240,0.9), rgba(0,215,255,0.6));
+  box-shadow: 0 0 0 2px rgba(12,8,24,0.7), 0 0 12px -2px rgba(127,90,240,0.6);
+  margin-top: -5px;
+  transition: transform .18s ease;
+}
+::-webkit-slider-thumb:active { transform: scale(1.15); }
+::-moz-range-track { background: transparent; }
+::-moz-range-thumb {
+  width:16px; height:16px; border-radius:50%; border:none;
+  background: radial-gradient(circle at 30% 30%, rgba(127,90,240,0.9), rgba(0,215,255,0.6));
+  box-shadow: 0 0 0 2px rgba(12,8,24,0.7), 0 0 12px -2px rgba(127,90,240,0.6);
+  transition: transform .18s ease;
+}
+::-moz-range-thumb:active { transform: scale(1.15); }
+
+/* Collapse button pulse indicator */
+.op-collapse { position: relative; }
+.op-collapse::after {
+  content:""; position:absolute; right:-10px; top:50%; transform:translateY(-50%);
+  width:10px; height:10px; border-radius:50%;
+  background: radial-gradient(circle at 30% 30%, rgba(127,90,240,0.9), rgba(0,215,255,0.65));
+  box-shadow: 0 0 10px -2px rgba(127,90,240,0.7);
+  animation: collapsePulse 5.2s ease-in-out infinite;
+}
+@keyframes collapsePulse { 0%,100% { transform:translateY(-50%) scale(.9);} 50% { transform:translateY(-50%) scale(1.18);} }
+
+/* Scrollbar neon */
+.object-properties::-webkit-scrollbar { width:8px; }
+.object-properties::-webkit-scrollbar-thumb { background: linear-gradient(180deg, rgba(127,90,240,0.35), rgba(0,215,255,0.28)); border-radius:8px; }
+
+/* Focus accessibility refine */
+:focus-visible { outline: 3px solid rgba(0,215,255,0.5); outline-offset:2px; }
+
+/* Reduced motion safety */
+@media (prefers-reduced-motion: reduce) { .op-container, .op-container::before { animation:none !important; } .op-collapse::after { animation:none !important; } }
+/* ================= END CYBERPUNK ENHANCEMENTS ================= */
+
+/* --------------------------------------------
+   Neon-themed form aliases (prop-* utilities)
+--------------------------------------------- */
+/* usage: <input class="prop-input"/> <input type="range" class="prop-slider"/> <button class="prop-toggle"/> */
+.prop-input {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(127,90,240,0.28);
+  background: linear-gradient(140deg, rgba(18,14,34,0.65), rgba(10,8,22,0.65));
+  color: #fff;
+}
+.prop-input:focus { box-shadow: 0 0 0 2px rgba(0,215,255,0.55), 0 0 14px -4px rgba(127,90,240,0.55); border-color: rgba(127,90,240,0.45); outline: none; }
+
+.prop-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 4px;
+  background: linear-gradient(90deg, rgba(127,90,240,0.35), rgba(0,215,255,0.35));
+}
+.prop-slider::-webkit-slider-thumb { -webkit-appearance: none; width:16px; height:16px; border-radius:50%; background: radial-gradient(circle at 30% 30%, rgba(127,90,240,0.9), rgba(0,215,255,0.6)); box-shadow: 0 0 0 2px rgba(12,8,24,0.7), 0 0 12px -2px rgba(127,90,240,0.6); }
+.prop-slider::-moz-range-thumb { width:16px; height:16px; border-radius:50%; border:none; background: radial-gradient(circle at 30% 30%, rgba(127,90,240,0.9), rgba(0,215,255,0.6)); box-shadow: 0 0 0 2px rgba(12,8,24,0.7), 0 0 12px -2px rgba(127,90,240,0.6); }
+
+.prop-toggle { padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(127,90,240,0.35); background: rgba(255,255,255,0.03); color:#fff; font-weight:700; }
+.prop-toggle[aria-pressed="true"] { background: linear-gradient(90deg, rgba(127,90,240,0.22), rgba(0,215,255,0.28)); box-shadow: inset 0 0 12px rgba(127,90,240,0.35); }
+
+/* Depth-driven shadows */
+[data-depth="1"] { box-shadow: 0 6px 18px rgba(0,0,0,0.45); }
+[data-depth="2"] { box-shadow: 0 12px 28px rgba(0,0,0,0.55); }
+[data-depth="3"] { box-shadow: 0 18px 40px rgba(0,0,0,0.65); }
+
+/* Examples:
+  <div class="panel-glass card-3d" data-depth="2">...
+     <input class="prop-input"/>
+  </div>
+*/
+
+/* Collapsed FAB styles were intentionally removed to keep only SculptToolbar collapse */

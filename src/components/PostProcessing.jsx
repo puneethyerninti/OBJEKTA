@@ -12,6 +12,13 @@ export function setupPostProcessing({ renderer, scene, camera, width = 800, heig
   if (!renderer || !scene || !camera) throw new Error("renderer, scene, camera required");
 
   let composer;
+  // selective bloom helpers
+  const BLOOM_LAYER = 11; // arbitrary layer index for bloom-enabled objects
+  const bloomLayers = new THREE.Layers();
+  bloomLayers.set(BLOOM_LAYER); // precompute mask once
+  const darkMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
+  const materialsCache = new Map();
+  let bloomPass;
   try {
     composer = new EffectComposer(renderer);
     composer.setSize(width, height);
@@ -25,7 +32,7 @@ export function setupPostProcessing({ renderer, scene, camera, width = 800, heig
     const threshold = options.bloomThreshold ?? 0.9;
 
     // UnrealBloomPass expects a Vector2 resolution first arg
-    const bloomPass = new UnrealBloomPass(new THREE.Vector2(width, height), strength, radius, threshold);
+    bloomPass = new UnrealBloomPass(new THREE.Vector2(width, height), strength, radius, threshold);
     composer.addPass(bloomPass);
 
   } catch (err) {
@@ -39,8 +46,66 @@ export function setupPostProcessing({ renderer, scene, camera, width = 800, heig
     };
   }
 
+  let failureCount = 0;
+
   function render(delta) {
-    composer.render(delta);
+    if (!composer) return; // safety
+
+    // Guard against zero / near-zero size render targets causing incomplete framebuffer errors
+    try {
+      const size = renderer.getSize(new THREE.Vector2());
+      if (size.x < 2 || size.y < 2) return;
+      try {
+        const rb = composer.readBuffer;
+        if (rb && (rb.width !== size.x || rb.height !== size.y)) composer.setSize(size.x, size.y);
+      } catch (e) {}
+    } catch (e) {}
+
+    // Determine if any bloom objects exist; if none, skip selective replacement pass
+    let hasBloomObjects = false;
+    if (options.selectiveBloom) {
+      try {
+        scene.traverse((o) => {
+          if (hasBloomObjects) return;
+          if (o && o.isMesh && (o.userData.__bloom || (o.layers && (o.layers.mask & bloomLayers.mask) !== 0))) {
+            hasBloomObjects = true;
+          }
+        });
+      } catch (e) {}
+    }
+
+    if (options.selectiveBloom && hasBloomObjects) {
+      // Temporarily swap materials for non-bloom objects
+      scene.traverse((obj) => {
+        if (!obj || !obj.isMesh) return;
+        const isBloom = obj.userData.__bloom || (obj.layers && (obj.layers.mask & bloomLayers.mask) !== 0);
+        if (!isBloom) {
+          if (!materialsCache.has(obj)) materialsCache.set(obj, obj.material);
+          obj.material = darkMaterial;
+        }
+      });
+      let ok = true;
+      try { composer.render(delta); } catch (e) { ok = false; console.warn("[PostProcessing] composer.render failed", e); }
+      // Restore materials
+      scene.traverse((obj) => {
+        if (obj && obj.isMesh && materialsCache.has(obj)) obj.material = materialsCache.get(obj);
+      });
+      materialsCache.clear();
+      if (!ok) {
+        renderer.__lastBloomFailed = true;
+        failureCount++;
+        if (failureCount > 5) {
+          options.selectiveBloom = false;
+          console.warn("[PostProcessing] selectiveBloom disabled after repeated failures");
+        }
+      } else {
+        renderer.__lastBloomFailed = false;
+        if (failureCount > 0) failureCount = 0;
+      }
+    } else {
+      // No bloom objects; render normally (prevents unintentional black materials)
+      try { composer.render(delta); } catch (e) { console.warn("[PostProcessing] composer.render failed", e); }
+    }
   }
 
   function setSize(w, h) {
@@ -56,7 +121,15 @@ export function setupPostProcessing({ renderer, scene, camera, width = 800, heig
     } catch (e) {}
   }
 
-  return { composer, render, setSize, dispose };
+  function tagForBloom(object, enable = true) {
+    if (!object || !object.layers) return;
+    try {
+      object.userData.__bloom = !!enable;
+      if (enable) object.layers.enable(BLOOM_LAYER); else object.layers.disable(BLOOM_LAYER);
+    } catch (e) {}
+  }
+
+  return { composer, render, setSize, dispose, tagForBloom, BLOOM_LAYER, bloomPass };
 }
 
 export default setupPostProcessing;
