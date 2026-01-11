@@ -1,0 +1,19 @@
+{
+  "name": "objekta-homepage-dependencies",
+  "description": "Dependencies for OBJEKTA TRON/Cyberpunk Homepage",
+  "dependencies": {
+    "three": "^0.160.0",
+    "@react-three/fiber": "^8.15.0",
+    "@react-three/drei": "^9.92.0",
+    "framer-motion": "^10.16.0",
+    "react-icons": "^4.12.0"
+  },
+  "optionalDependencies": {
+    "@react-three/postprocessing": "^2.15.0",
+    "gsap": "^3.12.0",
+    "leva": "^0.9.35"
+  },
+  "scripts": {
+    "install-homepage-deps": "npm install three @react-three/fiber @react-three/drei framer-motion react-icons"
+  }
+}

@@ -1,5 +1,6 @@
 // src/store/TextureStore.js
 import * as THREE from "three";
+import BlobURLManager from "../utils/BlobURLManager";
 
 /**
  * Simple TextureStore: keyed by a string (prefer file.name or URL).
@@ -17,7 +18,7 @@ class TextureStore {
       this.map.get(k).ref++;
       return this.map.get(k).tex;
     }
-    const url = URL.createObjectURL(file);
+    const url = BlobURLManager.create(file);
     return new Promise((resolve, reject) => {
       this.loader.load(url,
         (tex) => {
@@ -28,7 +29,7 @@ class TextureStore {
         },
         undefined,
         (err) => {
-          try { URL.revokeObjectURL(url); } catch (e) {}
+          try { BlobURLManager.release(url); } catch (e) { console.warn('[TextureStore] release failed', e); }
           reject(err);
         }
       );
@@ -63,8 +64,8 @@ class TextureStore {
     e.ref = Math.max(0, e.ref - 1);
     if (e.ref === 0) {
       try { e.tex.dispose && e.tex.dispose(); } catch (err) {}
-      if (e.previewUrl && e.previewUrl.startsWith && e.previewUrl.startsWith('blob:')) {
-        try { URL.revokeObjectURL(e.previewUrl); } catch (e) {}
+      if (e.previewUrl) {
+        try { BlobURLManager.release(e.previewUrl); } catch (err) { console.warn('[TextureStore] preview release failed', err); }
       }
       this.map.delete(key);
     }
@@ -73,11 +74,15 @@ class TextureStore {
   disposeAll() {
     for (const [k, v] of this.map.entries()) {
       try { v.tex.dispose && v.tex.dispose(); } catch (e) {}
-      if (v.previewUrl && v.previewUrl.startsWith && v.previewUrl.startsWith('blob:')) {
-        try { URL.revokeObjectURL(v.previewUrl); } catch (e) {}
+      if (v.previewUrl) {
+        try { BlobURLManager.release(v.previewUrl); } catch (err) { console.warn('[TextureStore] release failed', err); }
       }
     }
     this.map.clear();
+  }
+
+  retainUrl(url) {
+    BlobURLManager.retain(url);
   }
 
   stats() {

@@ -81,6 +81,7 @@
     "object-assign": "^4.1.1",
     "object-hash": "^3.0.0",
     "package-json-from-dist": "^1.0.1",
+    "pako": "^2.1.0",
     "path-key": "^3.1.1",
     "path-parse": "^1.0.7",
     "path-scurry": "^1.11.1",
@@ -116,7 +117,7 @@
     "source-map-js": "^1.2.1",
     "string-width": "^5.1.2",
     "strip-ansi": "^7.1.0",
-    "three": "0.152.2",
+    "three": "^0.152.2",
     "three-mesh-bvh": "0.6.8",
     "three-stdlib": "^2.36.0",
     "to-regex-range": "^5.0.1",
@@ -133,6 +134,7 @@
     "zustand": "^5.0.8"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.17",
     "autoprefixer": "^10.4.22",
     "nodemon": "^3.1.10",
     "postcss": "^8.5.6",
