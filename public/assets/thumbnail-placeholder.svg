@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1d0d2a"/>
+      <stop offset="100%" stop-color="#0b0613"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="360" fill="url(#g)"/>
+  <g fill="none" stroke="#6b56a3" stroke-opacity="0.35">
+    <path d="M0 320 L160 200 L320 300 L480 180 L640 260"/>
+    <path d="M0 280 L160 240 L320 200 L480 260 L640 220"/>
+  </g>
+  <g fill="none" stroke="#00e0ff" stroke-opacity="0.25">
+    <circle cx="520" cy="80" r="50"/>
+    <circle cx="520" cy="80" r="80"/>
+  </g>
+  <g font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="22" fill="#c9c4e3" text-anchor="middle">
+    <text x="320" y="180" opacity="0.9">OBJEKTA</text>
+    <text x="320" y="210" font-size="14" fill="#9a92c8" opacity="0.9">No thumbnail available</text>
+  </g>
+</svg>

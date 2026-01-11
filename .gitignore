@@ -1,0 +1,9 @@
+.env
+node_modules
+dist/
+public/models/
+public/*.glb
+.history/
+backend/uploads/
+tmp_test_thumb.png
+*.log

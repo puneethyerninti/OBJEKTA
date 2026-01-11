@@ -1,0 +1,798 @@
+/* src/styles/Studio.css
+   Final Studio styles — updated fixes:
+   - toolbar overflow / inline children fixes
+   - small button sizing fixes to avoid wrapping
+   - safer properties-panel bounds + minor z-index adjustments
+   - preserve original design & responsive rules
+   - removed `-webkit-overflow-scrolling` to silence MD tools compatibility warnings
+*/
+:root{
+  --studio-bg: #0c0c1f;
+  --panel-bg: rgba(10, 6, 18, 0.65);
+  --panel-border: 1px solid rgba(127, 90, 240, 0.2);
+  --control-bg: rgba(30, 0, 60, 0.4);
+  --control-hover-bg: rgba(127, 90, 240, 0.25);
+  --accent-glow: 0 0 12px rgba(127, 90, 240, 0.4);
+  --brand-purple: #7f5af0;
+  --brand-pink: #ff66c4;
+  --radius: 10px;
+  --gap: 8px;
+  --z-modal: 10000;
+  --z-toast: 9000;
+  --z-context: 8500;
+  --z-panel: 250;
+  --text-light: #FFFFFF;
+  --text-muted: rgba(255,255,255,0.72);
+  --glass-dark: rgba(12,10,16,0.5);
+}
+
+/* global box-sizing & smoothing */
+*, *::before, *::after { box-sizing: border-box; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+/* Scrollbars: keep default browser behavior for discoverability.
+   Targeted scrollbar rules appear later in this file for specific panels.
+*/
+
+/* ---------------- Base app layout ---------------- */
+.studio-container {
+  height: 100vh;
+  display: flex;
+  background: linear-gradient(135deg, var(--studio-bg), #140020);
+  overflow: hidden;
+  font-family: 'Space Grotesk', 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  color: var(--text-light);
+  position: relative;
+  min-width: 0;
+}
+
+/* generic panel */
+.studio-panel {
+  background: var(--panel-bg);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  transition: width 0.18s ease, transform 0.12s ease;
+  border-radius: var(--radius);
+  pointer-events: auto;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+/* ---------------- Palette (left) ---------------- */
+.palette-panel {
+  border-right: var(--panel-border);
+  flex-shrink: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 0.75rem;
+  gap: 0.5rem;
+  /* Do NOT make the outer panel itself the scrolling element; instead
+     let the inner `.palette-inner` become the flex child that can
+     shrink/grow and host the scrollbar. This avoids height:100% issues
+     when the parent is a flex container. */
+  min-width: 44px;
+  max-width: 420px;
+}
+.palette-panel .palette-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex: 1 1 auto; /* allow inner area to resolve height inside flex parent */
+  min-height: 0; /* allow proper shrinking so overflow works */
+  overflow: auto; /* scroll inside the inner container */
+}
+.palette-panel .palette-rail {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding-top: 52px;
+}
+.palette-panel .palette-rail .studio-btn.ghost {
+  background: transparent;
+  border-color: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.75);
+}
+.palette-panel .palette-rail .studio-btn.ghost:hover {
+  background: rgba(255,255,255,0.08);
+}
+/* Collapsed palette: shrink width and hide scroll content while keeping toggle button accessible */
+.palette-panel.palette-collapsed {
+  width: 44px !important;
+  min-width: 44px !important;
+  padding: 0.5rem 0.4rem;
+  overflow: hidden;
+}
+.palette-panel.palette-collapsed > .palette-inner {
+  opacity: 0;
+  pointer-events: none;
+}
+.palette-panel.palette-collapsed .palette-rail {
+  display: flex;
+}
+.palette-panel .collapse-toggle-btn { position: absolute; right: 6px; top: 6px; z-index: 40; }
+
+/* Palette: collapsed-rail tweaks for better visual affordance */
+.palette-panel .palette-rail {
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  padding-top: 8px;
+}
+.palette-panel.palette-collapsed {
+  padding: 0.45rem 0.35rem;
+  gap: 6px;
+  align-items: center;
+}
+.palette-panel.palette-collapsed::after {
+  content: "";
+  position: absolute;
+  right: -1px;
+  top: 8px;
+  bottom: 8px;
+  width: 1px;
+  background: rgba(255,255,255,0.04);
+  pointer-events: none;
+  border-radius: 1px;
+}
+
+/* Resolution HUD */
+.resolution-panel {
+  position: absolute;
+  left: 12px;
+  bottom: 74px;
+  width: 230px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(5, 2, 15, 0.82);
+  border: 1px solid rgba(127,90,240,0.18);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.5);
+  color: #f4f4ff;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: auto;
+  z-index: calc(var(--z-panel) + 40);
+}
+.resolution-panel input[type="range"] {
+  width: 100%;
+}
+.resolution-panel .resolution-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+}
+.resolution-panel .resolution-actions {
+  display: flex;
+  gap: 6px;
+}
+.resolution-panel .resolution-actions button {
+  flex: 1;
+}
+
+/* palette resizer handle (accessible hit area) */
+.palette-resizer {
+  position: absolute;
+  top: 0;
+  right: -6px;
+  width: 12px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 30;
+  background: transparent;
+}
+.palette-resizer::after {
+  content: "";
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 36px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 2px;
+}
+
+/* ---------------- Properties panel (outer container) ----------------
+   Outer container MUST NOT create vertical scrolling.
+   The inner inspector handles scrolling.
+*/
+.properties-panel {
+  position: fixed;
+  right: 20px;
+  top: 88px; /* JS overrides inline top if necessary */
+  height: calc(100vh - 120px);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  z-index: calc(var(--z-panel) + 60);
+  background: var(--glass-dark);
+  border: 1px solid rgba(255,255,255,0.04);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  overflow: hidden; /* inner inspector scrolls */
+  border-radius: var(--radius);
+  box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  min-width: 260px;
+  max-width: 520px;
+  padding: 8px;
+  gap: 6px;
+}
+
+/* drag handle + resizer (inside properties panel) */
+.properties-drag-handle {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: move;
+  -webkit-user-select: none;
+  user-select: none;
+  margin-bottom: 6px;
+  flex: 0 0 auto;
+}
+.properties-drag-handle div {
+  width: 6px; height: 6px; border-radius: 999px;
+  background: rgba(127, 90, 240, 0.45);
+}
+.properties-resizer { position: absolute; left: -8px; top: 0; bottom: 0; width: 14px; cursor: col-resize; z-index: 10; background: transparent; }
+
+/* Safety: allow flex children to shrink (prevent min-content overflow) */
+.properties-panel, .properties-panel * { min-width: 0 !important; min-height: 0 !important; }
+
+/* Keep outer op-container clipped so UI stays stable; inner .object-properties scrolls */
+.properties-panel .op-container,
+.properties-panel > .op-container {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Allow the inner inspector (.object-properties) to control scrolling itself */
+.properties-panel .object-properties {
+  /* Use flex so inner inspector can stretch inside the outer .op-container
+     which is a column flex. Avoid `height:100%` which can be fragile; flex:1
+     ensures a resolvable size when the parent is a flex item. */
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+
+}
+
+/* Firefox: use feature query so older browsers don't warn; WebKit rules above handle Chrome/Safari */
+@supports (scrollbar-width: thin) {
+  .properties-panel .object-properties {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(120, 120, 120, 0.4) transparent;
+  }
+}
+
+/* WebKit browsers (Chrome, Edge, Safari, etc.) */
+.properties-panel .object-properties::-webkit-scrollbar {
+  width: 8px;
+}
+
+.properties-panel .object-properties::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.properties-panel .object-properties::-webkit-scrollbar-thumb {
+  background-color: rgba(200, 200, 200, 0.32);
+  border-radius: 4px;
+}
+
+.properties-panel .object-properties::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(180, 180, 180, 0.6);
+}
+
+/* Properties panel: collapse bar + collapsed state styles */
+.properties-panel {
+  transition: width 0.18s ease, opacity 0.12s ease;
+}
+.properties-panel .collapse-toggle-btn {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  z-index: 40;
+}
+.properties-panel .collapse-rail {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding-top: 42px;
+}
+.properties-panel.properties-collapsed {
+  width: 48px !important;
+  min-width: 48px !important;
+  padding: 6px !important;
+  overflow: visible !important;
+}
+.properties-panel.properties-collapsed .properties-drag-handle {
+  display: none;
+}
+.properties-panel.properties-collapsed > .op-container {
+  align-items: center;
+  justify-content: center;
+}
+.properties-panel.properties-collapsed .object-properties {
+  opacity: 0;
+  pointer-events: none;
+  height: 0;
+  overflow: hidden;
+  transition: opacity 0.15s ease;
+}
+.properties-panel.properties-collapsed .collapse-rail {
+  display: flex;
+}
+
+/* Ensure the collapse toggle remains visible when the panel is collapsed */
+.properties-panel.properties-collapsed .collapse-toggle-btn {
+  left: 6px;
+  top: 6px;
+  display: inline-flex !important;
+  width: 40px !important;
+  height: 40px !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: rgba(12,10,16,0.78) !important;
+  border: 1px solid rgba(255,255,255,0.06) !important;
+  border-radius: 10px !important;
+  z-index: calc(var(--z-panel) + 320) !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+}
+
+/* Safety: if any parent created a stacking context that hides the button,
+   ensure the collapsed toggle floats above common overlays. */
+.properties-panel.properties-collapsed .collapse-toggle-btn {
+  position: absolute !important;
+}
+
+
+/* ---------------- Workspace ---------------- */
+.workspace-area { flex: 1; position: relative; display: flex; flex-direction: column; min-width: 0; }
+
+/* Toolbar (top-right) */
+/* --- FIX: keep toolbar inline, prevent wrapping, allow horizontal scroll when needed --- */
+.studio-toolbar {
+  position: absolute;
+  right: 14px;
+  top: 14px;
+  z-index: calc(var(--z-panel) + 90);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px;
+  background: transparent;
+  max-width: calc(100% - 40px);
+  overflow-x: auto;
+  white-space: nowrap;
+  scroll-behavior: smooth;
+}
+.studio-toolbar > * { display: inline-flex; align-items: center; }
+
+/* Buttons */
+.studio-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 8px 12px; background: var(--control-bg);
+  border: var(--panel-border); border-radius: var(--radius);
+  color: var(--text-muted); font-weight: 600; cursor: pointer;
+  font-size: 14px; transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  min-height: 36px;
+  line-height: 1;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+}
+.studio-btn:hover { background: var(--control-hover-bg); color: #fff; box-shadow: var(--accent-glow); transform: translateY(-2px); }
+.studio-btn.icon-btn { padding: 8px; font-size: 16px; min-width: 36px; }
+
+/* Focus styles */
+.studio-btn:focus-visible, .context-menu-btn:focus-visible, .studio-toolbar button:focus-visible {
+  box-shadow: 0 0 0 4px rgba(127,90,240,0.14);
+  border-color: rgba(127,90,240,0.35);
+}
+
+/* segmented control */
+.segmented-control { display: flex; border-radius: 10px; overflow: hidden; border: var(--panel-border); background: rgba(10, 0, 20, 0.45); }
+.segmented-control button { padding: 8px 12px; cursor: pointer; border: none; background: transparent; color: var(--text-muted); font-weight: 700; transition: all 0.14s ease; }
+.segmented-control button.active { background: linear-gradient(90deg, var(--brand-purple), var(--brand-pink)); color: #fff; text-shadow: 0 0 8px rgba(0,0,0,0.5); }
+
+/* snap control */
+.snap-control { display: flex; align-items: center; gap: var(--gap); padding: 0 8px; }
+.snap-control input[type="number"] { width: 60px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 4px 6px; color: var(--text-light); box-sizing: border-box; }
+
+/* status bar */
+.status-bar {
+  position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%);
+  pointer-events: auto; padding: 6px 16px; border-radius: 999px;
+  background: rgba(0, 0, 0, 0.4); color: var(--text-muted); font-size: 12px;
+  border: var(--panel-border);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  white-space: nowrap; z-index: calc(var(--z-panel) + 10);
+  box-sizing: border-box;
+}
+
+/* context menu */
+.context-menu {
+  position: fixed; background: var(--panel-bg); border: var(--panel-border);
+  border-radius: 8px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  z-index: var(--z-context); padding: 6px; min-width: 180px;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  box-sizing: border-box;
+}
+.context-menu-btn { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px; border-radius: 6px; background: transparent; color: var(--text-light); border: none; text-align: left; cursor: pointer; font-size: 13px; }
+.context-menu-btn:hover { background: var(--control-hover-bg); }
+.context-menu-btn.delete { color: var(--brand-pink); }
+
+/* toasts / modals / loader */
+.toast-container, .modal-container, .loader-container { position: fixed; z-index: var(--z-toast); display: flex; align-items: center; justify-content: center; }
+.toast-item, .modal-content, .loader-content { background: var(--panel-bg); color: var(--text-light); border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,0.6); border: var(--panel-border); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); box-sizing: border-box; }
+.toast-container { left: 18px; bottom: 18px; align-items: flex-start; flex-direction: column; gap: 8px; }
+.toast-item { padding: 12px 16px; min-width: 240px; animation: toastIn .18s cubic-bezier(.2,.9,.3,1); }
+.toast-item {
+  background: linear-gradient(140deg, rgba(12, 16, 34, 0.92), rgba(4, 6, 18, 0.98));
+  border: 1px solid rgba(255,255,255,0.12);
+  box-shadow: 0 18px 45px rgba(0,0,0,0.65);
+  position: relative;
+  overflow: hidden;
+}
+@keyframes toastIn { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+.modal-container { inset: 0; background: rgba(0,0,0,0.5); z-index: var(--z-modal); }
+.modal-content { width: 380px; padding: 24px; }
+.loader-container { inset: 0; pointer-events: none; z-index: calc(var(--z-toast) + 10); }
+.loader-content { pointer-events: auto; padding: 18px; min-width: 220px; text-align: center; }
+
+/* ---------------- Restore essential scrollbars ----------------
+   Some global rules intentionally hid scrollbars across the Studio
+   workspace. Re-enable them for key interactive panels so users can
+   discover overflow content (palette, properties inspector, toolbar).
+*/
+.studio-container .palette-panel,
+.studio-container .properties-panel .object-properties,
+.studio-container .studio-toolbar {
+  -ms-overflow-style: auto !important; /* IE/Edge */
+}
+
+@supports (scrollbar-width: thin) {
+  .studio-container .palette-panel,
+  .studio-container .properties-panel .object-properties,
+  .studio-container .studio-toolbar,
+  .studio-container * {
+    scrollbar-width: thin !important;
+  }
+}
+
+.studio-container .palette-panel::-webkit-scrollbar,
+.studio-container .properties-panel .object-properties::-webkit-scrollbar,
+.studio-container .studio-toolbar::-webkit-scrollbar {
+  display: block !important;
+  width: 10px;
+  height: 8px;
+}
+
+/* Broad override: ensure any scrollable child inside the studio container
+   shows a scrollbar despite earlier global hide rules. This selector is
+   specific and placed after the global rules to win the cascade. */
+.studio-container /* narrowed: only style the known interactive panel scroll containers */
+.studio-container .palette-panel .palette-inner::-webkit-scrollbar,
+.studio-container .properties-panel .object-properties::-webkit-scrollbar,
+.studio-container .studio-toolbar::-webkit-scrollbar,
+.studio-container .workspace-area::-webkit-scrollbar {
+  display: block;
+  width: 10px;
+  height: 8px;
+}
+
+/* Scoped fallback for non-WebKit browsers: only apply to the same panel set */
+.studio-container .palette-panel .palette-inner,
+.studio-container .properties-panel .object-properties,
+.studio-container .studio-toolbar,
+.studio-container .workspace-area {
+  scrollbar-width: thin;
+  -ms-overflow-style: auto;
+}
+
+.studio-container .palette-panel::-webkit-scrollbar-thumb,
+.studio-container .properties-panel .object-properties::-webkit-scrollbar-thumb,
+.studio-container .studio-toolbar::-webkit-scrollbar-thumb {
+  background-color: rgba(200,200,200,0.36) !important;
+  border-radius: 8px;
+  border: 2px solid rgba(10,10,12,0.6) !important;
+  background-clip: padding-box;
+}
+.studio-container .palette-panel::-webkit-scrollbar-thumb:hover,
+.studio-container .properties-panel .object-properties::-webkit-scrollbar-thumb:hover,
+.studio-container .studio-toolbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(240,240,240,0.7) !important;
+}
+
+/* Ensure the toolbar scroll area shows horizontal scrollbar when content overflows */
+.studio-container .studio-toolbar {
+  overflow-x: auto;
+}
+
+
+/* subtle scrollbars for panels */
+/* Remove custom overlay rails — prefer native scrollbars for reliability. */
+
+/* Ensure native scrollbars are visible and styled for key panels */
+.palette-panel .palette-inner::-webkit-scrollbar {
+  width: 12px;
+}
+.palette-panel .palette-inner::-webkit-scrollbar-thumb {
+  background: rgba(200,200,200,0.36) !important;
+  border-radius: 8px;
+  border: 3px solid rgba(10,10,12,0.6) !important;
+  background-clip: padding-box;
+}
+.palette-panel .palette-inner::-webkit-scrollbar-thumb:hover { background: rgba(240,240,240,0.7) !important; }
+
+.properties-panel .object-properties::-webkit-scrollbar { width: 12px; }
+.properties-panel .object-properties::-webkit-scrollbar-thumb { background: rgba(200,200,200,0.36); border-radius: 8px; }
+.properties-panel .object-properties::-webkit-scrollbar-thumb:hover { background: rgba(240,240,240,0.7); }
+
+.studio-toolbar::-webkit-scrollbar { height: 10px; }
+.studio-toolbar::-webkit-scrollbar-thumb { background: rgba(200,200,200,0.36); border-radius: 8px; }
+.studio-toolbar::-webkit-scrollbar-thumb:hover { background: rgba(240,240,240,0.7); }
+
+
+/* small utilities */
+.hidden { display: none !important; }
+.centered { display:flex; align-items:center; justify-content:center; }
+
+/* Ensure key Studio regions ALWAYS allow scrolling and show a visual, non-blocking rail
+   This adds a forced `overflow: auto` and native scrollbar styling plus a pointer-events: none
+   pseudo-element rail so users on systems that auto-hide native scrollbars still see
+   a clear visual affordance. The rail is non-interactive and won't block UI.
+*/
+.studio-container .palette-panel .palette-inner,
+.studio-container .properties-panel .object-properties,
+.studio-container .studio-toolbar,
+.studio-container .workspace-area {
+  position: relative !important;
+  overflow: auto !important;
+  scrollbar-gutter: stable both-edges; /* reserve space for scrollbars when present */
+  scrollbar-color: rgba(200,200,200,0.42) transparent; /* Firefox hint */
+}
+
+/* native scrollbar styling (WebKit) */
+.studio-container .palette-panel .palette-inner::-webkit-scrollbar,
+.studio-container .properties-panel .object-properties::-webkit-scrollbar,
+.studio-container .studio-toolbar::-webkit-scrollbar,
+.studio-container .workspace-area::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+.studio-container .palette-panel .palette-inner::-webkit-scrollbar-thumb,
+.studio-container .properties-panel .object-properties::-webkit-scrollbar-thumb,
+.studio-container .studio-toolbar::-webkit-scrollbar-thumb,
+.studio-container .workspace-area::-webkit-scrollbar-thumb {
+  background-color: rgba(200,200,200,0.38);
+  border-radius: 8px;
+  border: 2px solid rgba(10,10,12,0.6);
+  background-clip: padding-box;
+}
+
+/* Visual, non-interactive rail for guaranteed visibility (works when OS hides native scrollbars) */
+.studio-container .palette-panel .palette-inner::after,
+.studio-container .properties-panel .object-properties::after,
+.studio-container .studio-toolbar::after,
+.studio-container .workspace-area::after {
+  content: "";
+  position: absolute;
+  /* move the decorative rail inward so it does NOT overlap native scrollbars
+     (most browsers paint native scrollbars on top of content). Using a
+     right offset reserves room for the native thumb while still providing a
+     visible rail for systems that auto-hide scrollbars. */
+  right: 18px;
+  top: 6px;
+  bottom: 6px;
+  width: 8px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.25);
+  pointer-events: none;
+  z-index: 0; /* keep the rail underneath UI content and under the native scrollbar */
+}
+
+/* reveal animation utility */
+.reveal { opacity: 0; transform: translateY(12px); transition: opacity 0.48s cubic-bezier(.2,.98,.28,1), transform 0.48s cubic-bezier(.2,.98,.28,1); }
+.reveal.is-visible { opacity: 1; transform: translateY(0); }
+
+/* focus outlines for keyboard users */
+:focus:not(.no-focus-outline) { outline: none; }
+:focus-visible { outline: 3px solid rgba(127,90,240,0.28); outline-offset: 2px; border-radius: 6px; }
+
+/* canvas / model-viewer ordering */
+canvas, model-viewer { position: relative; z-index: 1; }
+.transform-controls-canvas { z-index: 10; pointer-events: auto; }
+
+/* responsive tweaks */
+@media (max-width: 980px) {
+  .properties-panel { right: 8px; left: 8px; width: auto; height: 46vh; bottom: 8px; top: auto; border-radius: 8px; padding: 10px; }
+  .studio-toolbar { left: 50%; right: auto; transform: translateX(-50%); top: 8px; }
+}
+@media (max-width: 720px) {
+  .palette-panel { display: none; }
+  .studio-toolbar { position: sticky; top: 8px; left: 0; right: 0; justify-content: center; }
+  .properties-panel { left: 8px; right: 8px; top: auto; bottom: 8px; height: 46vh; border-radius: 8px; padding: 10px; }
+  .resolution-panel { left: 8px; right: 8px; width: auto; bottom: 80px; }
+}
+
+/* reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  .studio-btn, .segmented-control button, .toast-item { transition: none !important; animation: none !important; }
+}
+
+/* ================= CYBERPUNK / 3D VIBE ENHANCEMENTS ================ */
+/* Non-destructive additions layered after existing rules */
+
+/* Subtle animated hologram grid behind workspace */
+.workspace-area::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 15% 20%, rgba(127,90,240,0.08), transparent 60%),
+    repeating-linear-gradient(90deg, rgba(127,90,240,0.06) 0 1px, transparent 1px 110px),
+    repeating-linear-gradient(0deg, rgba(0,215,255,0.07) 0 1px, transparent 1px 110px);
+  mix-blend-mode: screen;
+  pointer-events: none;
+  opacity: 0.18;
+  animation: gridDrift 28s linear infinite;
+  transform: translateZ(0);
+}
+@keyframes gridDrift { to { background-position: 140px 140px, 220px 0, 0 220px; } }
+
+/* Neon pulse on active segmented control button */
+.segmented-control button.active {
+  position: relative;
+  overflow: hidden;
+}
+.segmented-control button.active::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.35), transparent 70%);
+  mix-blend-mode: overlay; opacity: .55; pointer-events: none;
+  animation: activePulse 3.8s ease-in-out infinite;
+}
+@keyframes activePulse { 0%,100%{opacity:.55} 50%{opacity:.2} }
+
+/* Toolbar glass upgrade + subtle sheen */
+.studio-toolbar {
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  background:
+    linear-gradient(125deg, rgba(10,8,20,0.35), rgba(25,15,45,0.55)),
+    linear-gradient(90deg, rgba(127,90,240,0.08), rgba(0,215,255,0.08));
+  border: 1px solid rgba(127,90,240,0.18);
+  border-radius: 14px;
+}
+.studio-btn {
+  position: relative;
+  background: linear-gradient(140deg, rgba(20,10,40,0.65), rgba(8,4,18,0.65));
+  border: 1px solid rgba(127,90,240,0.25);
+}
+.studio-btn:hover {
+  background: linear-gradient(140deg, rgba(127,90,240,0.35), rgba(0,215,255,0.30));
+  box-shadow: 0 0 0 1px rgba(127,90,240,0.55), 0 0 22px -4px rgba(0,215,255,0.55), 0 0 42px -6px rgba(127,90,240,0.55);
+}
+
+/* Context menu highlight accent */
+.context-menu-btn:hover { box-shadow: 0 0 0 1px rgba(127,90,240,0.4); }
+
+/* Status bar emissive style */
+.status-bar {
+  background: linear-gradient(90deg, rgba(0,0,0,0.55), rgba(20,10,40,0.65));
+  border: 1px solid rgba(127,90,240,0.22);
+  box-shadow: 0 0 0 1px rgba(0,215,255,0.35), inset 0 0 24px -6px rgba(127,90,240,0.55);
+}
+
+/* Toast item hologram shimmer */
+.toast-item::before {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(120deg, rgba(127,90,240,0.2), rgba(0,215,255,0) 60%);
+  opacity: 0; pointer-events: none; mix-blend-mode: screen;
+  transition: opacity .35s ease;
+}
+.toast-item:hover::before { opacity: 0.55; }
+
+/* Properties panel accent border & glow on focus */
+.properties-panel:focus-within {
+  box-shadow: 0 0 0 1px rgba(0,215,255,0.5), 0 0 28px -4px rgba(127,90,240,0.6);
+  border-color: rgba(127,90,240,0.4);
+}
+
+/* Smooth subtle entrance for panels */
+.palette-panel, .properties-panel { animation: panelIn .5s cubic-bezier(.16,.84,.29,1) both; }
+@keyframes panelIn { from { opacity:0; transform: translateY(8px) scale(.98); } to { opacity:1; transform: translateY(0) scale(1); } }
+
+/* Accessible high-contrast focus for dark backgrounds */
+.studio-btn:focus-visible { box-shadow: 0 0 0 3px rgba(0,215,255,0.55); }
+
+/* Reduced motion fallback for new animations */
+@media (prefers-reduced-motion: reduce) {
+  .workspace-area::before, .toast-item::before, .palette-panel, .properties-panel { animation: none !important; }
+}
+/* ================= END CYBERPUNK ENHANCEMENTS ================ */
+
+/* --------------------------------------------
+   Studio HUD & Canvas wrappers
+   design tokens — cyberpunk 3d — modified 2025-11-19
+--------------------------------------------- */
+/* usage: <div class="studio-canvas-wrap card-3d">
+           <canvas .../>
+           <div class="preview-sheen"/>
+         </div>
+*/
+.studio-canvas-wrap {
+  position: relative;
+  margin: 12px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: radial-gradient(1000px 600px at 10% 10%, rgba(127,90,240,0.08), transparent 60%),
+              radial-gradient(900px 500px at 90% 90%, rgba(0,215,255,0.06), transparent 60%),
+              linear-gradient(180deg, #070512, #0b0720);
+}
+.preview-sheen::before {
+  content: ""; position: absolute; left: -40%; top: 0; bottom: 0; width: 30%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
+  transform: translateX(-100%);
+  animation: glow-sweep 6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Top HUD bar with active underline */
+.studio-hud {
+  position: sticky;
+  top: 0;
+  z-index: calc(var(--z-panel) + 95);
+  padding: 8px;
+  margin: 6px;
+  border-radius: 12px;
+  background: linear-gradient(125deg, rgba(10,8,20,0.35), rgba(25,15,45,0.55));
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(127,90,240,0.18);
+}
+.studio-hud .tool.is-active { position: relative; }
+.studio-hud .tool.is-active::after {
+  content: ""; position: absolute; left: 8px; right: 8px; bottom: -4px; height: 2px;
+  background: linear-gradient(90deg, rgba(127,90,240,0.9), rgba(0,215,255,0.9));
+  border-radius: 2px;
+}
+
+/* Floating action button */
+.floating-fab {
+  position: fixed; right: 18px; bottom: 18px; z-index: calc(var(--z-panel) + 120);
+  width: 48px; height: 48px; border-radius: 999px;
+  display: grid; place-items: center;
+  background: linear-gradient(100deg, rgba(127,90,240,0.22), rgba(0,215,255,0.18));
+  border: 1px solid rgba(127,90,240,0.35);
+  color: #fff; cursor: pointer;
+  animation: pulse-neon 4.4s ease-in-out infinite;
+}
+.floating-fab:active { transform: scale(0.98); }
+
+/* Examples:
+   usage: <div class="studio-hud panel-glass neon-rim">
+             <button class="tool is-active">Move</button>
+          </div>
+*/

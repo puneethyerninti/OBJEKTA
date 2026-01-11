@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Objekta | 3D Design Studio</title>
+    <!-- Use existing Vite SVG in public to avoid 404 -->
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- React entry file -->
+    <script type="module" src="/src/main.jsx"></script>
+    <script>
+  // Vite: import.meta.env replaced at build-time — set a runtime window var.
+  // If you use Vite, add this line (replace the value or use import.meta inlined by Vite).
+  window.__OBJEKTA_API_URL__ = "http://localhost:5000";
+</script>
+
+  </body>
+</html>
