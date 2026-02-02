@@ -3,6 +3,7 @@ node_modules
 dist/
 public/models/
 public/*.glb
+public/videos/
 .history/
 backend/uploads/
 tmp_test_thumb.png
