@@ -9,6 +9,7 @@ import Hologram from './Hologram';
 import Effects from './Effects';
 import ContactShadow from './ContactShadow';
 import GridAlphaTester from './GridAlphaTester';
+import { assetUrl } from '../utils/assets';
 
 export default function Scene({ prefetchedGltf }) {
   const [effectsEnabled, setEffectsEnabled] = useState(false);
@@ -118,7 +119,7 @@ export default function Scene({ prefetchedGltf }) {
 
       {/* Background City (removed Suspense to show loading placeholder immediately) */}
       <Hologram
-        modelPath="/models/cyberpunk_city.glb"
+        modelPath={assetUrl("models/cyberpunk_city.glb")}
         gltf={prefetchedGltf}
         color={new THREE.Color('#6fb6ff')}
         // Tighter framing so city occupies more of the hero area

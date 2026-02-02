@@ -14,7 +14,9 @@ const STORAGE_USER = "objekta_user";
 const STORAGE_TOKEN = "objekta_token";
 
 // ✅ centralized backend base URL
-const runtimeApi = typeof window !== "undefined" ? window.__OBJEKTA_API_URL__ : null;
+const runtimeApi = typeof window !== "undefined"
+  ? (window.__OBJEKTA_API_BASE || window.__OBJEKTA_API_URL__)
+  : null;
 const API_URL = runtimeApi || API_BASE;
 
 export function AuthProvider({ children }) {

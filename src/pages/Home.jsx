@@ -8,6 +8,7 @@ import PreviewGLTF from "../components/PreviewGLTF";
 import { Canvas } from '@react-three/fiber';
 import { PerspectiveCamera } from '@react-three/drei';
 import { useAuth } from "../contexts/AuthContext";
+import { assetUrl } from "../utils/assets";
 import "../index.css";
 
 const FEATURE_ITEMS = [
@@ -30,53 +31,53 @@ const FEATURE_ITEMS = [
 
 const SHOWCASE_MODELS = [
   {
-    src: "/models/cyberpunk_desk.glb",
+    src: "models/cyberpunk_desk.glb",
     title: "Command Desk",
     desc: "Multi-screen control deck for layout, approvals, and lighting passes.",
     accent: "violet",
-    poster: "/assets/desk-poster.webp",
+    poster: "assets/desk-poster.webp",
   },
   {
-    src: "/models/laptop_free.glb",
+    src: "models/laptop_free.glb",
     title: "Portable Rig",
     desc: "Travel-ready laptop kit showing shader tweaks and annotation overlays.",
     accent: "cyan",
-    poster: "/assets/laptop-poster.webp",
+    poster: "assets/laptop-poster.webp",
   },
   {
-    src: "/models/porsche.glb",
+    src: "models/porsche.glb",
     title: "Concept Vehicle",
     desc: "Hero-grade automotive model tuned for material look-dev and lighting overrides.",
     accent: "amber",
-    poster: "/assets/porsche-poster.webp",
+    poster: "assets/porsche-poster.webp",
   },
   {
-    src: "/models/black_dragon_with_idle_animation.glb",
+    src: "models/black_dragon_with_idle_animation.glb",
     title: "Black Dragon",
     desc: "Creature rig with idle animation and layered surface detail.",
     accent: "violet",
-    poster: "/assets/thumbnail-placeholder.svg",
+    poster: "assets/thumbnail-placeholder.svg",
   },
   {
-    src: "/models/flynns_arcade.glb",
+    src: "models/flynns_arcade.glb",
     title: "Flynn's Arcade",
     desc: "Retro interior scene built for neon lighting and cinematic depth.",
     accent: "cyan",
-    poster: "/assets/thumbnail-placeholder.svg",
+    poster: "assets/thumbnail-placeholder.svg",
   },
   {
-    src: "/models/gipsy_avenger_-_pacific_rim.glb",
+    src: "models/gipsy_avenger_-_pacific_rim.glb",
     title: "Gipsy Avenger",
     desc: "Mech-scale asset optimized for real-time material previews.",
     accent: "amber",
-    poster: "/assets/thumbnail-placeholder.svg",
+    poster: "assets/thumbnail-placeholder.svg",
   },
   {
-    src: "/models/iphone_17_pro.glb",
+    src: "models/iphone_17_pro.glb",
     title: "iPhone 17 Pro",
     desc: "Product visualization mockup with clean PBR finishes.",
     accent: "cyan",
-    poster: "/assets/thumbnail-placeholder.svg",
+    poster: "assets/thumbnail-placeholder.svg",
   },
 ];
 
@@ -131,7 +132,7 @@ export default function Home() {
   useEffect(() => {
     let mounted = true;
     // Prefetch as raw ArrayBuffer to allow parsing inside each Canvas instance.
-    const modelsToPrefetch = SHOWCASE_MODELS.map(m => m.src);
+    const modelsToPrefetch = SHOWCASE_MODELS.map((m) => assetUrl(m.src));
 
     modelsToPrefetch.forEach((src) => {
       if (prefetchedRef.current[src]) return;
@@ -288,7 +289,7 @@ export default function Home() {
       >
         <video
           ref={backgroundVideoRef}
-          src="/videos/cyberpunk.mp4"
+          src={assetUrl("videos/cyberpunk.mp4")}
           autoPlay
           muted
           loop
@@ -425,16 +426,27 @@ export default function Home() {
           </div>
 
           <div className="showcase-grid-v2">
-            {SHOWCASE_MODELS.map((model, index) => (
+            {SHOWCASE_MODELS.map((model, index) => {
+              const modelSrc = assetUrl(model.src);
+              const posterSrc = assetUrl(model.poster);
+              const resolvedModel = { ...model, src: modelSrc, poster: posterSrc };
+              return (
               <article
                 key={model.title}
                 className="showcase-card-v2"
-                onClick={() => handleShowcaseOpen(model)}
+                onClick={() => handleShowcaseOpen(resolvedModel)}
                 style={{ animationDelay: `${index * 0.15}s` }}
               >
                 {/* Static preview (no Canvas - use poster image) */}
                 <div className="showcase-preview">
                     <div className={`showcase-poster showcase-poster-${model.accent}`} style={{ backgroundColor: 'rgba(16, 18, 27, 0.95)' }}>
+                      <img
+                        src={posterSrc}
+                        alt={model.title}
+                        loading="lazy"
+                        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: 0.65 }}
+                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                      />
                       {/* If we prefetched the GLTF, render it immediately as a static preview */}
                       <div className="preview-canvas" style={{ width: '100%', height: '100%', position: 'relative' }}>
                         {/* Always render the actual model preview (static, no per-part animation) */}
@@ -452,7 +464,7 @@ export default function Home() {
                             <PerspectiveCamera makeDefault fov={75} position={[-0.5, 1, 10]} />
                             <ambientLight intensity={0.9} />
                             <directionalLight intensity={0.6} position={[5, 5, 5]} />
-                            <PreviewGLTF gltf={prefetched[model.src]} src={model.src} fitSize={6} fitAxis="y" position={[0, 0, 0]} />
+                            <PreviewGLTF gltf={prefetched[modelSrc]} src={modelSrc} fitSize={6} fitAxis="y" position={[0, 0, 0]} />
                           </Canvas>
                         </div>
                       </div>
@@ -474,14 +486,14 @@ export default function Home() {
                       className="showcase-btn showcase-btn-primary"
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleShowcaseOpen(model);
+                        handleShowcaseOpen(resolvedModel);
                       }}
                       aria-label={`View ${model.title} in fullscreen`}
                     >
                       Fullscreen
                     </button>
                     <a
-                      href={model.src}
+                      href={modelSrc}
                       download
                       className="showcase-btn showcase-btn-secondary"
                       onClick={(e) => e.stopPropagation()}
@@ -492,7 +504,8 @@ export default function Home() {
                   </div>
                 </div>
               </article>
-            ))}
+            );
+            })}
           </div>
         </section>
 

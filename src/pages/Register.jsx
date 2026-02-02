@@ -16,8 +16,12 @@ export default function Register() {
     setErr(null);
     setLoading(true);
     try {
-      await signup({ name, email, password });
-      navigate('/dashboard');
+      const result = await signup(name, email, password);
+      if (result?.ok) {
+        navigate('/dashboard');
+      } else {
+        setErr(result?.error || 'Signup failed');
+      }
     } catch (error) {
       setErr(error.message || 'Signup failed');
     } finally {

@@ -15,8 +15,12 @@ export default function Login() {
     setErr(null);
     setLoading(true);
     try {
-      await login(email, password);
-      navigate('/dashboard');
+      const result = await login(email, password);
+      if (result?.ok) {
+        navigate('/dashboard');
+      } else {
+        setErr(result?.error || 'Login failed');
+      }
     } catch (error) {
       setErr(error.message || 'Login failed');
     } finally {
