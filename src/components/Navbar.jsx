@@ -2,6 +2,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { Home, Info, Palette, Folder, Mail } from 'lucide-react';
 
 /**
  * Minimal, auth-aware Navbar:
@@ -65,11 +66,11 @@ export default function Navbar(props) {
   const closeMenu = () => setOpen(false);
 
   const links = [
-    { to: "/", label: "Home" },
-    { to: "/about", label: "About" },
-    { to: "/gallery", label: "Gallery" },
-    { to: "/projects", label: "Projects" },
-    { to: "/contact", label: "Contact" },
+    { to: "/", label: "Home", icon: <Home size={16} />, end: true },
+    { to: "/about", label: "About", icon: <Info size={16} /> },
+    { to: "/gallery", label: "Gallery", icon: <Palette size={16} /> },
+    { to: "/projects", label: "Projects", icon: <Folder size={16} /> },
+    { to: "/contact", label: "Contact", icon: <Mail size={16} /> },
   ];
 
   // We intentionally do not show login/signup links in the navbar.
@@ -114,10 +115,12 @@ export default function Navbar(props) {
             <li key={l.to} role="none">
               <NavLink
                 to={l.to}
+                end={l.end}
                 onClick={closeMenu}
                 className={({ isActive }) => (isActive ? "active" : "")}
                 role="menuitem"
               >
+                {l.icon}
                 {l.label}
               </NavLink>
             </li>
@@ -141,7 +144,14 @@ export default function Navbar(props) {
             </button>
           </div>
         ) : (
-          <div className="nav-guest">Creators • Start in Studio</div>
+          <div className="nav-guest" role="group" aria-label="Guest actions">
+            <Link to="/gallery" className="nav-link-muted" onClick={closeMenu} aria-label="Open gallery">
+              Explore Gallery
+            </Link>
+            <Link to="/login" className="nav-link-muted" onClick={closeMenu} aria-label="Start in studio">
+              Start Studio
+            </Link>
+          </div>
         )}
       </div>
 
@@ -155,7 +165,8 @@ export default function Navbar(props) {
         <ul className="nav-links-mobile" role="menu">
           {links.map((l) => (
             <li key={l.to}>
-              <NavLink to={l.to} onClick={closeMenu} className={({ isActive }) => (isActive ? "active" : "")}>
+              <NavLink to={l.to} end={l.end} onClick={closeMenu} className={({ isActive }) => (isActive ? "active" : "")}>
+                {l.icon}
                 {l.label}
               </NavLink>
             </li>
@@ -170,7 +181,10 @@ export default function Navbar(props) {
               <button onClick={handleLogout} className="nav-logout">Logout</button>
             </>
           ) : (
-            <div className="mobile-guest">Creators • Start in Studio</div>
+            <div className="mobile-guest" role="group" aria-label="Guest actions">
+              <Link to="/gallery" className="nav-link-muted" onClick={closeMenu}>Explore Gallery</Link>
+              <Link to="/login" className="nav-link-muted" onClick={closeMenu}>Start Studio</Link>
+            </div>
           )}
         </div>
       </div>

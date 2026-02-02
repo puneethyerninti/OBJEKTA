@@ -83,8 +83,10 @@ app.use("/api/collaborators", collaboratorsRoutes);
 try {
   const tusDataDir = path.join(uploadDir, "tus");
   if (!fs.existsSync(tusDataDir)) fs.mkdirSync(tusDataDir, { recursive: true });
-  const tusServer = new tus.Server();
-  tusServer.datastore = new FileStore({ directory: tusDataDir });
+  const tusServer = new tus.Server({
+    path: '/api/uploads/tus', // or whatever path
+    datastore: new FileStore({ directory: tusDataDir })
+  });
   const tusApp = express();
   tusApp.all("*", (req, res) => tusServer.handle(req, res));
   app.use("/api/uploads/tus", tusApp);

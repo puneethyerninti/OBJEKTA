@@ -117,7 +117,7 @@
     "source-map-js": "^1.2.1",
     "string-width": "^5.1.2",
     "strip-ansi": "^7.1.0",
-    "three": "^0.152.2",
+    "three": "0.152.2",
     "three-mesh-bvh": "0.6.8",
     "three-stdlib": "^2.36.0",
     "to-regex-range": "^5.0.1",
@@ -136,6 +136,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.17",
     "autoprefixer": "^10.4.22",
+    "baseline-browser-mapping": "^2.9.19",
     "nodemon": "^3.1.10",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.17",

@@ -10,7 +10,7 @@ import Effects from './Effects';
 import ContactShadow from './ContactShadow';
 import GridAlphaTester from './GridAlphaTester';
 
-export default function Scene() {
+export default function Scene({ prefetchedGltf }) {
   const [effectsEnabled, setEffectsEnabled] = useState(false);
   const [alphaTestOverride, setAlphaTestOverride] = useState(null);
   const [modelBounds, setModelBounds] = useState(null);
@@ -81,15 +81,16 @@ export default function Scene() {
     >
       <OrbitControls
         enableDamping={false}
-        minDistance={5}
-        maxDistance={25}
+        // Allow slightly closer camera to keep background model visible
+        minDistance={3}
+        maxDistance={20}
         target={[0, 1.5, 0]}
         enableRotate={true}
         enableZoom={true}
         enablePan={false}
       />
 
-      <PerspectiveCamera makeDefault fov={75} position={[-0.5, 1, 10]} />
+      <PerspectiveCamera makeDefault fov={70} position={[-0.5, 1, 6]} />
 
       {/* Exponential fog to reinforce depth cues */}
       <fogExp2 attach="fog" args={[0x000018, 0.025]} />
@@ -106,29 +107,29 @@ export default function Scene() {
 
       {/* Tron Grid: auto-aligned to model bounds when available */}
       <TronGrid
-        size={modelBounds ? Math.max(modelBounds.size.x, modelBounds.size.z) * 2.2 : 220}
+        // Reduce default grid size/density so it doesn't dominate before the model loads
+        size={modelBounds ? Math.max(modelBounds.size.x, modelBounds.size.z) * 2.2 : 140}
         // density inversely proportional to model size for consistent spacing
-        density={modelBounds ? Math.max(10, Math.floor(18 * (16 / Math.max(modelBounds.size.x, modelBounds.size.z)))) : 12}
-        lineWidth={0.012}
-        position={modelBounds ? [modelBounds.center.x, modelBounds.box.min.y - 0.02, modelBounds.center.z] : [0, -2.6, 0]}
+        density={modelBounds ? Math.max(10, Math.floor(18 * (16 / Math.max(modelBounds.size.x, modelBounds.size.z)))) : 10}
+        lineWidth={0.010}
+        position={modelBounds ? [modelBounds.center.x, modelBounds.box.min.y - 0.02, modelBounds.center.z] : [0, -3, 0]}
         alphaTestOverride={alphaTestOverride}
       />
 
-      {/* Background City (Suspense for graceful loading) */}
-      <Suspense fallback={null}>
-        <Hologram
-          modelPath="/models/cyberpunk_city.glb"
-          color={new THREE.Color('#6fb6ff')}
-          // Decrease apparent size and place slightly lower (near the grid)
-          scale={3}
-          position={[0, -0.2, -5]}
-          fitSize={16}
-          fitAxis="y"
-          onBoundsComputed={(data) => setModelBounds(data)}
-        />
-        {/* Soft contact shadow projected under the city to reinforce grounding */}
-        <ContactShadow position={[0, -2.58, -5]} radius={10} opacity={0.5} />
-      </Suspense>
+      {/* Background City (removed Suspense to show loading placeholder immediately) */}
+      <Hologram
+        modelPath="/models/cyberpunk_city.glb"
+        gltf={prefetchedGltf}
+        color={new THREE.Color('#6fb6ff')}
+        // Tighter framing so city occupies more of the hero area
+        scale={3}
+        position={[0, 0.5, -3]}
+        fitSize={10}
+        fitAxis="y"
+        onBoundsComputed={(data) => setModelBounds(data)}
+      />
+      {/* Soft contact shadow projected under the city to reinforce grounding */}
+      <ContactShadow position={[0, -1.2, -3]} radius={10} opacity={0.45} />
 
       {/* Grid alpha test automated snapshotter (dev only). Enable by setting window.__OBJEKTA_AUTO_ALPHA_TEST = true in the console */}
       {typeof window !== 'undefined' && window.__OBJEKTA_AUTO_ALPHA_TEST && (

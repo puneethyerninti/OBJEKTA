@@ -7,6 +7,8 @@
    design tokens — cyberpunk 3d — modified 2025-11-19
 */
 
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 /* Hide scrollbars globally for dashboard pages */
 @supports (scrollbar-width: none) {
   .dashboard-root,

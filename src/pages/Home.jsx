@@ -2,16 +2,11 @@
 // REFACTORED: Production-ready homepage with single Canvas architecture
 import React, { useCallback, useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import Navbar from "../components/Navbar";
-import Scene from "../components/Scene";
 import OverlayUI from "../components/OverlayUI";
 import HologramModal from "../components/HologramModal";
 import PreviewGLTF from "../components/PreviewGLTF";
 import { Canvas } from '@react-three/fiber';
 import { PerspectiveCamera } from '@react-three/drei';
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { useAuth } from "../contexts/AuthContext";
 import "../index.css";
 
@@ -55,6 +50,34 @@ const SHOWCASE_MODELS = [
     accent: "amber",
     poster: "/assets/porsche-poster.webp",
   },
+  {
+    src: "/models/black_dragon_with_idle_animation.glb",
+    title: "Black Dragon",
+    desc: "Creature rig with idle animation and layered surface detail.",
+    accent: "violet",
+    poster: "/assets/thumbnail-placeholder.svg",
+  },
+  {
+    src: "/models/flynns_arcade.glb",
+    title: "Flynn's Arcade",
+    desc: "Retro interior scene built for neon lighting and cinematic depth.",
+    accent: "cyan",
+    poster: "/assets/thumbnail-placeholder.svg",
+  },
+  {
+    src: "/models/gipsy_avenger_-_pacific_rim.glb",
+    title: "Gipsy Avenger",
+    desc: "Mech-scale asset optimized for real-time material previews.",
+    accent: "amber",
+    poster: "/assets/thumbnail-placeholder.svg",
+  },
+  {
+    src: "/models/iphone_17_pro.glb",
+    title: "iPhone 17 Pro",
+    desc: "Product visualization mockup with clean PBR finishes.",
+    accent: "cyan",
+    poster: "/assets/thumbnail-placeholder.svg",
+  },
 ];
 
 
@@ -66,6 +89,7 @@ export default function Home() {
   const [activeModel, setActiveModel] = useState(null);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const prefetchedRef = useRef({});
+  const backgroundVideoRef = useRef(null);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -75,18 +99,48 @@ export default function Home() {
     return () => mediaQuery.removeEventListener("change", handler);
   }, []);
 
-  // Prefetch showcase GLTFs on mount so previews appear quickly
+  // Keep background video reliably playing (with autoplay safeguards)
+  useEffect(() => {
+    const videoEl = backgroundVideoRef.current;
+    if (!videoEl) return;
+
+    // Ensure autoplay-friendly flags are set in JS as well
+    videoEl.muted = true;
+    videoEl.loop = true;
+    videoEl.playsInline = true;
+
+    const attemptPlay = () => {
+      const maybePlay = videoEl.play();
+      if (maybePlay && typeof maybePlay.catch === "function") {
+        maybePlay.catch(() => {});
+      }
+    };
+
+    // Try immediately and after metadata load for browsers that gate playback
+    attemptPlay();
+    videoEl.addEventListener("loadeddata", attemptPlay, { once: true });
+    videoEl.addEventListener("canplay", attemptPlay, { once: true });
+
+    return () => {
+      videoEl.removeEventListener("loadeddata", attemptPlay);
+      videoEl.removeEventListener("canplay", attemptPlay);
+    };
+  }, []);
+
+  // Prefetch showcase GLTFs so they appear quickly
   useEffect(() => {
     let mounted = true;
     // Prefetch as raw ArrayBuffer to allow parsing inside each Canvas instance.
-    SHOWCASE_MODELS.forEach((m) => {
-      if (prefetchedRef.current[m.src]) return;
-      fetch(m.src).then((res) => res.arrayBuffer()).then((arr) => {
+    const modelsToPrefetch = SHOWCASE_MODELS.map(m => m.src);
+
+    modelsToPrefetch.forEach((src) => {
+      if (prefetchedRef.current[src]) return;
+      fetch(src).then((res) => res.arrayBuffer()).then((arr) => {
         if (!mounted) return;
-        prefetchedRef.current[m.src] = arr;
+        prefetchedRef.current[src] = arr;
         setPrefetched({ ...prefetchedRef.current });
       }).catch((err) => {
-        console.debug('[Home] prefetch failed', m.src, err);
+        console.debug('[Home] prefetch failed', src, err);
       });
     });
 
@@ -140,6 +194,20 @@ export default function Home() {
       if (rafId) cancelAnimationFrame(rafId);
       cleanups.forEach((fn) => fn());
     };
+  }, [prefersReducedMotion]);
+
+  // Respect reduced motion for background playback
+  useEffect(() => {
+    const videoEl = backgroundVideoRef.current;
+    if (!videoEl) return;
+    if (prefersReducedMotion) {
+      videoEl.pause();
+      return;
+    }
+    const maybePlay = videoEl.play();
+    if (maybePlay && typeof maybePlay.catch === "function") {
+      maybePlay.catch(() => {});
+    }
   }, [prefersReducedMotion]);
 
   // Magnetic button effect (optimized)
@@ -205,15 +273,35 @@ export default function Home() {
 
   return (
     <div className="home-screen">
-      {/* Single Background Canvas - ONLY instance on page */}
-      <div style={{ 
-        position: "fixed", 
-        inset: 0, 
-        zIndex: 0, 
-        pointerEvents: "none",
-        opacity: 0.7,
-      }}>
-        <Scene />
+      {/* Background video layer (replaces GLB city) */}
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 0,
+          pointerEvents: "none",
+          overflow: "hidden",
+          opacity: 0.8,
+          background: "radial-gradient(circle at 20% 20%, rgba(37, 99, 235, 0.25), transparent 40%), radial-gradient(circle at 80% 60%, rgba(168, 85, 247, 0.18), transparent 45%)",
+        }}
+        aria-hidden="true"
+      >
+        <video
+          ref={backgroundVideoRef}
+          src="/videos/cyberpunk.mp4"
+          autoPlay
+          muted
+          loop
+          playsInline
+          preload="auto"
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            filter: "saturate(1.1) contrast(1.05)",
+            transform: "scale(1.02)",
+          }}
+        />
       </div>
       
       {/* UI Overlay (non-blocking) */}
@@ -238,8 +326,6 @@ export default function Home() {
       <div className="grid-glow" aria-hidden="true" />
       <div className="scanline-overlay" aria-hidden="true" />
       
-      <Navbar />
-
       <main className="home-shell">
         <section className="hero-grid">
           <div className="hero-copy">
@@ -279,18 +365,53 @@ export default function Home() {
               Glass panels, depth cues, and tactile feedback keep complex scene management intuitive for distributed art teams.
             </p>
           </div>
-          <div className="features-grid">
-            {FEATURE_ITEMS.map((item) => (
-              <article 
-                key={item.title} 
-                className="feature-card-mini panel-glass card-3d is-visible" 
-                data-tilt="8"
-              >
-                <span className="feature-badge">{item.badge}</span>
-                <h3 className="feature-title">{item.title}</h3>
-                <p className="feature-desc">{item.desc}</p>
-              </article>
-            ))}
+          <div className="features-scroll-wrapper">
+            <div className="features-scroll-track" style={{ animationPlayState: 'running' }}>
+              {[...FEATURE_ITEMS, ...FEATURE_ITEMS].map((item, idx) => (
+                <article 
+                  key={`${item.title}-${idx}`} 
+                  className="feature-card-premium"
+                  data-tilt="6"
+                >
+                  <div className="feature-card-glow" aria-hidden="true"></div>
+                  <div className="feature-badge-wrapper">
+                    <span className="feature-badge-premium">{item.badge}</span>
+                    <div className="feature-badge-trail"></div>
+                  </div>
+                  <div className="feature-icon-container">
+                    <svg className="feature-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      {idx % 3 === 0 && (
+                        <>
+                          <path d="M20 7L12 3L4 7M20 7L12 11M20 7V17L12 21M12 11L4 7M12 11V21M4 7V17L12 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          <circle cx="12" cy="12" r="2" fill="currentColor" opacity="0.6"/>
+                        </>
+                      )}
+                      {idx % 3 === 1 && (
+                        <>
+                          <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/>
+                          <path d="M3 9H21M9 21V9" stroke="currentColor" strokeWidth="2"/>
+                          <circle cx="15" cy="15" r="3" stroke="currentColor" strokeWidth="2"/>
+                        </>
+                      )}
+                      {idx % 3 === 2 && (
+                        <>
+                          <path d="M13 2L3 14H12L11 22L21 10H12L13 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          <circle cx="12" cy="12" r="1.5" fill="currentColor" opacity="0.8"/>
+                        </>
+                      )}
+                    </svg>
+                  </div>
+                  <h3 className="feature-title-premium">{item.title}</h3>
+                  <p className="feature-desc-premium">{item.desc}</p>
+                  <div className="feature-card-border" aria-hidden="true"></div>
+                  <div className="feature-hover-indicator">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                      <path d="M6 12L10 8L6 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </div>
+                </article>
+              ))}
+            </div>
           </div>
         </section>
 

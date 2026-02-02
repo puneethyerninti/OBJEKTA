@@ -4,7 +4,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js",
+    "dev": "cross-env NODE_NO_WARNINGS=1 nodemon server.js",
     "test": "node --test"
   },
   "dependencies": {
@@ -23,6 +23,8 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
+    "baseline-browser-mapping": "^2.9.18",
+    "cross-env": "^10.1.0",
     "nodemon": "^3.1.10"
   }
 }

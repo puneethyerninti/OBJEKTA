@@ -18,7 +18,9 @@ function computeDefaultApiBase() {
   }
 }
 
-const runtimeBase = typeof window !== "undefined" ? window.__OBJEKTA_API_BASE : null;
+const runtimeBase = typeof window !== "undefined"
+  ? (window.__OBJEKTA_API_BASE || window.__OBJEKTA_API_URL__)
+  : null;
 const envBase = typeof import.meta !== "undefined" && import.meta.env ? import.meta.env.VITE_API_BASE : null;
 
 export const API_BASE = runtimeBase || envBase || computeDefaultApiBase();

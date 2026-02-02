@@ -69,6 +69,7 @@ void main() {
  */
 export default function Hologram({
     modelPath,
+    gltf: prefetchedGltf,
     color = new THREE.Color('#1e90ff'),
     fitSize = 2.8,
     fitAxis = 'max',
@@ -101,6 +102,35 @@ export default function Hologram({
 
     useEffect(() => {
         let cancelled = false;
+
+        // If prefetched GLTF is provided, use it directly
+        if (prefetchedGltf) {
+            if (prefetchedGltf instanceof ArrayBuffer) {
+                // Parse the ArrayBuffer
+                const loader = new GLTFLoader();
+                extendLoader(loader);
+                try {
+                    loader.parse(prefetchedGltf, '', (data) => {
+                        if (cancelled) return;
+                        setGltf(data);
+                        setIsLoaded(true);
+                        console.log('[Hologram] Loaded from prefetched data', modelPath);
+                    }, (err) => {
+                        console.error('[Hologram] Prefetched GLTF parse error', err);
+                        if (!cancelled) setHasError(true);
+                    });
+                } catch (e) {
+                    console.error('[Hologram] Prefetched GLTF parse exception', e);
+                    if (!cancelled) setHasError(true);
+                }
+            } else if (prefetchedGltf.scene) {
+                // Already parsed GLTF object
+                setGltf(prefetchedGltf);
+                setIsLoaded(true);
+                console.log('[Hologram] Using prefetched GLTF object', modelPath);
+            }
+            return () => { cancelled = true; };
+        }
 
         // Create a LoadingManager that returns a safe placeholder for blob: texture URLs
         const manager = new THREE.LoadingManager();
@@ -173,7 +203,7 @@ export default function Hologram({
             cancelled = true;
             try { loader.dispose && loader.dispose(); } catch (e) {}
         };
-    }, [modelPath, extendLoader]);
+    }, [modelPath, prefetchedGltf, extendLoader]);
 
     // CRITICAL: Clone the scene to avoid mutating cached GLTF data
     const scene = useMemo(() => {
@@ -312,7 +342,14 @@ export default function Hologram({
         }
     });
     // Render placeholder while loading so model appears instantly
-    const placeholder = (
+    // For very large background models (like the city) use a wider placeholder
+    const isBackgroundCity = typeof modelPath === 'string' && modelPath.toLowerCase().includes('cyberpunk_city');
+    const placeholder = isBackgroundCity ? (
+        <mesh rotation={[0, 0, 0]} position={[0, fitSize * 0.1, 0]}>
+            <boxGeometry args={[fitSize * 3.2, fitSize * 1.2, fitSize * 2.4]} />
+            <meshStandardMaterial color={color.clone().multiplyScalar(0.85)} opacity={0.85} transparent />
+        </mesh>
+    ) : (
         <mesh rotation={[0, 0, 0]} position={[0, fitSize * 0.15, 0]}>
             <boxGeometry args={[fitSize, fitSize * 0.4, fitSize]} />
             <meshStandardMaterial color={color.clone().multiplyScalar(0.6)} opacity={0.55} transparent />

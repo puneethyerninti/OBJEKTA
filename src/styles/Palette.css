@@ -1,5 +1,7 @@
 /* src/styles/Palette.css (polished) */
 
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 :root {
   --radius: 12px;
   --gap: 12px;
@@ -34,7 +36,7 @@
 /* header */
 .palette-header {
   color: var(--text-light);
-  font-family: 'Orbitron', sans-serif;
+  font-family: 'Inter', sans-serif;
   font-size: 16px;
   font-weight: 700;
   text-align: center;

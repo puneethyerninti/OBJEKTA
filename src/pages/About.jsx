@@ -1,60 +1,91 @@
 // src/pages/About.jsx
 import React from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../contexts/AuthContext";
 
 export default function About() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+
   return (
-    <div className="site-wrapper bg-gray-900 text-white">
-      {/* Page container inside main */}
-      <main className="px-6 py-16 max-w-6xl mx-auto">
-        {/* Hero Section */}
-        <section className="text-center mb-16">
-          <h1 className="text-5xl font-extrabold text-cyan-400 drop-shadow-[0_0_10px_#00ffff]">
-            About OBJEKTA
-          </h1>
-          <p className="mt-4 text-lg text-gray-300 max-w-2xl mx-auto">
-            OBJEKTA is an interactive 3D object editor built for creators,
-            developers, and designers. Craft, customize, and visualize 3D
-            models directly in your browser — no heavy software needed.
-          </p>
-        </section>
+    <div className="site-wrapper">
+      {/* Background effects */}
+      <div className="grid-glow" aria-hidden="true" />
+      <div className="scanline-overlay" aria-hidden="true" />
 
-        {/* Mission Section */}
-        <section className="mb-16">
-          <h2 className="text-3xl font-semibold text-cyan-300 mb-4 text-center">
-            Our Mission
-          </h2>
-          <p className="text-gray-300 text-center max-w-3xl mx-auto">
-            We aim to make 3D design accessible to everyone. Whether you’re a
-            hobbyist, a student learning graphics, or a developer prototyping
-            scenes — OBJEKTA empowers you to create and experiment with ease.
-          </p>
-        </section>
-
-        {/* Features Section */}
-        <section>
-          <h2 className="text-3xl font-semibold text-cyan-300 mb-8 text-center">
-            Why Choose OBJEKTA
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div className="feature-card bg-gray-800 p-6 rounded-lg shadow-lg">
-              <h3 className="text-xl font-bold text-cyan-400 mb-2">🚀 Lightweight</h3>
-              <p className="text-gray-300">
-                No bulky installs. Everything runs right in your browser with blazing speed.
+      <main className="home-shell">
+        <section className="about-section">
+          <div className="about-header">
+            <h2 className="section-title">Redefining 3D Creation</h2>
+            <p className="section-subtitle">
+              Where innovation meets immersion in the browser.
+            </p>
+          </div>
+          <div className="about-content">
+            <div className="about-text">
+              <p>
+                Objekta represents the future of 3D design—a revolutionary platform that brings professional-grade
+                tools directly to your browser. Born from the vision of democratizing creative technology, we've
+                eliminated the barriers between imagination and execution.
               </p>
+              <p>
+                Our WebGL-powered engine delivers desktop-level performance with zero installation. Experience
+                real-time collaboration, advanced material systems, and GPU-accelerated rendering that rivals
+                traditional CAD software. From concept to production, Objekta empowers creators to build
+                extraordinary worlds without compromise.
+              </p>
+              <div className="about-features">
+                <div className="feature-highlight">
+                  <div className="feature-icon">⚡</div>
+                  <h4>Lightning Fast</h4>
+                  <p>Sub-second rendering with WebAssembly acceleration</p>
+                </div>
+                <div className="feature-highlight">
+                  <div className="feature-icon">🌐</div>
+                  <h4>Cloud Native</h4>
+                  <p>Seamless collaboration across any device, anywhere</p>
+                </div>
+                <div className="feature-highlight">
+                  <div className="feature-icon">🎨</div>
+                  <h4>Physically Based</h4>
+                  <p>Industry-standard PBR materials and lighting</p>
+                </div>
+              </div>
             </div>
-            <div className="feature-card bg-gray-800 p-6 rounded-lg shadow-lg">
-              <h3 className="text-xl font-bold text-cyan-400 mb-2">🎨 Interactive Editing</h3>
-              <p className="text-gray-300">
-                Drag, rotate, scale, and customize objects with a smooth UI.
-              </p>
-            </div>
-            <div className="feature-card bg-gray-800 p-6 rounded-lg shadow-lg">
-              <h3 className="text-xl font-bold text-cyan-400 mb-2">🌍 Web-Based</h3>
-              <p className="text-gray-300">
-                Access your projects anywhere, anytime. All you need is a browser.
-              </p>
+            <div className="about-stats">
+              <div className="stat-item">
+                <span className="stat-number">25k+</span>
+                <span className="stat-label">Creative Professionals</span>
+              </div>
+              <div className="stat-item">
+                <span className="stat-number">500k+</span>
+                <span className="stat-label">3D Scenes Built</span>
+              </div>
+              <div className="stat-item">
+                <span className="stat-number">4.9/5</span>
+                <span className="stat-label">User Satisfaction</span>
+              </div>
+              <div className="stat-item">
+                <span className="stat-number">24/7</span>
+                <span className="stat-label">Global Support</span>
+              </div>
             </div>
           </div>
+        </section>
+
+        {/* Call to Action */}
+        <section className="text-center py-16">
+          <h2 className="section-title mb-4">Ready to Transform Your Workflow?</h2>
+          <p className="section-subtitle mb-8">
+            Join thousands of creators already building with Objekta.
+          </p>
+          <button
+            onClick={() => navigate(user ? '/dashboard' : '/login')}
+            className="cta-button cta-primary"
+            data-magnetic="0.15"
+          >
+            {user ? 'Enter Studio' : 'Start Free Trial'}
+          </button>
         </section>
       </main>
     </div>
