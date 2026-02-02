@@ -3980,10 +3980,6 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
   .hero-holo-viewer { height: 320px; }
   .ticker-track { animation-duration: 24s; }
 }
-  text-transform: uppercase;
-  letter-spacing: 0.15em;
-  font-weight: 700;
-}
 
 .flicker-anim {
   animation: flicker 3s infinite alternate;
