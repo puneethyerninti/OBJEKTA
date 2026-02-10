@@ -1,9 +1,11 @@
 // src/utils/api.js
 // Centralized API base + helper for Vite / runtime overrides
-// Priority order: runtime override → Vite env → smart fallback (same origin for prod, localhost:5000 for dev)
+// Priority order: runtime override → Vite env → smart fallback (same origin for prod, localhost:5000 for dev/render)
+
+const FALLBACK_HOSTED_BASE = "https://objekta-backend.onrender.com"; // public backend used in render.yaml
 
 function computeDefaultApiBase() {
-  if (typeof window === "undefined") return "http://localhost:5000";
+  if (typeof window === "undefined") return FALLBACK_HOSTED_BASE;
   try {
     const { protocol, hostname, origin } = window.location;
     const isLocalHost = /^(localhost|127\.0\.0\.1)$/i.test(hostname);
@@ -11,10 +13,12 @@ function computeDefaultApiBase() {
       // During local dev we typically run backend on port 5000 regardless of frontend port
       return `${protocol}//${hostname}:5000`;
     }
-    // In production, assume backend shares the same origin as the served app
+    // On vercel/static hosting there is no backend, so route to hosted API
+    if (/vercel\.app$/i.test(hostname)) return FALLBACK_HOSTED_BASE;
+    // In production (render), assume backend shares the same origin as the served app
     return origin;
   } catch (e) {
-    return "http://localhost:5000";
+    return FALLBACK_HOSTED_BASE;
   }
 }
 

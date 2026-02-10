@@ -4,6 +4,13 @@ import App from "./App";
 import "./index.css";
 import "./patchThreeChunks";
 
+// Surface API base for runtime overrides; safe to read Vite envs inside module context
+if (typeof window !== "undefined") {
+  window.__OBJEKTA_API_BASE = window.__OBJEKTA_API_BASE
+    || import.meta.env.VITE_API_BASE
+    || import.meta.env.VITE_API_URL;
+}
+
 // Ensure touch/wheel listeners remain cancelable when we need preventDefault
 // (Chrome may default some listeners to passive=true).
 (() => {
