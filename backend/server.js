@@ -37,6 +37,7 @@ const envOrigins = (process.env.FRONTEND_ORIGIN || "")
 const defaultProdOrigins = [
   "https://objekta-frontend.onrender.com",
   "https://objekta5465.vercel.app",
+  "https://objekta-wy7g.vercel.app",
 ];
 
 const isAllowedOrigin = (origin) => {
