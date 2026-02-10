@@ -29,29 +29,34 @@ app.use(express.json({ limit: "200mb" }));
 app.use(express.urlencoded({ limit: "200mb", extended: true }));
 app.use(morgan("dev"));
 
-// CORS: allow the configured FRONTEND_ORIGIN, and during development allow any localhost origin
-const frontendOrigin = process.env.FRONTEND_ORIGIN || null;
-if (process.env.NODE_ENV !== "production") {
-  app.use(
-    cors({
-      origin: (origin, callback) => {
-        // allow non-browser tools (no origin)
-        if (!origin) return callback(null, true);
-        if (frontendOrigin && origin === frontendOrigin) return callback(null, true);
-        // allow any localhost or 127.0.0.1 origin (any port)
-        try {
-          if (/^https?:\/\/localhost(:\d+)?$/i.test(origin) || /^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(origin)) return callback(null, true);
-        } catch (e) {}
-        return callback(new Error("Not allowed by CORS"));
-      },
-      credentials: true,
-    })
-  );
-} else {
-  app.use(
-    cors({ origin: frontendOrigin || "http://localhost:5000", credentials: true })
-  );
-}
+// CORS: allow configured origins (comma-separated), common production frontends, and localhost
+const envOrigins = (process.env.FRONTEND_ORIGIN || "")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+const defaultProdOrigins = [
+  "https://objekta-frontend.onrender.com",
+  "https://objekta5465.vercel.app",
+];
+
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true; // allow curl/postman
+  if (envOrigins.includes(origin)) return true;
+  if (defaultProdOrigins.includes(origin)) return true;
+  if (/^https?:\/\/localhost(:\d+)?$/i.test(origin)) return true;
+  if (/^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(origin)) return true;
+  return false;
+};
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (isAllowedOrigin(origin)) return callback(null, true);
+      return callback(new Error(`Not allowed by CORS: ${origin || "<unknown>"}`));
+    },
+    credentials: true,
+  })
+);
 
 // ---------- Ensure uploads directory exists ----------
 const uploadDir = path.join(__dirname, "uploads");
