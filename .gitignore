@@ -1,7 +1,6 @@
 .env
 node_modules
 dist/
-public/models/
 public/*.glb
 public/videos/
 .history/
