@@ -2,11 +2,15 @@
 // REFACTORED: Production-ready homepage with single Canvas architecture
 import React, { useCallback, useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import OverlayUI from "../components/OverlayUI";
 import HologramModal from "../components/HologramModal";
 import PreviewGLTF from "../components/PreviewGLTF";
+import Scene from "../components/Scene";
+import OverlayUI from "../components/OverlayUI";
 import { Canvas } from '@react-three/fiber';
 import { PerspectiveCamera } from '@react-three/drei';
+import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { useAuth } from "../contexts/AuthContext";
 import { assetUrl } from "../utils/assets";
 import "../index.css";
@@ -81,16 +85,56 @@ const SHOWCASE_MODELS = [
   },
 ];
 
+const createPreviewLoader = () => {
+  const manager = new THREE.LoadingManager();
+
+  class NullTextureLoader extends THREE.TextureLoader {
+    load(url, onLoad) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1;
+      canvas.height = 1;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = 'rgba(0,0,0,0)';
+      ctx.fillRect(0, 0, 1, 1);
+      const tex = new THREE.Texture(canvas);
+      tex.encoding = THREE.sRGBEncoding;
+      tex.needsUpdate = true;
+      if (onLoad) setTimeout(() => onLoad(tex), 0);
+      return tex;
+    }
+  }
+
+  manager.addHandler(/blob:/, new NullTextureLoader(manager));
+  manager.addHandler(/\.(jpg|jpeg|png|gif|bmp|tga|dds|ktx|ktx2|webp)$/i, new NullTextureLoader(manager));
+
+  const loader = new GLTFLoader(manager);
+  loader.setCrossOrigin('anonymous');
+  if (typeof MeshoptDecoder !== 'undefined' && MeshoptDecoder) {
+    try { loader.setMeshoptDecoder(MeshoptDecoder); } catch (e) {}
+  }
+
+  return loader;
+};
+
 
 
 export default function Home() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const [saveData, setSaveData] = useState(false);
+  const [deviceTier, setDeviceTier] = useState("full");
+  const [showcaseVisible, setShowcaseVisible] = useState(false);
+  const [visibleCards, setVisibleCards] = useState({});
+  const [interactionsEnabled, setInteractionsEnabled] = useState(true);
   const [prefetched, setPrefetched] = useState({});
+  const [parsedPrefetch, setParsedPrefetch] = useState({});
+  const [progressMap, setProgressMap] = useState({});
   const [activeModel, setActiveModel] = useState(null);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const prefetchedRef = useRef({});
-  const backgroundVideoRef = useRef(null);
+  const parsedRef = useRef({});
+  const progressRef = useRef({});
+  const heroVisibleRef = useRef(true);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -100,57 +144,203 @@ export default function Home() {
     return () => mediaQuery.removeEventListener("change", handler);
   }, []);
 
-  // Keep background video reliably playing (with autoplay safeguards)
   useEffect(() => {
-    const videoEl = backgroundVideoRef.current;
-    if (!videoEl) return;
-
-    // Ensure autoplay-friendly flags are set in JS as well
-    videoEl.muted = true;
-    videoEl.loop = true;
-    videoEl.playsInline = true;
-
-    const attemptPlay = () => {
-      const maybePlay = videoEl.play();
-      if (maybePlay && typeof maybePlay.catch === "function") {
-        maybePlay.catch(() => {});
-      }
-    };
-
-    // Try immediately and after metadata load for browsers that gate playback
-    attemptPlay();
-    videoEl.addEventListener("loadeddata", attemptPlay, { once: true });
-    videoEl.addEventListener("canplay", attemptPlay, { once: true });
-
-    return () => {
-      videoEl.removeEventListener("loadeddata", attemptPlay);
-      videoEl.removeEventListener("canplay", attemptPlay);
-    };
+    if (typeof navigator === "undefined") return undefined;
+    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    const save = !!connection?.saveData;
+    setSaveData(save);
+    const cores = typeof navigator.hardwareConcurrency === "number" ? navigator.hardwareConcurrency : 8;
+    const tier = save ? "lite" : cores <= 6 ? "medium" : "full";
+    setDeviceTier(tier);
+    return undefined;
   }, []);
+
+  useEffect(() => {
+    const updateInteractions = () => {
+      setInteractionsEnabled(!document.hidden && heroVisibleRef.current && !prefersReducedMotion);
+    };
+    if (typeof document === "undefined") return undefined;
+    document.addEventListener("visibilitychange", updateInteractions);
+    updateInteractions();
+    return () => document.removeEventListener("visibilitychange", updateInteractions);
+  }, [prefersReducedMotion]);
+
 
   // Prefetch showcase GLTFs so they appear quickly
   useEffect(() => {
+    if (saveData) return;
     let mounted = true;
-    // Prefetch as raw ArrayBuffer to allow parsing inside each Canvas instance.
-    const modelsToPrefetch = SHOWCASE_MODELS.map((m) => assetUrl(m.src));
+    const controllers = [];
+    const updateProgress = (src, value) => {
+      if (!mounted) return;
+      const clamped = Math.min(100, Math.max(0, Math.round(value)));
+      progressRef.current[src] = clamped;
+      setProgressMap({ ...progressRef.current });
+    };
 
-    modelsToPrefetch.forEach((src) => {
-      if (prefetchedRef.current[src]) return;
-      fetch(src).then((res) => res.arrayBuffer()).then((arr) => {
-        if (!mounted) return;
-        prefetchedRef.current[src] = arr;
-        setPrefetched({ ...prefetchedRef.current });
-      }).catch((err) => {
-        console.debug('[Home] prefetch failed', src, err);
+    const modelsToPrefetch = SHOWCASE_MODELS.map((m) => assetUrl(m.src));
+    const eager = modelsToPrefetch.slice(0, 3);
+    const deferred = modelsToPrefetch.slice(3);
+
+    if (typeof document !== "undefined") {
+      eager.forEach((href) => {
+        if (document.querySelector(`link[rel="preload"][href="${href}"]`)) return;
+        const link = document.createElement("link");
+        link.rel = "preload";
+        link.as = "fetch";
+        link.href = href;
+        link.crossOrigin = "anonymous";
+        document.head.appendChild(link);
       });
+    }
+
+    const loader = createPreviewLoader();
+
+    const fetchWithProgress = async (src) => {
+      updateProgress(src, 5);
+      const controller = new AbortController();
+      controllers.push(controller);
+      const res = await fetch(src, { cache: "force-cache", priority: "high", signal: controller.signal });
+      const total = Number(res.headers.get('content-length') || 0);
+      if (!res.body) {
+        const arr = await res.arrayBuffer();
+        updateProgress(src, total ? 90 : 75);
+        return arr;
+      }
+      const reader = res.body.getReader();
+      let loaded = 0;
+      const chunks = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        loaded += value.byteLength;
+        chunks.push(value);
+        if (total) {
+          updateProgress(src, (loaded / total) * 90);
+        } else {
+          updateProgress(src, Math.min(90, (progressRef.current[src] || 10) + 5));
+        }
+      }
+      const combined = new Uint8Array(loaded);
+      let offset = 0;
+      chunks.forEach((chunk) => {
+        combined.set(chunk, offset);
+        offset += chunk.length;
+      });
+      updateProgress(src, total ? 92 : 88);
+      return combined.buffer;
+    };
+
+    const loadModel = async (src) => {
+      if (prefetchedRef.current[src] && parsedRef.current[src]) {
+        updateProgress(src, 100);
+        return;
+      }
+      try {
+        const arr = prefetchedRef.current[src] || await fetchWithProgress(src);
+        if (!arr || !mounted) return;
+        if (!prefetchedRef.current[src]) {
+          prefetchedRef.current[src] = arr;
+          setPrefetched({ ...prefetchedRef.current });
+        }
+        if (parsedRef.current[src]) {
+          updateProgress(src, 100);
+          return;
+        }
+        loader.parse(arr, '', (data) => {
+          if (!mounted) return;
+          parsedRef.current[src] = data;
+          setParsedPrefetch({ ...parsedRef.current });
+          updateProgress(src, 100);
+        }, (err) => {
+          console.debug('[Home] preload parse failed', src, err);
+          updateProgress(src, 100);
+        });
+      } catch (err) {
+        console.debug('[Home] prefetch failed', src, err);
+      }
+    };
+
+    eager.forEach((src) => {
+      if (prefetchedRef.current[src] && parsedRef.current[src]) {
+        updateProgress(src, 100);
+        return;
+      }
+      loadModel(src);
     });
 
-    return () => { mounted = false; };
+    const idleHandle = typeof requestIdleCallback !== "undefined"
+      ? requestIdleCallback
+      : (cb) => setTimeout(cb, 500);
+
+    if (showcaseVisible) {
+      deferred.forEach((src) => loadModel(src));
+    } else {
+      idleHandle(() => {
+        if (!mounted || !showcaseVisible) return;
+        deferred.forEach((src) => loadModel(src));
+      });
+    }
+
+    return () => {
+      mounted = false;
+      controllers.forEach((c) => c.abort());
+    };
+  }, [saveData, showcaseVisible]);
+
+  // Track hero visibility for interaction gating
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return undefined;
+    const hero = document.querySelector(".hero-grid");
+    if (!hero) return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        heroVisibleRef.current = entry.isIntersecting;
+        setInteractionsEnabled(!document.hidden && heroVisibleRef.current && !prefersReducedMotion);
+      });
+    }, { threshold: 0.2 });
+    observer.observe(hero);
+    return () => observer.disconnect();
+  }, [prefersReducedMotion]);
+
+  // Observe showcase section to trigger deferred prefetch
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return undefined;
+    const section = document.querySelector("#showcase");
+    if (!section) return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) setShowcaseVisible(true);
+      });
+    }, { rootMargin: "200px" });
+    observer.observe(section);
+    return () => observer.disconnect();
   }, []);
+
+  // Track showcase cards for lazy Canvas mount
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return undefined;
+    const cards = document.querySelectorAll(".showcase-card-v2");
+    if (!cards.length) return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      setVisibleCards((prev) => {
+        const next = { ...prev };
+        entries.forEach((entry) => {
+          const key = entry.target.dataset.key;
+          if (!key) return;
+          next[key] = entry.isIntersecting;
+        });
+        return next;
+      });
+    }, { rootMargin: "200px" });
+    cards.forEach((card) => observer.observe(card));
+    return () => observer.disconnect();
+  }, []);
+
 
   // Tilt effect (optimized with RAF throttling)
   useEffect(() => {
-    if (prefersReducedMotion) return;
+    if (prefersReducedMotion || !interactionsEnabled) return;
     const tiltNodes = document.querySelectorAll("[data-tilt]");
     if (!tiltNodes.length) return;
     
@@ -195,25 +385,12 @@ export default function Home() {
       if (rafId) cancelAnimationFrame(rafId);
       cleanups.forEach((fn) => fn());
     };
-  }, [prefersReducedMotion]);
+  }, [prefersReducedMotion, interactionsEnabled]);
 
-  // Respect reduced motion for background playback
-  useEffect(() => {
-    const videoEl = backgroundVideoRef.current;
-    if (!videoEl) return;
-    if (prefersReducedMotion) {
-      videoEl.pause();
-      return;
-    }
-    const maybePlay = videoEl.play();
-    if (maybePlay && typeof maybePlay.catch === "function") {
-      maybePlay.catch(() => {});
-    }
-  }, [prefersReducedMotion]);
 
   // Magnetic button effect (optimized)
   useEffect(() => {
-    if (prefersReducedMotion) return;
+    if (prefersReducedMotion || !interactionsEnabled) return;
     const magneticNodes = document.querySelectorAll("[data-magnetic]");
     if (!magneticNodes.length) return;
     
@@ -258,7 +435,7 @@ export default function Home() {
       if (rafId) cancelAnimationFrame(rafId);
       cleanups.forEach((fn) => fn());
     };
-  }, [prefersReducedMotion]);
+  }, [prefersReducedMotion, interactionsEnabled]);
 
   const handleLaunch = useCallback(() => {
     navigate(user ? "/dashboard" : "/login");
@@ -274,62 +451,12 @@ export default function Home() {
 
   return (
     <div className="home-screen">
-      {/* Background video layer (replaces GLB city) */}
-      <div
-        style={{
-          position: "fixed",
-          inset: 0,
-          zIndex: 0,
-          pointerEvents: "none",
-          overflow: "hidden",
-          opacity: 0.8,
-          background: "radial-gradient(circle at 20% 20%, rgba(37, 99, 235, 0.25), transparent 40%), radial-gradient(circle at 80% 60%, rgba(168, 85, 247, 0.18), transparent 45%)",
-        }}
-        aria-hidden="true"
-      >
-        <video
-          ref={backgroundVideoRef}
-          src={assetUrl("videos/cyberpunk.mp4")}
-          autoPlay
-          muted
-          loop
-          playsInline
-          preload="auto"
-          style={{
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            filter: "saturate(1.1) contrast(1.05)",
-            transform: "scale(1.02)",
-          }}
-        />
+      <div className="scene-background" aria-hidden="true">
+        <Scene />
       </div>
-      
-      {/* UI Overlay (non-blocking) */}
-      <div style={{ 
-        position: "fixed", 
-        inset: 0, 
-        zIndex: 1, 
-        pointerEvents: "none",
-        opacity: 0.85,
-      }}>
-        <OverlayUI />
-      </div>
-
-      {/* Ambient particles (CSS-only, reduced from 3 to 2) */}
-      {!prefersReducedMotion && (
-        <div className="ambient-particles" aria-hidden="true">
-          <div className="particle particle-1" />
-          <div className="particle particle-2" />
-        </div>
-      )}
-
-      <div className="grid-glow" aria-hidden="true" />
-      <div className="scanline-overlay" aria-hidden="true" />
-      
       <main className="home-shell">
-        <section className="hero-grid">
-          <div className="hero-copy">
+        <section className="hero-grid" style={{ position: "relative", overflow: "hidden" }}>
+          <div className="hero-copy" style={{ position: "relative", zIndex: "var(--z-content)" }}>
             
             <h1 className="hero-title">
               Design immersive
@@ -351,6 +478,7 @@ export default function Home() {
                 type="button"
                 className="cta-button cta-secondary"
                 data-magnetic="0.1"
+                aria-controls="showcase"
                 onClick={() => document.querySelector("#showcase")?.scrollIntoView({ behavior: "smooth" })}
               >
                 Watch Workflow
@@ -367,49 +495,39 @@ export default function Home() {
             </p>
           </div>
           <div className="features-scroll-wrapper">
-            <div className="features-scroll-track" style={{ animationPlayState: 'running' }}>
-              {[...FEATURE_ITEMS, ...FEATURE_ITEMS].map((item, idx) => (
-                <article 
-                  key={`${item.title}-${idx}`} 
+            <div className="features-scroll-track">
+              {FEATURE_ITEMS.map((item, idx) => (
+                <article
+                  key={`${item.title}-${idx}`}
                   className="feature-card-premium"
                   data-tilt="6"
                 >
                   <div className="feature-card-glow" aria-hidden="true"></div>
-                  <div className="feature-badge-wrapper">
-                    <span className="feature-badge-premium">{item.badge}</span>
-                    <div className="feature-badge-trail"></div>
-                  </div>
                   <div className="feature-icon-container">
                     <svg className="feature-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                       {idx % 3 === 0 && (
                         <>
-                          <path d="M20 7L12 3L4 7M20 7L12 11M20 7V17L12 21M12 11L4 7M12 11V21M4 7V17L12 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                          <circle cx="12" cy="12" r="2" fill="currentColor" opacity="0.6"/>
+                          <path d="M20 7L12 3L4 7M20 7L12 11M20 7V17L12 21M12 11L4 7M12 11V21M4 7V17L12 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          <circle cx="12" cy="12" r="2" fill="currentColor" opacity="0.6" />
                         </>
                       )}
                       {idx % 3 === 1 && (
                         <>
-                          <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/>
-                          <path d="M3 9H21M9 21V9" stroke="currentColor" strokeWidth="2"/>
-                          <circle cx="15" cy="15" r="3" stroke="currentColor" strokeWidth="2"/>
+                          <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2" />
+                          <path d="M3 9H21M9 21V9" stroke="currentColor" strokeWidth="2" />
+                          <circle cx="15" cy="15" r="3" stroke="currentColor" strokeWidth="2" />
                         </>
                       )}
                       {idx % 3 === 2 && (
                         <>
-                          <path d="M13 2L3 14H12L11 22L21 10H12L13 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                          <circle cx="12" cy="12" r="1.5" fill="currentColor" opacity="0.8"/>
+                          <path d="M13 2L3 14H12L11 22L21 10H12L13 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          <circle cx="12" cy="12" r="1.5" fill="currentColor" opacity="0.8" />
                         </>
                       )}
                     </svg>
                   </div>
                   <h3 className="feature-title-premium">{item.title}</h3>
                   <p className="feature-desc-premium">{item.desc}</p>
-                  <div className="feature-card-border" aria-hidden="true"></div>
-                  <div className="feature-hover-indicator">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                      <path d="M6 12L10 8L6 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                  </div>
                 </article>
               ))}
             </div>
@@ -430,43 +548,70 @@ export default function Home() {
               const modelSrc = assetUrl(model.src);
               const posterSrc = assetUrl(model.poster);
               const resolvedModel = { ...model, src: modelSrc, poster: posterSrc };
+              const previewReady = Boolean(parsedPrefetch[modelSrc] || prefetched[modelSrc]);
+              const progress = progressMap[modelSrc] ?? 0;
+              const cardKey = model.title;
+              const isVisible = visibleCards[cardKey];
+              const shouldRenderPreview = showcaseVisible && isVisible;
+              const dprCap = deviceTier === "full" ? 1.5 : deviceTier === "medium" ? 1.1 : 1;
+              const ambientIntensity = deviceTier === "full" ? 1.1 : deviceTier === "medium" ? 0.95 : 0.75;
+              const dirIntensity = deviceTier === "full" ? 0.9 : deviceTier === "medium" ? 0.75 : 0.6;
               return (
               <article
                 key={model.title}
                 className="showcase-card-v2"
+                data-key={cardKey}
                 onClick={() => handleShowcaseOpen(resolvedModel)}
                 style={{ animationDelay: `${index * 0.15}s` }}
               >
-                {/* Static preview (no Canvas - use poster image) */}
                 <div className="showcase-preview">
                     <div className={`showcase-poster showcase-poster-${model.accent}`} style={{ backgroundColor: 'rgba(16, 18, 27, 0.95)' }}>
-                      <img
-                        src={posterSrc}
-                        alt={model.title}
-                        loading="lazy"
-                        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: 0.65 }}
-                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                      />
-                      {/* If we prefetched the GLTF, render it immediately as a static preview */}
                       <div className="preview-canvas" style={{ width: '100%', height: '100%', position: 'relative' }}>
-                        {/* Always render the actual model preview (static, no per-part animation) */}
-                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <Canvas
-                            style={{ width: '100%', height: '100%' }}
-                            dpr={Math.min(2, window.devicePixelRatio || 1)}
-                            gl={{ antialias: true, alpha: true }}
-                            onCreated={({ gl }) => {
-                              try {
-                                if (typeof gl.useLegacyLights !== 'undefined') gl.useLegacyLights = false;
-                              } catch (e) {}
-                            }}
-                          >
-                            <PerspectiveCamera makeDefault fov={75} position={[-0.5, 1, 10]} />
-                            <ambientLight intensity={0.9} />
-                            <directionalLight intensity={0.6} position={[5, 5, 5]} />
-                            <PreviewGLTF gltf={prefetched[modelSrc]} src={modelSrc} fitSize={6} fitAxis="y" position={[0, 0, 0]} />
-                          </Canvas>
-                        </div>
+                        {!previewReady && (
+                          <div className="preview-loader rich-loader">
+                            <div className="loader-glow" aria-hidden="true" />
+                            <div className="loader-ring" aria-hidden="true">
+                              <div className="loader-dot" />
+                            </div>
+                            <div className="loader-meta">
+                              <span className="loader-label">Preparing</span>
+                              <span className="loader-value">{Math.max(5, progress)}%</span>
+                            </div>
+                            <div className="loader-bar" aria-hidden="true">
+                              <div className="loader-bar-fill" style={{ width: `${Math.max(5, progress)}%` }} />
+                            </div>
+                          </div>
+                        )}
+                        {shouldRenderPreview && (
+                          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Canvas
+                              style={{ width: '100%', height: '100%' }}
+                              dpr={Math.min(dprCap, window.devicePixelRatio || 1)}
+                              frameloop="demand"
+                              gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
+                              onCreated={({ gl }) => {
+                                try {
+                                  if ('outputColorSpace' in gl) {
+                                    gl.outputColorSpace = THREE.SRGBColorSpace;
+                                  }
+                                  gl.toneMappingExposure = 1.05;
+                                  if (typeof gl.useLegacyLights !== 'undefined') gl.useLegacyLights = false;
+                                } catch (e) {}
+                              }}
+                            >
+                              <PerspectiveCamera makeDefault fov={75} position={[-0.5, 1, 10]} />
+                              <ambientLight intensity={ambientIntensity} />
+                              <directionalLight intensity={dirIntensity} position={[5, 5, 5]} />
+                              <PreviewGLTF
+                                gltf={parsedPrefetch[modelSrc] || prefetched[modelSrc]}
+                                src={modelSrc}
+                                fitSize={6}
+                                fitAxis="y"
+                                position={[0, 0, 0]}
+                              />
+                            </Canvas>
+                          </div>
+                        )}
                       </div>
                     </div>
                   <div className="showcase-expand-hint">

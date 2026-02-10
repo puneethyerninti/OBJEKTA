@@ -26,3 +26,15 @@ services:
         sync: false
       - key: S3_PUBLIC_BASE
         sync: false
+
+  - type: web
+    name: objekta-frontend
+    rootDir: .
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    autoDeploy: true
+    envVars:
+      - key: VITE_API_BASE
+        value: https://objekta-backend.onrender.com
+      - key: VITE_ASSET_BASE
+        value: https://objekta-frontend.onrender.com

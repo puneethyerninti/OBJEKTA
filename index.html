@@ -22,10 +22,9 @@
     <!-- React entry file -->
     <script type="module" src="/src/main.jsx"></script>
     <script>
-  // Vite: import.meta.env replaced at build-time — set a runtime window var.
-  // If you use Vite, add this line (replace the value or use import.meta inlined by Vite).
-  window.__OBJEKTA_API_BASE = "http://localhost:5000";
-</script>
+      // Expose API base for runtime overrides; Vite will inline env at build time.
+      window.__OBJEKTA_API_BASE = window.__OBJEKTA_API_BASE || import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_URL;
+    </script>
 
   </body>
 </html>
