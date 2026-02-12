@@ -1,14 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Login() {
-  const { login } = useAuth() || {};
+  const { login, authWithProvider } = useAuth() || {};
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [err, setErr] = useState(null);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const [gisAvailable, setGisAvailable] = useState(false);
+
+  useEffect(() => {
+    setGisAvailable(Boolean(window.google && window.google.accounts && window.google.accounts.id));
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -74,6 +79,42 @@ export default function Login() {
               {loading ? 'Signing in...' : 'Sign in'}
             </button>
           </form>
+
+          {/* Placeholder for Google's rendered button (AppInit will render into this if present) */}
+          <div className="auth-google-placeholder" style={{ marginTop: 12 }}>
+            <div id="g_id_signin" />
+            {!gisAvailable && (
+              <button
+                type="button"
+                className="auth-button auth-google-fallback"
+                onClick={async () => {
+                  setErr(null);
+                  setLoading(true);
+                  try {
+                    if (window.google && window.google.accounts && window.google.accounts.id) {
+                      window.google.accounts.id.prompt();
+                    } else {
+                      setErr('Google Sign-in not initialized. Please refresh or follow setup instructions.');
+                    }
+                  } catch (e) {
+                    setErr(e.message || 'Google sign-in failed');
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+              >
+                <span className="auth-google-logo" aria-hidden>
+                  <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" focusable="false">
+                    <path fill="#EA4335" d="M17.64 9.2c0-.63-.06-1.23-.18-1.8H9v3.4h4.84c-.21 1.15-.84 2.12-1.8 2.78v2.3h2.9c1.7-1.57 2.7-3.88 2.7-6.68z"/>
+                    <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.16l-2.9-2.3c-.8.54-1.84.86-3.06.86-2.35 0-4.34-1.58-5.05-3.7H1.02v2.32C2.5 15.9 5.5 18 9 18z"/>
+                    <path fill="#4A90E2" d="M3.95 10.8a5.4 5.4 0 010-3.6V4.88H1.02A9 9 0 000 9c0 1.45.33 2.83.92 4.06l3.03-2.26z"/>
+                    <path fill="#FBBC05" d="M9 3.6c1.32 0 2.5.45 3.43 1.34l2.57-2.57C13.44.9 11.4 0 9 0 5.5 0 2.5 2.1 1.02 4.88L4.05 7.1C4.66 5 6.65 3.6 9 3.6z"/>
+                  </svg>
+                </span>
+                <span>Sign in with Google</span>
+              </button>
+            )}
+          </div>
           
           <div className="auth-divider">
             <span>New to OBJEKTA?</span>

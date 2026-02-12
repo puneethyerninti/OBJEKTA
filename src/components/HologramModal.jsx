@@ -1,6 +1,6 @@
 // src/components/HologramModal.jsx
 // Production-ready fullscreen modal for 3D model viewing
-import React, { useEffect, useRef, Suspense } from "react";
+import React, { useEffect, useRef, Suspense, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
@@ -8,20 +8,60 @@ import Hologram from "./Hologram";
 
 export default function HologramModal({ model, onClose }) {
   const modalRef = useRef(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Try to enter native fullscreen when this modal mounts.
+  useEffect(() => {
+    const el = modalRef.current;
+    let entered = false;
+    if (el && el.requestFullscreen) {
+      el.requestFullscreen().then(() => {
+        entered = true;
+        setIsFullscreen(Boolean(document.fullscreenElement));
+      }).catch(() => {
+        // ignore failures (browser may block fullscreen in some cases)
+        setIsFullscreen(Boolean(document.fullscreenElement));
+      });
+    }
+
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      // If we entered fullscreen, try to exit it on unmount
+      if (entered && document.fullscreenElement) {
+        try { document.exitFullscreen(); } catch (e) { /* ignore */ }
+      }
+    };
+  }, []);
+
+  const closeModal = async () => {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      }
+    } catch (e) {
+      // ignore
+    }
+    onClose();
+  };
 
   // Handle ESC key to close
   useEffect(() => {
     const handleEscape = (e) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") closeModal();
     };
     document.addEventListener("keydown", handleEscape);
     document.body.style.overflow = "hidden";
-    
+
     return () => {
       document.removeEventListener("keydown", handleEscape);
       document.body.style.overflow = "";
     };
-  }, [onClose]);
+  }, []);
 
   const colorMap = {
     violet: new THREE.Color("#a78bfa"),
@@ -40,22 +80,25 @@ export default function HologramModal({ model, onClose }) {
     >
       <div
         ref={modalRef}
-        className="hologram-modal-container"
+        className={`hologram-modal-container ${isFullscreen ? 'hologram-fullscreen' : ''}`}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Close Button */}
-        <button
-          type="button"
-          className="hologram-modal-close"
-          onClick={onClose}
-          aria-label="Close modal"
-        >
-          ×
-        </button>
+        {/* Close Button (hidden when native fullscreen is active) */}
+        {!isFullscreen && (
+          <button
+            type="button"
+            className="hologram-modal-close"
+            onClick={closeModal}
+            aria-label="Close modal"
+          >
+            ×
+          </button>
+        )}
 
         {/* 3D Canvas */}
-        <div className="hologram-modal-canvas">
+        <div className="hologram-modal-canvas" style={{ width: '100%', height: isFullscreen ? '100vh' : '60vh' }}>
           <Canvas
+            style={{ width: '100%', height: '100%' }}
             dpr={Math.min(1.5, window.devicePixelRatio || 1)}
             shadows={false}
             gl={{
@@ -65,7 +108,7 @@ export default function HologramModal({ model, onClose }) {
               toneMapping: THREE.ACESFilmicToneMapping,
               toneMappingExposure: 1.2,
             }}
-            camera={{ position: [-0.5, 1, 10], fov: 75 }}
+            camera={{ position: [-0.5, 1, 10], fov: isFullscreen ? 60 : 75 }}
           >
             <ambientLight intensity={1.2} />
             <spotLight
@@ -83,9 +126,10 @@ export default function HologramModal({ model, onClose }) {
               <Hologram
                 modelPath={model.src}
                 color={color}
-                scale={1.2}
-                fitSize={2.8}
+                scale={isFullscreen ? 1.6 : 1.2}
+                fitSize={isFullscreen ? 4.5 : 2.8}
                 fitAxis="max"
+                showPlaceholder={!isFullscreen}
               />
             </Suspense>
             
@@ -101,30 +145,32 @@ export default function HologramModal({ model, onClose }) {
           </Canvas>
         </div>
 
-        {/* Footer Info */}
-        <div className="hologram-modal-footer">
-          <div>
-            <span className="hologram-modal-badge">Fullscreen Mode</span>
-            <h3 className="hologram-modal-title" id="modal-title">{model.title}</h3>
-            <p className="hologram-modal-desc">{model.desc}</p>
+        {/* Footer Info - hidden when native fullscreen is active */}
+        {!isFullscreen && (
+          <div className="hologram-modal-footer">
+            <div>
+              <span className="hologram-modal-badge">Preview</span>
+              <h3 className="hologram-modal-title" id="modal-title">{model.title}</h3>
+              <p className="hologram-modal-desc">{model.desc}</p>
+            </div>
+            <div className="hologram-modal-actions">
+              <a
+                href={model.src}
+                download
+                className="hologram-modal-btn hologram-modal-btn-primary"
+              >
+                Download GLB
+              </a>
+              <button
+                type="button"
+                onClick={closeModal}
+                className="hologram-modal-btn hologram-modal-btn-secondary"
+              >
+                Close
+              </button>
+            </div>
           </div>
-          <div className="hologram-modal-actions">
-            <a
-              href={model.src}
-              download
-              className="hologram-modal-btn hologram-modal-btn-primary"
-            >
-              Download GLB
-            </a>
-            <button
-              type="button"
-              onClick={onClose}
-              className="hologram-modal-btn hologram-modal-btn-secondary"
-            >
-              Close
-            </button>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );

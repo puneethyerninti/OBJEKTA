@@ -133,6 +133,28 @@ export function AuthProvider({ children }) {
     }
   };
 
+  // 🧩 OAuth (frontend receives provider id token and exchanges for app JWT)
+  const authWithProvider = async (provider, idToken) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/auth/oauth`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider, id_token: idToken }),
+      });
+      const data = await parseRes(res);
+      setLoading(false);
+      if (res.ok && data.token) {
+        persist(data.user, data.token);
+        return { ok: true, user: data.user };
+      }
+      return { ok: false, error: data.message || data.error || 'OAuth login failed' };
+    } catch (err) {
+      setLoading(false);
+      return { ok: false, error: err.message || 'Network error' };
+    }
+  };
+
   // 🧩 Signup
   const signup = async (name, email, password) => {
     setLoading(true);
@@ -168,6 +190,7 @@ export function AuthProvider({ children }) {
         token,
         loading,
         login,
+        authWithProvider,
         signup,
         logout,
         authFetch,

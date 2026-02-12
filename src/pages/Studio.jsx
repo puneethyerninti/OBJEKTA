@@ -23,6 +23,7 @@ import { ensurePersistentStorage, logQuotaIfAny } from "../utils/storage";
 import Timeline from "../components/Timeline";
 import StudioToast from "../components/StudioToast";
 import Loader from "../components/Loader";
+import BackupsPanel from "../components/BackupsPanel";
 import "../styles/Studio.css";
 
 import { SceneGraphStore } from "../store/SceneGraphStore";
@@ -242,6 +243,24 @@ export default function Studio() {
       // remove any legacy injected style if present (from earlier runs)
       const existingStyle = document.getElementById('studio-scrollbar-hide');
       if (existingStyle) existingStyle.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      try { postApiRef.current?.dispose?.(); } catch (e) {}
+      try { cameraControlsApiRef.current?.dispose?.(); } catch (e) {}
+      try { importerApiRef.current?.dispose?.(); } catch (e) {}
+      try { materialEditorApiRef.current?.dispose?.(); } catch (e) {}
+      try { envApiRef.current?.dispose?.(); } catch (e) {}
+      try { lightingApiRef.current?.dispose?.(); } catch (e) {}
+
+      postApiRef.current = null;
+      cameraControlsApiRef.current = null;
+      importerApiRef.current = null;
+      materialEditorApiRef.current = null;
+      envApiRef.current = null;
+      lightingApiRef.current = null;
     };
   }, []);
 
@@ -1849,6 +1868,50 @@ export default function Studio() {
     }
   }, [saveBackupToIndexedDB]);
 
+  const handleRestoreBackup = useCallback(async (entry) => {
+    if (!entry) return;
+
+    try {
+      if (entry.type === "scene-data" && entry.data) {
+        if (workspaceRef.current?.loadFromData) await workspaceRef.current.loadFromData(entry.data);
+        else if (workspaceRef.current?.applyScene) await workspaceRef.current.applyScene(entry.data);
+        if (entry.name) setProjectName(entry.name);
+        setIsDirty(true);
+        lastLocalSnapshotRef.current = entry.data;
+        pushToast({ type: "info", message: "Backup restored (scene data)" });
+        return;
+      }
+
+      if ((entry.type === "glb-blob" || entry.type === "glb-index") && entry.blob) {
+        const file = new File([entry.blob], entry.name || "backup.glb", { type: "model/gltf-binary" });
+        await importGLTF(file);
+        setIsDirty(true);
+        pushToast({ type: "info", message: "Backup restored (GLB)" });
+        return;
+      }
+
+      if (entry.type === "glb-index" && entry.url) {
+        if (entry.url.startsWith("blob:")) {
+          pushToast({ type: "error", message: "Backup URL expired. Try IndexedDB backup instead." });
+          return;
+        }
+        const res = await fetch(entry.url);
+        if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+        const blob = await res.blob();
+        const file = new File([blob], entry.name || "backup.glb", { type: "model/gltf-binary" });
+        await importGLTF(file);
+        setIsDirty(true);
+        pushToast({ type: "info", message: "Backup restored (GLB URL)" });
+        return;
+      }
+
+      pushToast({ type: "error", message: "Backup restore failed (unsupported entry)." });
+    } catch (e) {
+      console.warn("restore backup failed", e);
+      pushToast({ type: "error", message: "Backup restore failed" });
+    }
+  }, [importGLTF, pushToast]);
+
   const joinProjectRoom = (id) => {
     if (!projectSocketRef.current) return;
     if (!id) return;
@@ -2114,6 +2177,7 @@ export default function Studio() {
       if (backupResult?.ok) {
         const targetLabel = backupResult.target === "indexedDB" ? "IndexedDB" : "local storage";
         pushToast({ type: "warn", message: `Server save failed — backup stored in ${targetLabel}` });
+        setPropsTab("backups");
       } else {
         const reasonSuffix = backupResult?.reason ? ` (${backupResult.reason})` : "";
         pushToast({ type: "error", message: `Server save failed — backup storage failed${reasonSuffix}` });
@@ -2128,7 +2192,7 @@ export default function Studio() {
       setIsSaving(false);
       setSaveProgress(0);
     }
-  }, [projectId, projectName, createProjectOnServer, updateProjectOnServer, fetchProjects, saveLocalBackup, captureThumbnail, navigate]);
+  }, [projectId, projectName, createProjectOnServer, updateProjectOnServer, fetchProjects, saveLocalBackup, captureThumbnail, navigate, setPropsTab]);
 
   const saveAsProject = useCallback(async () => {
     const name = prompt("Save as project name:", projectName || "Untitled Project");
@@ -2635,6 +2699,36 @@ export default function Studio() {
               <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
                 {lastSavedAt ? `Last saved: ${new Date(lastSavedAt).toLocaleString()}` : (isDirty ? "Unsaved changes" : "No saves yet")}
               </div>
+              {(isSaving || saveProgress > 0) && (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    minWidth: 160,
+                  }}
+                >
+                  <div style={{
+                    height: 6,
+                    width: 120,
+                    background: "rgba(255,255,255,0.12)",
+                    borderRadius: 999,
+                    overflow: "hidden",
+                  }}>
+                    <div style={{
+                      height: "100%",
+                      width: `${Math.round(saveProgress * 100)}%`,
+                      background: "linear-gradient(90deg, #7f5af0, #00f0ff)",
+                      transition: "width 120ms ease",
+                    }} />
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                    {Math.round(saveProgress * 100)}%
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -2692,6 +2786,7 @@ export default function Studio() {
                 <button role="tab" aria-selected={propsTab === 'outliner'} onClick={() => setPropsTab('outliner')} className={propsTab === 'outliner' ? 'active' : ''}>Outliner</button>
                 <button role="tab" aria-selected={propsTab === 'validate'} onClick={() => setPropsTab('validate')} className={propsTab === 'validate' ? 'active' : ''}>Validate</button>
                 <button role="tab" aria-selected={propsTab === 'environment'} onClick={() => setPropsTab('environment')} className={propsTab === 'environment' ? 'active' : ''}>Environment</button>
+                <button role="tab" aria-selected={propsTab === 'backups'} onClick={() => setPropsTab('backups')} className={propsTab === 'backups' ? 'active' : ''}>Backups</button>
               </div>
 
               <div className="object-properties" style={{ padding: 8, flex: '1 1 auto', minHeight: 0 }}>
@@ -2860,6 +2955,13 @@ export default function Studio() {
                       </label>
                     </div>
                   </div>
+                )}
+
+                {propsTab === 'backups' && (
+                  <BackupsPanel
+                    onRestore={handleRestoreBackup}
+                    onNotify={(type, message) => pushToast({ type, message })}
+                  />
                 )}
               </div>
             </div>

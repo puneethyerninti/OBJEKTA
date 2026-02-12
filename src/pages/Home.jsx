@@ -17,18 +17,18 @@ import "../index.css";
 
 const FEATURE_ITEMS = [
   {
-    title: "Hologram Workspaces",
-    desc: "Layered HUD panels, magnetized cursors, and GPU-native history scrubbing for cinematic playblasts.",
+    title: "Collaborative Editing",
+    desc: "Real-time presence, live cursors and shared scene state — teams can review and edit the same scene together.",
     badge: "01",
   },
   {
-    title: "Procedural Materials",
-    desc: "Author BRDF graphs, bake neon trims, and export USDZ/GLB with studio-calibrated color pipelines.",
+    title: "Resumable Uploads & Asset Management",
+    desc: "Large-file resumable uploads (tus), automatic thumbnails and versioning to keep pipelines moving.",
     badge: "02",
   },
   {
-    title: "Live Automation",
-    desc: "Nightly renders, asset diffing, and headset-ready previews synced across distributed studios.",
+    title: "Production-Grade Rendering",
+    desc: "Physically-based materials, calibrated lighting and post-processing for accurate look-dev previews.",
     badge: "03",
   },
 ];
@@ -459,11 +459,10 @@ export default function Home() {
           <div className="hero-copy" style={{ position: "relative", zIndex: "var(--z-content)" }}>
             
             <h1 className="hero-title">
-              Design immersive
-              <span className="title-gradient"> 3D workspaces</span>
+              Design immersive <span className="title-gradient">3D workspaces</span>
             </h1>
             <p className="hero-subtitle">
-              Objekta is a web-first 3D design application for teams—review meshes, iterate on materials, and approve lighting shots together in real time without leaving the browser.
+              Objekta is a web-based collaborative 3D scene editor and studio — review meshes, iterate on materials, and approve lighting shots together in real time without leaving the browser.
             </p>
             <div className="hero-actions">
               <button 
@@ -489,9 +488,10 @@ export default function Home() {
 
         <section id="features" className="features-section neo-section">
           <div className="features-header">
-            <h2 className="section-title">Engineered like a pro 3D suite.</h2>
+            <h2 className="section-title">Built for production teams</h2>
             <p className="section-subtitle">
-              Glass panels, depth cues, and tactile feedback keep complex scene management intuitive for distributed art teams.
+              Focused tools and UI patterns for team reviews, asset handoff and material look-development — designed to scale
+              across projects and distributed studios.
             </p>
           </div>
           <div className="features-scroll-wrapper">
@@ -537,9 +537,10 @@ export default function Home() {
         <section id="showcase" className="showcase-section-v2">
           <div className="showcase-header">
             <span className="showcase-badge">Live Viewport Gallery</span>
-            <h2 className="showcase-title">Interactive 3D Experiences</h2>
+            <h2 className="showcase-title">Project gallery & previews</h2>
             <p className="showcase-subtitle">
-              Click any model to enter immersive fullscreen mode. Orbit, zoom, and explore each scene in real-time.
+              Open any project to inspect materials, lighting and animations in a live viewport. Previews are interactive and
+              optimized for quick iteration.
             </p>
           </div>
 
@@ -614,9 +615,6 @@ export default function Home() {
                         )}
                       </div>
                     </div>
-                  <div className="showcase-expand-hint">
-                    <span>⚡ Click to expand</span>
-                  </div>
                 </div>
 
                 <div className="showcase-content">
@@ -655,7 +653,7 @@ export default function Home() {
         </section>
 
         <footer className="site-footer">
-          <p>© 2025 Objekta. Built for 3D design teams.</p>
+          <p>© 2026 Objekta. Built for 3D design teams.</p>
         </footer>
       </main>
 

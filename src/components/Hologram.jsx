@@ -73,6 +73,7 @@ export default function Hologram({
     color = new THREE.Color('#1e90ff'),
     fitSize = 2.8,
     fitAxis = 'max',
+    showPlaceholder = true,
     onBoundsComputed = null,
     // control overall animation strength
     animationIntensity = 1.6,
@@ -341,20 +342,21 @@ export default function Hologram({
             });
         }
     });
-    // Render placeholder while loading so model appears instantly
-    // For very large background models (like the city) use a wider placeholder
+    // Render placeholder while loading so model appears instantly (optional)
     const isBackgroundCity = typeof modelPath === 'string' && modelPath.toLowerCase().includes('cyberpunk_city');
-    const placeholder = isBackgroundCity ? (
-        <mesh rotation={[0, 0, 0]} position={[0, fitSize * 0.1, 0]}>
-            <boxGeometry args={[fitSize * 3.2, fitSize * 1.2, fitSize * 2.4]} />
-            <meshStandardMaterial color={color.clone().multiplyScalar(0.85)} opacity={0.85} transparent />
-        </mesh>
-    ) : (
-        <mesh rotation={[0, 0, 0]} position={[0, fitSize * 0.15, 0]}>
-            <boxGeometry args={[fitSize, fitSize * 0.4, fitSize]} />
-            <meshStandardMaterial color={color.clone().multiplyScalar(0.6)} opacity={0.55} transparent />
-        </mesh>
-    );
+    const placeholder = showPlaceholder ? (
+        isBackgroundCity ? (
+            <mesh rotation={[0, 0, 0]} position={[0, fitSize * 0.1, 0]}>
+                <boxGeometry args={[fitSize * 3.2, fitSize * 1.2, fitSize * 2.4]} />
+                <meshStandardMaterial color={color.clone().multiplyScalar(0.85)} opacity={0.85} transparent />
+            </mesh>
+        ) : (
+            <mesh rotation={[0, 0, 0]} position={[0, fitSize * 0.15, 0]}>
+                <boxGeometry args={[fitSize, fitSize * 0.4, fitSize]} />
+                <meshStandardMaterial color={color.clone().multiplyScalar(0.6)} opacity={0.55} transparent />
+            </mesh>
+        )
+    ) : null;
 
     if (hasError) {
         console.warn('[Hologram] Rendering nothing due to error', modelPath);

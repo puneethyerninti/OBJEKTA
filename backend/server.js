@@ -3,10 +3,13 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
 const multer = require("multer");
+const crypto = require("crypto");
 const connectDB = require("./config/db");
 const { initSocket } = require("./socket");
 const tus = require("tus-node-server");
@@ -25,9 +28,20 @@ const app = express();
 connectDB();
 
 // ---------- Middleware ----------
+app.set("trust proxy", process.env.TRUST_PROXY === "true");
+
+app.use((req, res, next) => {
+  const id = (crypto.randomUUID && crypto.randomUUID()) || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  req.id = id;
+  res.setHeader("x-request-id", id);
+  next();
+});
+
+morgan.token("id", (req) => req.id || "-");
+app.use(morgan(":id :method :url :status :response-time ms"));
+
 app.use(express.json({ limit: "200mb" }));
 app.use(express.urlencoded({ limit: "200mb", extended: true }));
-app.use(morgan("dev"));
 
 // CORS: allow configured origins (comma-separated), common production frontends, and localhost
 const envOrigins = (process.env.FRONTEND_ORIGIN || "")
@@ -59,6 +73,34 @@ app.use(
   })
 );
 
+app.use(
+  helmet({
+    // Allow cross-origin resource loading for model assets
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    // Do NOT enforce Cross-Origin-Opener-Policy here — some identity providers
+    // rely on window.postMessage and will fail if COOP is forced.
+    // Keep COOP disabled unless you explicitly require cross-origin isolation.
+    crossOriginOpenerPolicy: false,
+  })
+);
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number.parseInt(process.env.RATE_LIMIT_MAX || "300", 10),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Too many requests" },
+});
+
+const uploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number.parseInt(process.env.UPLOAD_RATE_LIMIT_MAX || "120", 10),
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.path.startsWith("/tus"),
+  message: { success: false, message: "Upload rate limit exceeded" },
+});
+
 // ---------- Ensure uploads directory exists ----------
 const uploadDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
@@ -78,9 +120,10 @@ const upload = multer({
 app.use("/uploads", express.static(uploadDir));
 
 // ---------- API Routes ----------
+app.use("/api", apiLimiter);
 app.use("/api/auth", authRoutes);
 app.use("/api/projects", projectRoutes);
-app.use("/api/uploads", uploadRoutes);
+app.use("/api/uploads", uploadLimiter, uploadRoutes);
 app.use("/api/scenes", scenesRoutes);
 app.use("/api/activity", activityRoutes);
 app.use("/api/collaborators", collaboratorsRoutes);

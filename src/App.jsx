@@ -19,6 +19,7 @@ import Dashboard from "./pages/Dashboard";
 
 // Auth context (NOTE: path is ./contexts/AuthContext)
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
+import { useNavigate } from "react-router-dom";
 
 // DnD
 import { DndProvider } from "react-dnd";
@@ -64,6 +65,7 @@ export default function App() {
     <AuthProvider>
       <ContextBanner />
       <Router>
+        <AppInit />
         <Routes>
           {/* Public pages */}
           <Route path="/" element={<Layout><Home /></Layout>} />
@@ -102,4 +104,44 @@ export default function App() {
       </Router>
     </AuthProvider>
   );
+}
+
+function AppInit() {
+  // runs inside Router and AuthProvider
+  const { authWithProvider } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || window.__GOOGLE_CLIENT_ID__;
+    if (!clientId) return;
+    if (!window.google || !window.google.accounts) return;
+
+    const handleCredentialResponse = async (response) => {
+      const idToken = response?.credential;
+      if (!idToken) return;
+      try {
+        const r = await authWithProvider('google', idToken);
+        if (r?.ok) navigate('/dashboard');
+      } catch (e) {
+        console.warn('Google credential handler error', e);
+      }
+    };
+
+    try {
+      window.google.accounts.id.initialize({
+        client_id: clientId,
+        callback: handleCredentialResponse,
+      });
+
+      // render a default button into any placeholder with id 'g_id_signin'
+      const placeholder = document.getElementById('g_id_signin');
+      if (placeholder) {
+        window.google.accounts.id.renderButton(placeholder, { theme: 'outline', size: 'large' });
+      }
+    } catch (e) {
+      console.debug('Google ID initialization skipped', e);
+    }
+  }, [authWithProvider, navigate]);
+
+  return null;
 }

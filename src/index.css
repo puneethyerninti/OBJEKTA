@@ -3162,6 +3162,37 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
   color: var(--text-muted);
 }
 
+/* Google sign-in placeholder / fallback styling */
+.auth-google-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.auth-google-fallback {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1f2937;
+  border: 1px solid rgba(16,24,40,0.06);
+  box-shadow: 0 6px 18px rgba(2,6,23,0.24);
+  font-weight: 600;
+}
+
+.auth-google-fallback:active {
+  transform: translateY(0);
+}
+
+.auth-google-logo svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
 .auth-link-button {
   display: block;
   padding: 0.875rem 1.5rem;
@@ -3196,6 +3227,21 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
 
 .auth-footer-link:hover {
   color: var(--brand-purple);
+}
+
+/* Hologram modal fullscreen styles */
+.hologram-fullscreen {
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+}
+
+.hologram-modal-canvas canvas {
+  width: 100% !important;
+  height: 100% !important;
 }
 
 /* Legacy auth styles */
@@ -3330,6 +3376,18 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
   border-radius: 50%;
   background: linear-gradient(135deg, #7cf7ff, #6f8dff);
   box-shadow: 0 0 16px rgba(124, 247, 255, 0.8);
+  transform-origin: 50% 38px; /* orbit radius */
+  animation: loader-orbit 1.6s cubic-bezier(.2,.9,.2,1) infinite;
+}
+
+.loader-dot::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  filter: blur(6px);
+  background: radial-gradient(circle, rgba(124,247,255,0.18), transparent 40%);
+  opacity: 0.9;
 }
 
 .loader-meta {
@@ -3366,7 +3424,7 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
   border-radius: inherit;
   background: linear-gradient(90deg, rgba(124, 247, 255, 0.92), rgba(255, 112, 255, 0.72));
   box-shadow: 0 0 16px rgba(124, 247, 255, 0.65);
-  transition: width 0.22s ease, filter 0.22s ease;
+  transition: width 0.28s cubic-bezier(.2,.9,.2,1), filter 0.22s ease, transform 0.22s ease;
   position: relative;
   overflow: hidden;
 }
@@ -3379,6 +3437,24 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
   mix-blend-mode: screen;
   animation: loader-shimmer 1.4s ease-in-out infinite;
 }
+
+.preview-loader.rich-loader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+}
+
+.preview-loader .loader-meta { margin-top: 10px; }
+
+/* subtle pulsing glow */
+@keyframes loader-glow-pulse {
+  0% { filter: blur(12px); opacity: 0.85; }
+  50% { filter: blur(22px); opacity: 0.98; }
+  100% { filter: blur(12px); opacity: 0.85; }
+}
+
+.loader-glow { animation: loader-glow-pulse 2.4s ease-in-out infinite; }
 
 @keyframes loader-rotate {
   0% { transform: rotate(0deg); }

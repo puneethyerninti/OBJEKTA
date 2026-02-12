@@ -29,10 +29,21 @@ function isExpired(createdAt) {
   try { return Date.now() - (createdAt || 0) > MULTIPART_TTL_MS; } catch { return false; }
 }
 
+function hasS3Config() {
+  return Boolean(process.env.S3_BUCKET && process.env.AWS_REGION && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY);
+}
+
+function requireS3(res) {
+  if (hasS3Config()) return true;
+  res.status(500).json({ message: "S3 not configured" });
+  return false;
+}
+
 // POST /api/uploads/presign
 // body: { filename, contentType, projectId, purpose } -> returns { url, key, publicUrl }
 router.post("/presign", async (req, res) => {
   try {
+    if (!requireS3(res)) return;
     const { filename, contentType, projectId, purpose } = req.body;
     if (!filename || !contentType) return res.status(400).json({ message: "filename & contentType required" });
 
@@ -65,6 +76,7 @@ router.post("/presign", async (req, res) => {
 // returns: { uploadId, key, bucket, partSize, parts }
 router.post("/multipart/start", async (req, res) => {
   try {
+    if (!requireS3(res)) return;
     const { filename, contentType, projectId, fileSize } = req.body || {};
     if (!filename || !contentType) return res.status(400).json({ message: "filename & contentType required" });
 
@@ -102,6 +114,7 @@ router.post("/multipart/start", async (req, res) => {
 // returns: { url }
 router.post("/multipart/sign", async (req, res) => {
   try {
+    if (!requireS3(res)) return;
     const { uploadId, partNumber } = req.body || {};
     if (!uploadId || !partNumber) return res.status(400).json({ message: "uploadId & partNumber required" });
     const meta = multipartMap.get(uploadId);
@@ -130,6 +143,7 @@ router.post("/multipart/sign", async (req, res) => {
 // returns: { ok, key, location, bucket }
 router.post("/multipart/complete", async (req, res) => {
   try {
+    if (!requireS3(res)) return;
     const { uploadId, parts } = req.body || {};
     if (!uploadId || !Array.isArray(parts) || parts.length === 0) return res.status(400).json({ message: "uploadId & parts required" });
     const meta = multipartMap.get(uploadId);
@@ -163,6 +177,7 @@ router.post("/multipart/complete", async (req, res) => {
 // body: { filename, projectId, contentType, originalName }
 router.post("/tus/finalize", async (req, res) => {
   try {
+    if (!requireS3(res)) return;
     const { filename, projectId, contentType, originalName } = req.body || {};
     if (!filename) return res.status(400).json({ message: "filename required" });
     const tusDir = require("path").resolve(__dirname, "..", "uploads", "tus");

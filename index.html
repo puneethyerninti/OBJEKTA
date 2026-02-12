@@ -19,6 +19,18 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Google Identity Services (used for One-tap / button sign-in) -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <!-- Runtime globals (injected for local dev). You provided the client ID, so set it here -->
+    <script>
+      // Provided Google OAuth Client ID (runtime override)
+      window.__GOOGLE_CLIENT_ID__ = window.__GOOGLE_CLIENT_ID__ || "910054596433-aifngrsb4vf84mfbkrcbj4rsidkbsoot.apps.googleusercontent.com";
+      // Default asset base to current origin for local dev (prevents CDN placeholder resolution errors)
+      window.__OBJEKTA_ASSET_BASE = window.__OBJEKTA_ASSET_BASE || window.location.origin;
+      // Force API calls to local backend for testing OAuth locally.
+      // This prevents the frontend from calling your deployed backend which may not have the /api/auth/oauth route yet.
+      window.__OBJEKTA_API_BASE = window.__OBJEKTA_API_BASE || 'http://localhost:5000';
+    </script>
     <!-- React entry file -->
     <script type="module" src="/src/main.jsx"></script>
 
