@@ -371,10 +371,10 @@ export default function Dashboard() {
     (async () => {
       try {
         // Guard: prevent duplicate socket init
-        if (window.__OBJEKTA_SOCKET_INITIALIZED) {
+        if (window.__OBJEKTA_DASHBOARD_SOCKET_INITIALIZED) {
           if (!window.__OBJEKTA_SOCKET_LOGGED_ONCE) {
             window.__OBJEKTA_SOCKET_LOGGED_ONCE = true;
-            console.info("[OBJEKTA] Socket already initialized globally");
+            console.info("[OBJEKTA] Dashboard socket already initialized");
           }
           return;
         }
@@ -386,7 +386,7 @@ export default function Dashboard() {
           return;
         }
 
-        window.__OBJEKTA_SOCKET_INITIALIZED = true;
+        window.__OBJEKTA_DASHBOARD_SOCKET_INITIALIZED = true;
         socketRetryRef.current = 0;
         socketGiveUpRef.current = false;
 
@@ -503,6 +503,9 @@ export default function Dashboard() {
         socketRef.current?.disconnect();
       } catch (e) {}
       socketRef.current = null;
+      if (typeof window !== "undefined") {
+        window.__OBJEKTA_DASHBOARD_SOCKET_INITIALIZED = false;
+      }
       mounted = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

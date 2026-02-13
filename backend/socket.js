@@ -3,36 +3,118 @@ const { Server } = require("socket.io");
 
 let io = null;
 
+function normalizeProjectId(input) {
+  if (!input) return null;
+  if (typeof input === "string") return input;
+  if (typeof input === "object") {
+    return input.projectId || input.id || null;
+  }
+  return null;
+}
+
+function emitPresence(projectId) {
+  if (!io || !projectId) return;
+  const clients = Array.from(io.sockets.adapter.rooms.get(projectId) || []);
+  io.to(projectId).emit("presence_update", { projectId, users: clients });
+}
+
 function initSocket(server) {
   if (io) return io;
+
+  const envOrigins = (process.env.FRONTEND_ORIGIN || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  const isAllowedOrigin = (origin) => {
+    if (!origin) return true;
+    if (envOrigins.includes(origin)) return true;
+    if (/^https?:\/\/localhost(:\d+)?$/i.test(origin)) return true;
+    if (/^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(origin)) return true;
+    return false;
+  };
+
   io = new Server(server, {
     cors: {
-      origin: process.env.FRONTEND_ORIGIN || "http://localhost:5173",
+      origin: (origin, callback) => {
+        if (isAllowedOrigin(origin)) return callback(null, true);
+        return callback(new Error(`Not allowed by socket CORS: ${origin || "<unknown>"}`));
+      },
       credentials: true,
     },
   });
 
   io.on("connection", (socket) => {
     console.log("✅ Socket connected", socket.id);
+    socket.data.projectId = null;
 
     socket.on("join-dashboard", (info) => {
       // optional tracking
     });
 
-    socket.on("join-project", (projectId) => {
+    const joinProject = (payload) => {
+      const projectId = normalizeProjectId(payload);
+      if (!projectId) return;
+      if (socket.data.projectId && socket.data.projectId !== projectId) {
+        socket.leave(socket.data.projectId);
+        emitPresence(socket.data.projectId);
+      }
       socket.join(projectId);
-      // notify presence instantly if you want
-      const clients = Array.from(io.sockets.adapter.rooms.get(projectId) || []);
-      io.to(projectId).emit("presence_update", { projectId, users: clients });
+      socket.data.projectId = projectId;
+      emitPresence(projectId);
+    };
+
+    const leaveProject = (payload) => {
+      const explicitProjectId = normalizeProjectId(payload);
+      const projectId = explicitProjectId || socket.data.projectId;
+      if (!projectId) return;
+      socket.leave(projectId);
+      if (!explicitProjectId || explicitProjectId === socket.data.projectId) {
+        socket.data.projectId = null;
+      }
+      emitPresence(projectId);
+    };
+
+    // Canonical + backward compatible aliases
+    socket.on("join-project", joinProject);
+    socket.on("joinProject", joinProject);
+    socket.on("join", joinProject);
+
+    socket.on("leave-project", leaveProject);
+    socket.on("leaveProject", leaveProject);
+    socket.on("leave", leaveProject);
+
+    socket.on("project:update", (payload) => {
+      const projectId = normalizeProjectId(payload);
+      if (projectId) {
+        socket.to(projectId).emit("project:patched", payload);
+        return;
+      }
+      socket.broadcast.emit("project:patched", payload);
     });
 
-    socket.on("leave-project", (projectId) => {
-      socket.leave(projectId);
-      const clients = Array.from(io.sockets.adapter.rooms.get(projectId) || []);
-      io.to(projectId).emit("presence_update", { projectId, users: clients });
+    socket.on("project:patch", (payload) => {
+      const projectId = normalizeProjectId(payload);
+      if (projectId) {
+        socket.to(projectId).emit("project:patched", payload);
+        return;
+      }
+      socket.broadcast.emit("project:patched", payload);
+    });
+
+    socket.on("scene:push", (payload) => {
+      const projectId = normalizeProjectId(payload);
+      if (projectId) {
+        socket.to(projectId).emit("scene:push", payload);
+        return;
+      }
+      socket.broadcast.emit("scene:push", payload);
     });
 
     socket.on("disconnect", () => {
+      if (socket.data.projectId) {
+        emitPresence(socket.data.projectId);
+      }
       console.log("❌ Socket disconnected", socket.id);
     });
   });

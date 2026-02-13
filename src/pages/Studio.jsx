@@ -1927,8 +1927,8 @@ export default function Studio() {
     let mounted = true;
     (async () => {
       if (typeof window !== 'undefined') {
-        if (window.__OBJEKTA_SOCKET_INITIALIZED) return;
-        window.__OBJEKTA_SOCKET_INITIALIZED = true;
+        if (window.__OBJEKTA_STUDIO_SOCKET_INITIALIZED) return;
+        window.__OBJEKTA_STUDIO_SOCKET_INITIALIZED = true;
       }
       try {
   const base = API_BASE || window.location.origin;
@@ -1997,6 +1997,9 @@ export default function Studio() {
       mounted = false;
       try { projectSocketRef.current?.disconnect(); } catch (e) {}
       projectSocketRef.current = null;
+      if (typeof window !== 'undefined') {
+        window.__OBJEKTA_STUDIO_SOCKET_INITIALIZED = false;
+      }
     };
     // NOTE: intentionally no deps to run once
   }, []);
