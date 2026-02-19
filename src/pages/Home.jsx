@@ -5,7 +5,6 @@ import { useNavigate } from "react-router-dom";
 import HologramModal from "../components/HologramModal";
 import PreviewGLTF from "../components/PreviewGLTF";
 import Scene from "../components/Scene";
-import OverlayUI from "../components/OverlayUI";
 import { Canvas } from '@react-three/fiber';
 import { PerspectiveCamera } from '@react-three/drei';
 import * as THREE from "three";
@@ -457,7 +456,7 @@ export default function Home() {
       <main className="home-shell">
         <section className="hero-grid" style={{ position: "relative", overflow: "hidden" }}>
           <div className="hero-copy" style={{ position: "relative", zIndex: "var(--z-content)" }}>
-            
+            <span className="hero-badge-top">Web-based 3D Studio</span>
             <h1 className="hero-title">
               Design immersive <span className="title-gradient">3D workspaces</span>
             </h1>
@@ -480,7 +479,7 @@ export default function Home() {
                 aria-controls="showcase"
                 onClick={() => document.querySelector("#showcase")?.scrollIntoView({ behavior: "smooth" })}
               >
-                Watch Workflow
+                Explore Gallery
               </button>
             </div>
           </div>
@@ -553,7 +552,8 @@ export default function Home() {
               const progress = progressMap[modelSrc] ?? 0;
               const cardKey = model.title;
               const isVisible = visibleCards[cardKey];
-              const shouldRenderPreview = showcaseVisible && isVisible;
+              const previewLimit = deviceTier === "full" ? 3 : 1;
+              const shouldRenderPreview = showcaseVisible && isVisible && index < previewLimit;
               const dprCap = deviceTier === "full" ? 1.5 : deviceTier === "medium" ? 1.1 : 1;
               const ambientIntensity = deviceTier === "full" ? 1.1 : deviceTier === "medium" ? 0.95 : 0.75;
               const dirIntensity = deviceTier === "full" ? 0.9 : deviceTier === "medium" ? 0.75 : 0.6;
@@ -586,6 +586,7 @@ export default function Home() {
                         {shouldRenderPreview && (
                           <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                             <Canvas
+                              eventSource={typeof document !== 'undefined' ? document : undefined}
                               style={{ width: '100%', height: '100%' }}
                               dpr={Math.min(dprCap, window.devicePixelRatio || 1)}
                               frameloop="demand"
@@ -652,9 +653,6 @@ export default function Home() {
           </div>
         </section>
 
-        <footer className="site-footer">
-          <p>© 2026 Objekta. Built for 3D design teams.</p>
-        </footer>
       </main>
 
       {/* Fullscreen Modal (only renders ONE Canvas when active) */}

@@ -4,6 +4,7 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const Scene = require("../models/Scene");
+const { protect } = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
@@ -23,7 +24,7 @@ const upload = multer({ storage });
 
 // POST /api/scenes/save
 // fields: name, description, json (stringified), file (optional), environmentMap(optional .hdr/.exr), backgroundColor, bloomEnabled, oceanEnabled, rainEnabled, cameraState
-router.post("/save", upload.fields([
+router.post("/save", protect, upload.fields([
   { name: 'file', maxCount: 1 },
   { name: 'environment', maxCount: 1 },
 ]), async (req, res) => {
@@ -34,6 +35,7 @@ router.post("/save", upload.fields([
       try { json = JSON.parse(req.body.json); } catch (e) { json = req.body.json; }
     }
     const sceneDoc = new Scene({
+      user: req.userId,
       name: name || `Scene ${Date.now()}`,
       description: description || "",
       json: json || null,
@@ -70,9 +72,9 @@ router.post("/save", upload.fields([
 
 // GET /api/scenes
 // list scenes (basic metadata)
-router.get("/", async (req, res) => {
+router.get("/", protect, async (req, res) => {
   try {
-    const list = await Scene.find().sort({ updatedAt: -1 }).limit(200).lean();
+    const list = await Scene.find({ user: req.userId }).sort({ updatedAt: -1 }).limit(200).lean();
     // return only minimal fields
     const out = list.map((s) => ({
       _id: s._id,
@@ -92,11 +94,14 @@ router.get("/", async (req, res) => {
 
 // GET /api/scenes/:id
 // returns scene metadata and json (if stored)
-router.get("/:id", async (req, res) => {
+router.get("/:id", protect, async (req, res) => {
   try {
     const id = req.params.id;
     const s = await Scene.findById(id).lean();
     if (!s) return res.status(404).json({ ok: false, error: "not found" });
+    if (!s.user || String(s.user) !== String(req.userId)) {
+      return res.status(403).json({ ok: false, error: "forbidden" });
+    }
     res.json({
       _id: s._id,
       name: s.name,
@@ -120,13 +125,16 @@ router.get("/:id", async (req, res) => {
 
 // POST /api/scenes/:id/update
 // allows partial metadata updates without re-uploading main file
-router.post('/:id/update', upload.fields([
+router.post('/:id/update', protect, upload.fields([
   { name: 'environment', maxCount: 1 },
 ]), async (req, res) => {
   try {
     const id = req.params.id;
     const sceneDoc = await Scene.findById(id);
     if (!sceneDoc) return res.status(404).json({ ok: false, error: 'not found' });
+    if (!sceneDoc.user || String(sceneDoc.user) !== String(req.userId)) {
+      return res.status(403).json({ ok: false, error: 'forbidden' });
+    }
     if (req.body.name) sceneDoc.name = req.body.name;
     if (req.body.description) sceneDoc.description = req.body.description;
     if (req.body.json) {

@@ -16,12 +16,6 @@ export default function Navbar(props) {
   const location = useLocation();
   const navigate = useNavigate();
 
-  // hide navbar entirely on these routes (studio is fullscreen, dashboard you wanted no navbar)
-  const pathname = location.pathname || "";
-  if (pathname.startsWith("/studio") || pathname.startsWith("/dashboard")) {
-    return null;
-  }
-
   // Controlled/uncontrolled open state (backwards-compatible)
   const controlledOpen = props.isNavOpen ?? props.isOpen;
   const controlledSet = props.onToggleNav ?? props.setIsOpen;
@@ -61,6 +55,12 @@ export default function Navbar(props) {
       window.removeEventListener("resize", setVar);
     };
   }, []);
+
+  // hide navbar entirely on these routes (studio is fullscreen, dashboard you wanted no navbar)
+  const pathname = location.pathname || "";
+  if (pathname.startsWith("/studio") || pathname.startsWith("/dashboard")) {
+    return null;
+  }
 
   const toggle = () => setOpen(!isOpen);
   const closeMenu = () => setOpen(false);

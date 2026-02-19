@@ -2,13 +2,12 @@
 // REFACTORED: Lightweight background scene (ONE Canvas for entire homepage)
 import React, { useState, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
-import * as THREE from 'three';
+import { PerspectiveCamera } from '@react-three/drei';
 import Effects from './Effects';
 import VolumetricTunnel from './Background/VolumetricTunnel';
 import GalaxyBackground from './Background/GalaxyBackground';
 
-export default function Scene({ prefetchedGltf }) {
+export default function Scene() {
   const [effectsEnabled, setEffectsEnabled] = useState(false);
   const [useTunnelBackground, setUseTunnelBackground] = useState(false);
   const [useGalaxyBackground, setUseGalaxyBackground] = useState(true);
@@ -37,6 +36,7 @@ export default function Scene({ prefetchedGltf }) {
 
   return (
     <Canvas
+      eventSource={typeof document !== 'undefined' ? document : undefined}
       dpr={Math.min(2, window.devicePixelRatio || 1)}
       shadows={false}
       gl={{
@@ -86,17 +86,6 @@ export default function Scene({ prefetchedGltf }) {
         setEffectsEnabled(isWebGL2 && !disable);
       }}
     >
-      <OrbitControls
-        enableDamping={false}
-        // Allow slightly closer camera to keep background model visible
-        minDistance={3}
-        maxDistance={20}
-        target={[0, 1.5, 0]}
-        enableRotate={true}
-        enableZoom={true}
-        enablePan={false}
-      />
-
       <PerspectiveCamera makeDefault fov={68} position={[0, 0.4, 9.5]} />
 
       {/* Galaxy background; opt-out when tunnel flag is set */}

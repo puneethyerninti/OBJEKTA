@@ -26,11 +26,14 @@ describe('uploadMultipartToS3', () => {
     // 4) complete
     fetchMock.mockImplementationOnce(async () => new Response(JSON.stringify({ ok: true, key: 'k1' }), { status: 200 }));
 
+    // 5) register asset
+    fetchMock.mockImplementationOnce(async () => new Response(JSON.stringify({ success: true, asset: { key: 'k1', source: 's3' } }), { status: 200 }));
+
     const res = await uploadMultipartToS3({ file, projectId: 'p1', onProgress: () => {} });
     expect(res.key).toBe('k1');
 
     // verify calls sequence
-    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(fetchMock).toHaveBeenCalledTimes(7);
 
     fetchMock.mockRestore();
   });

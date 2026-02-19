@@ -1,6 +1,5 @@
 // src/pages/Dashboard.jsx
 import React, { useEffect, useState, useCallback, useRef } from "react";
-import Thumbnail from "../components/Thumbnail";
 import Sidebar from "../components/Sidebar";
 import ProjectGrid from "../components/ProjectGrid";
 import Modal from "../components/Modal/Modal";
@@ -23,10 +22,6 @@ if (typeof window !== 'undefined') {
  * - Uses unified API base (matches Studio logic)
  * - Navigates to studio immediately after creating a project
  */
-
-const IS_LOCALHOST =
-  typeof window !== "undefined" &&
-  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
 
 // Removed noisy API_BASE info log; retain value via data attribute for optional inspection
 if (typeof document !== 'undefined') {
@@ -110,9 +105,10 @@ export default function Dashboard() {
     }
   }, []);
   useEffect(() => {
+    const toastTimers = toastTimersRef.current;
     return () => {
-      toastTimersRef.current.forEach((t) => clearTimeout(t));
-      toastTimersRef.current.clear();
+      toastTimers.forEach((t) => clearTimeout(t));
+      toastTimers.clear();
     };
   }, []);
 
@@ -234,7 +230,7 @@ export default function Dashboard() {
     const progress = (typeof p.progress === "number" && p.progress) || (p.data && typeof p.data.progress === "number" && p.data.progress) || 0;
     const collaborators = p.collaborators || p.collabs || p.members || [];
     return { _id, title, thumbnailUrl: thumbnail, createdAt, updatedAt, progress, collaborators, raw: p };
-  }, [API_BASE]);
+  }, []);
 
   const safeDate = (str) => {
     try {
@@ -318,7 +314,7 @@ export default function Dashboard() {
         setCollabs([{ id: "u1", name: "Ana", role: "Designer" }, { id: "u2", name: "Dev", role: "Artist" }]);
       }
     },
-    [API_BASE, doFetch, normalizeProject, pushToast]
+    [doFetch, normalizeProject, pushToast]
   );
 
   useEffect(() => {
@@ -641,6 +637,58 @@ export default function Dashboard() {
     navigate("/studio", { state: { sceneId } });
   };
 
+  const exportProjectSnapshot = useCallback((project) => {
+    if (!project) {
+      pushToast("No project selected for export.", "warn");
+      return;
+    }
+    try {
+      const payload = {
+        _id: project._id,
+        title: project.title,
+        progress: project.progress ?? 0,
+        createdAt: project.createdAt || null,
+        updatedAt: project.updatedAt || null,
+        data: project.raw?.data || {},
+        metadata: {
+          collaborators: Array.isArray(project.collaborators) ? project.collaborators : [],
+          exportedAt: new Date().toISOString(),
+        },
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(project.title || "project").replace(/[^a-z0-9_-]+/gi, "_")}_snapshot.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+      pushToast(`Exported ${project.title}`, "success");
+    } catch (err) {
+      console.warn("export project error", err);
+      pushToast("Export failed", "error");
+    }
+  }, [pushToast]);
+
+  const handleImport = useCallback(() => {
+    pushToast("Import ready in Studio. Opening Studio…", "info", 2800);
+    navigate("/studio", { state: { startImport: true } });
+  }, [navigate, pushToast]);
+
+  const handleMarketplace = useCallback(() => {
+    navigate("/gallery");
+  }, [navigate]);
+
+  const handleExportAction = useCallback(() => {
+    const target = selectedProject || preview || (Array.isArray(projects) ? projects[0] : null);
+    if (!target) {
+      pushToast("Create or open a project before exporting.", "warn");
+      return;
+    }
+    exportProjectSnapshot(target);
+  }, [selectedProject, preview, projects, exportProjectSnapshot, pushToast]);
+
   // Search debounce
   useEffect(() => {
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
@@ -695,19 +743,15 @@ export default function Dashboard() {
       case "duplicate":
         return duplicateProject(p);
       case "delete":
-        return window.confirm("Delete this project?") && deleteProject(p);
+        return openProjectModal(p);
       case "share":
         navigator.clipboard?.writeText(`${window.location.origin}/studio?project=${encodeURIComponent(p._id)}`);
         return pushToast("Share link copied", "info");
+      case "export":
+        return exportProjectSnapshot(p);
       default:
         return;
     }
-  };
-
-  // keyboard on card
-  const onCardKeyDown = (e, p) => {
-    if (e.key === "Enter") openProjectModal(p);
-    if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) openContext(e, p);
   };
 
   // Preview modal
@@ -755,7 +799,7 @@ export default function Dashboard() {
             try { logout(); } catch {}
             navigate('/');
           }}
-          onImport={() => pushToast('Import not implemented yet', 'info')}
+          onImport={handleImport}
         />
 
         <main className="dash-main">
@@ -942,10 +986,10 @@ export default function Dashboard() {
                 <button className="btn-primary" onClick={() => navToStudio()}>
                   Open Studio
                 </button>
-                <button className="btn-accent" onClick={() => pushToast("Marketplace coming soon", "info")}>
+                <button className="btn-accent" onClick={handleMarketplace}>
                   Marketplace
                 </button>
-                <button className="btn-ghost" onClick={() => pushToast("Export coming soon", "info")}>
+                <button className="btn-ghost" onClick={handleExportAction}>
                   Export
                 </button>
               </div>
@@ -985,6 +1029,7 @@ export default function Dashboard() {
             <li role="none"><button role="menuitem" className="btn btn-ghost btn-small" onClick={() => handleContextAction('open', context.project)}>Open</button></li>
             <li role="none"><button role="menuitem" className="btn btn-ghost btn-small" onClick={() => handleContextAction('rename', context.project)}>Rename</button></li>
             <li role="none"><button role="menuitem" className="btn btn-ghost btn-small" onClick={() => handleContextAction('duplicate', context.project)}>Duplicate</button></li>
+            <li role="none"><button role="menuitem" className="btn btn-ghost btn-small" onClick={() => handleContextAction('export', context.project)}>Export</button></li>
             <li role="none"><button role="menuitem" className="btn btn-ghost btn-small" onClick={() => handleContextAction('share', context.project)}>Share</button></li>
             <li role="none"><button role="menuitem" className="btn btn-danger btn-small" onClick={() => handleContextAction('delete', context.project)}>Delete</button></li>
           </ul>
@@ -1013,7 +1058,7 @@ export default function Dashboard() {
             <button
               className="btn btn-danger"
               onClick={() => {
-                if (window.confirm('Delete this project?')) deleteProject();
+                deleteProject();
               }}
               disabled={modalLoading}
             >

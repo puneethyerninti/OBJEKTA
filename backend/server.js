@@ -145,7 +145,7 @@ try {
 }
 
 // ✅ Direct .glb upload endpoint (for quick uploads/testing)
-app.post("/api/upload-glb", (req, res, next) => {
+app.post("/api/upload-glb", (req, res, _next) => {
   upload.single("file")(req, res, function (err) {
     if (err instanceof multer.MulterError) {
       if (err.code === "LIMIT_FILE_SIZE") {
@@ -176,7 +176,7 @@ app.get("/", (req, res) => res.send("🧠 OBJEKTA backend is running 🚀"));
 app.get("/api/test", (req, res) => res.json({ message: "Backend OK ✅" }));
 
 // ---------- Error Handler ----------
-app.use((err, req, res, next) => {
+app.use((err, req, res, _next) => {
   console.error("❌ Unhandled error:", err);
 
   if (err.type === "entity.too.large" || err.code === "LIMIT_FILE_SIZE") {

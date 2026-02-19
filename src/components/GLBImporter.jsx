@@ -1,6 +1,5 @@
 // src/components/GLBImporter.jsx
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import createSafeGLTFLoader from "../utils/gltfLoader";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader";
 import { unzipSync } from "three/examples/jsm/libs/fflate.module.js";
@@ -246,12 +245,6 @@ export { normalizeModel };
 
 // ---------- helpers ----------
 
-function cleanupObjectURLs(list = []) {
-  list.forEach((url) => {
-    try { BlobURLManager.release(url); } catch (e) { console.warn('[GLBImporter] url release failed', e); }
-  });
-}
-
 // Normalize imported models so they arrive at the origin with a sensible pivot and ground contact.
 // Many DCC exports ship with arbitrary pivots/units, so we normalize once on import
 // to keep scenes predictable without moving the camera to compensate.
@@ -259,19 +252,22 @@ function normalizeModel(root, { alignToGround = true, maxDimension = 10 } = {}) 
   // Idempotent: mark roots to avoid repeated shifts if re-used.
   if (!root || root.userData?._normalized) return null;
 
-  // Center pivot
+  // Inspect original bounds first
   const initialBox = new THREE.Box3().setFromObject(root);
-  if (!initialBox.isEmpty()) {
-    const center = initialBox.getCenter(new THREE.Vector3());
-    root.position.sub(center);
-  }
 
-  // Uniformly scale down extreme assets (keep legacy 10u heuristic)
+  // Uniformly scale down extreme assets
   const size = initialBox.getSize(new THREE.Vector3());
   const maxDim = Math.max(size.x, size.y, size.z, 0);
   if (maxDim > maxDimension) {
-    const s = 1 / maxDim;
+    const s = maxDimension / maxDim;
     root.scale.setScalar(s);
+  }
+
+  // Center pivot after final scale so translation stays correct
+  const centeredBox = new THREE.Box3().setFromObject(root);
+  if (!centeredBox.isEmpty()) {
+    const center = centeredBox.getCenter(new THREE.Vector3());
+    root.position.sub(center);
   }
 
   // Recompute after transform to optionally sit on the ground plane

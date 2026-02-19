@@ -48,7 +48,7 @@ function initSocket(server) {
     console.log("✅ Socket connected", socket.id);
     socket.data.projectId = null;
 
-    socket.on("join-dashboard", (info) => {
+    socket.on("join-dashboard", (_info) => {
       // optional tracking
     });
 

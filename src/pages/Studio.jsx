@@ -8,7 +8,7 @@ import { DndProvider } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
 import {
   FiSave, FiUpload, FiRefreshCcw, FiMaximize, FiMinimize, FiRotateCcw,
-  FiRotateCw, FiSidebar, FiLayers, FiPlusSquare, FiCopy, FiWifi, FiWifiOff, FiSearch,
+  FiRotateCw, FiPlusSquare, FiCopy, FiWifi, FiWifiOff, FiSearch,
   FiZap, FiGrid, FiCamera, FiMove, FiImage
 } from "react-icons/fi";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -18,7 +18,7 @@ import Palette from "../components/Palette";
 import Workspace from "../components/Workspace";
 import ObjectProperties from "../components/ObjectProperties";
 import SculptToolbar from "../components/SculptToolbar";
-import { loadInitialPanels, persistPanelStates, loadPref, saveBool, PREF_KEYS } from "../utils/preferences";
+import { loadInitialPanels, persistPanelStates } from "../utils/preferences";
 import { ensurePersistentStorage, logQuotaIfAny } from "../utils/storage";
 import Timeline from "../components/Timeline";
 import StudioToast from "../components/StudioToast";
@@ -27,7 +27,6 @@ import BackupsPanel from "../components/BackupsPanel";
 import "../styles/Studio.css";
 
 import { SceneGraphStore } from "../store/SceneGraphStore";
-import TextureStore from "../store/TextureStore";
 import EventBus from "../utils/EventBus";
 
 import initCameraControls from "../components/CameraControls";
@@ -48,25 +47,6 @@ const PALETTE_ITEMS = [
   { id: 7, name: "Empty" }, { id: 8, name: "Axis Helper" }, { id: 9, name: "Point Light" },
   { id: 10, name: "Spot Light" }, { id: 11, name: "Directional Light" }, { id: 12, name: "Camera" },
 ];
-
-const ToastItem = ({ t, onClose }) => (
-  <div role="status" aria-live="polite" className="toast-item" style={{
-    background: t.type === 'error' ? 'rgba(255,60,80,0.9)' : 'linear-gradient(180deg, rgba(20,20,30,0.95), rgba(10,6,20,0.9))',
-    color: 'var(--text-light)'
-  }}>
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: 'center', gap: 8 }}>
-      <div style={{ fontWeight: 700 }}>{t.title || (t.type === "error" ? "Error" : "Info")}</div>
-      <button onClick={onClose} aria-label="Close toast" style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 16 }}>✕</button>
-    </div>
-    <div style={{ marginTop: 6, color: 'var(--text-muted)' }}>{t.message}</div>
-  </div>
-);
-
-const ToastList = ({ toasts, remove }) => (
-  <div className="toast-container" aria-live="polite" aria-atomic="true">
-    {toasts.map((t) => <ToastItem key={t.id} t={t} onClose={() => remove(t.id)} />)}
-  </div>
-);
 
 // Use the shared `Loader` imported from `../components/Loader` above.
 
@@ -319,9 +299,10 @@ export default function Studio() {
     if (to) { clearTimeout(to); toastTimeoutsRef.current.delete(id); }
   }, []);
   useEffect(() => {
+    const timers = toastTimeoutsRef.current;
     return () => {
-      for (const to of toastTimeoutsRef.current.values()) clearTimeout(to);
-      toastTimeoutsRef.current.clear();
+      for (const to of timers.values()) clearTimeout(to);
+      timers.clear();
     };
   }, []);
 
@@ -458,8 +439,8 @@ export default function Studio() {
   const [projectId, setProjectId] = useState(null);
   const [projectName, setProjectName] = useState("Untitled Project");
   const [isSaving, setIsSaving] = useState(false);
-  const [isAutosave, setIsAutosave] = useState(true);
-  const [isConnectedToServer, setIsConnectedToServer] = useState(false);
+  const [isAutosave] = useState(true);
+  const [_isConnectedToServer, setIsConnectedToServer] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState(null);
   const [isDirty, setIsDirty] = useState(false);
 
@@ -475,8 +456,6 @@ export default function Studio() {
   const safeDate = useCallback(() => new Date().toISOString().replace(/[:.]/g, "-"), []);
 
   /* ---------- API base & helpers (centralized) ---------- */
-  const IS_LOCALHOST = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-
   const getAuthHeaders = useCallback(() => {
     // match the token key used in your AuthContext: "objekta_token"
     const token = localStorage.getItem("objekta_token") || localStorage.getItem("token");
@@ -495,7 +474,7 @@ export default function Studio() {
   const BACKUP_DB_NAME = 'objekta_backups_db_v1';
   const BACKUP_STORE_NAME = 'backups';
 
-  const initBackupDB = async () => {
+  const initBackupDB = useCallback(async () => {
     return new Promise((resolve, reject) => {
       const req = indexedDB.open(BACKUP_DB_NAME, 1);
       req.onerror = () => reject(req.error);
@@ -507,9 +486,9 @@ export default function Studio() {
         }
       };
     });
-  };
+  }, []);
 
-  const saveBackupToIndexedDB = async (projectId, projectData) => {
+  const saveBackupToIndexedDB = useCallback(async (projectId, projectData) => {
     try {
       const db = await initBackupDB();
       const tx = db.transaction(BACKUP_STORE_NAME, 'readwrite');
@@ -532,7 +511,7 @@ export default function Studio() {
       console.warn('[OBJEKTA] IndexedDB backup failed:', err);
       return null;
     }
-  };
+  }, [initBackupDB]);
 
   /* ---------- probe workspace helper ---------- */
   const probeWorkspace = useCallback(() => {
@@ -910,7 +889,7 @@ export default function Studio() {
         } catch (e) {}
       }
     } catch (e) { pushToast({ type: "error", message: "Failed to toggle bloom" }); }
-  }, [probeWorkspace, pushToast]);
+  }, [probeWorkspace, pushToast, projectId]);
 
   // Ocean effect toggle
   const toggleOcean = useCallback((enabled) => {
@@ -1038,7 +1017,7 @@ export default function Studio() {
           });
           setMatHasMap(true); setMatMapURL(url);
           pushToast({ type: "info", message: "Texture applied" });
-        }, undefined, (err) => {
+        }, undefined, (_err) => {
           pushToast({ type: "error", message: "Failed to load texture" });
           try { if (url && url.startsWith && url.startsWith('blob:')) URL.revokeObjectURL(url); } catch (e) {}
         });
@@ -1082,11 +1061,19 @@ export default function Studio() {
   }, [pushToast, safeDate]);
 
   const exportGLTF = useCallback((binary = true) => {
-    if (workspaceRef.current?.exportGLTF) return workspaceRef.current.exportGLTF(binary);
-    pushToast({ type: "error", message: "Export not implemented in workspace" });
-  }, [pushToast]);
+    if (workspaceRef.current?.exportGLTF) {
+      return workspaceRef.current.exportGLTF(binary).catch((err) => {
+        console.error("GLTF export failed", err);
+        pushToast({ type: "error", message: "Export failed" });
+      });
+    }
+    saveJSON();
+    pushToast({ type: "info", message: "GLB export unavailable, saved JSON instead" });
+    return Promise.resolve(null);
+  }, [pushToast, saveJSON]);
 
   /* drag/drop on container (unchanged) */
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -1318,20 +1305,6 @@ export default function Studio() {
 
   // Sculpt events handled in toggleSculpt; no inspector collapse behavior.
 
-  /* setDevicePixelRatio (unchanged) */
-  const setDevicePixelRatio = useCallback((dpr) => {
-    try {
-      const { renderer } = probeWorkspace();
-      if (!renderer) return;
-      renderer.setPixelRatio(Math.max(0.5, Math.min(2.5, dpr)));
-      try {
-        const w = renderer.domElement.clientWidth, h = renderer.domElement.clientHeight;
-        postApiRef.current?.resize?.(w, h);
-      } catch (e) {}
-      pushToast({ type: "info", message: `DPR set to ${dpr}` });
-    } catch (e) { console.warn("setDevicePixelRatio failed", e); }
-  }, [probeWorkspace, pushToast]);
-
   /* panel drag/resize (unchanged) */
   useEffect(() => {
     const onMove = (ev) => {
@@ -1467,17 +1440,6 @@ export default function Studio() {
     return () => window.removeEventListener("keydown", onKey);
   }, [saveJSON, requestDeleteSelected, bloomEnabled, toggleBloom, selected]);
 
-  /* context menu */
-  const [ctxMenu, setCtxMenu] = useState(null);
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const onContext = (ev) => { ev.preventDefault(); setCtxMenu({ x: ev.clientX, y: ev.clientY }); };
-    el.addEventListener("contextmenu", onContext);
-    return () => el.removeEventListener("contextmenu", onContext);
-  }, []);
-
-  const closeContext = useCallback(() => setCtxMenu(null), []);
   const duplicateWrapper = useCallback(() => { workspaceRef.current?.duplicateSelected?.(); pushToast({ type: "info", message: "Duplicated selection" }); }, [pushToast]);
 
   /* ---------------- Backend / Dashboard helpers ---------------- */
@@ -1912,16 +1874,6 @@ export default function Studio() {
     }
   }, [importGLTF, pushToast]);
 
-  const joinProjectRoom = (id) => {
-    if (!projectSocketRef.current) return;
-    if (!id) return;
-    projectSocketRef.current.emit("join", { projectId: id });
-  };
-  const leaveProjectRoom = () => {
-    if (!projectSocketRef.current) return;
-    projectSocketRef.current.emit("leave");
-  };
-
   // Initialize project socket (realtime sync) -> dynamic import to avoid build error
   useEffect(() => {
     let mounted = true;
@@ -2332,53 +2284,6 @@ export default function Studio() {
     }
   }, [projectId, fetchProjects, deleteProjectOnServer]);
 
-  // Export/Import project JSON (unchanged)
-  const exportProjectJSON = useCallback(async () => {
-    try {
-      const snapshot = workspaceRef.current?.serializeScene?.();
-      if (!snapshot) { pushToast({ type: "error", message: "Nothing to export" }); return; }
-      const payload = { name: projectName || "untitled", data: snapshot, exportedAt: new Date().toISOString() };
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${(projectName || "project").replace(/\s+/g, "_")}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      pushToast({ type: "info", message: "Exported project JSON" });
-    } catch (err) {
-      console.error("exportProjectJSON failed", err);
-      pushToast({ type: "error", message: "Export failed" });
-    }
-  }, [projectName, pushToast]);
-
-  const importProjectJSON = useCallback((file) => {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      try {
-        const text = e.target.result;
-        const obj = JSON.parse(text);
-        if (obj && obj.data) {
-          if (workspaceRef.current?.loadFromData) workspaceRef.current.loadFromData(obj.data);
-          else if (workspaceRef.current?.applyScene) workspaceRef.current.applyScene?.(obj.data);
-          setProjectName(obj.name || "Imported Project");
-          setIsDirty(true);
-          lastLocalSnapshotRef.current = obj.data;
-          pushToast({ type: "info", message: "Imported project JSON" });
-        } else {
-          pushToast({ type: "error", message: "Invalid project file." });
-        }
-      } catch (err) {
-        console.error("Import failed:", err);
-        pushToast({ type: "error", message: "Import failed" });
-      }
-    };
-    reader.readAsText(file);
-  }, [pushToast]);
-
   // Autosave logic: uses saveProject (which itself has fallback)
   useEffect(() => {
     if (autosaveTimerRef.current) {
@@ -2615,7 +2520,7 @@ export default function Studio() {
               {collabConnected ? <FiWifi /> : <FiWifiOff />}
             </button>
 
-            <button className="studio-btn icon-btn" onClick={() => toggleSculpt()} title="Sculpt (placeholder)" aria-label="Toggle sculpt">🪵</button>
+            <button className="studio-btn icon-btn" onClick={() => toggleSculpt()} title="Toggle sculpt" aria-label="Toggle sculpt">🪵</button>
 
             {/* new helpers to fill empty space */}
             <div style={{ display: "flex", gap: 8, marginLeft: 12 }}>
@@ -2742,7 +2647,7 @@ export default function Studio() {
             selected={selected}
             onSelect={handleWorkspaceSelect}
             panelTopOffset={panelTopOffset}
-            onSceneChange={(v) => { setSceneVersion((s) => s + 1); refreshLightListFromScene(); setIsDirty(true); }}
+            onSceneChange={(_v) => { setSceneVersion((s) => s + 1); refreshLightListFromScene(); setIsDirty(true); }}
           />
 
           {!selected && <CenterWelcomeCard />}
@@ -2800,16 +2705,16 @@ export default function Studio() {
                       selected={selected}
                       onTransformChange={(prop, axis, val) => workspaceRef.current?.handleTransformChange?.(prop, axis, val)}
                       onMaterialChange={(patch) => { applyMaterialToSelection(patch); }}
-                      onApplyTexture={(file, slot) => { applyMaterialToSelection({ mapFile: file }); }}
+                      onApplyTexture={(file, _slot) => { applyMaterialToSelection({ mapFile: file }); }}
                       onApplyGLB={(file) => importGLTF(file)}
-                      onRemoveTexture={(slot) => { applyMaterialToSelection({ mapFile: null }); }}
+                      onRemoveTexture={(_slot) => { applyMaterialToSelection({ mapFile: null }); }}
                       onVisibilityToggle={(vis) => { if (selected) selected.visible = vis; }}
                       onDelete={requestDeleteSelected}
                       onRename={(name) => {
                         if (workspaceRef.current?.renameSelected) workspaceRef.current.renameSelected(name);
                         else selected.name = name;
                       }}
-                      onLightChange={(payload) => { /* optional: forward to lighting system */ }}
+                      onLightChange={(_payload) => { /* optional: forward to lighting system */ }}
                     />
                     {/* Bloom tagging quick toggle */}
                     {postApiRef.current?.tagForBloom && selected.isObject3D && (

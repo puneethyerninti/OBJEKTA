@@ -1,6 +1,6 @@
 // src/engine/commands/TransformCommand.js
 import { SceneGraphStore } from "../../store/SceneGraphStore";
-import * as THREE from "three";
+import EventBus from "../../utils/EventBus";
 
 /**
  * TransformCommand: captures before/after transforms for one or more objects.
@@ -37,7 +37,7 @@ export default class TransformCommand {
         } catch (e) { console.warn("TransformCommand apply error", e); }
       });
       // emit scene update so UI reacts (EventBus is optional)
-      try { const EB = require("../../utils/EventBus").default; EB?.emit?.("scene:updated", { type: "transform-command" }); } catch (e) {}
+      try { EventBus?.emit?.("scene:updated", { type: "transform-command" }); } catch (e) {}
     } catch (e) { console.warn("TransformCommand _apply failed", e); }
   }
 }

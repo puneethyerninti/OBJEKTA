@@ -3,88 +3,120 @@ import React from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 
+const ABOUT_FEATURES = [
+  {
+    title: "GPU-Accelerated Rendering",
+    desc: "WebGL 2 powered engine runs PBR shading with realtime reflections and post-processing in the browser — no install required.",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="about-feature-svg" aria-hidden="true">
+        <path d="M13 2L3 14H12L11 22L21 10H12L13 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    title: "Real-Time Collaboration",
+    desc: "Multiplayer scene state, live cursors and instant version snapshots let distributed teams review and iterate together.",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="about-feature-svg" aria-hidden="true">
+        <path d="M20 7L12 3L4 7M20 7L12 11M20 7V17L12 21M12 11L4 7M12 11V21M4 7V17L12 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    title: "Physically Based Materials",
+    desc: "Full PBR metalness-roughness workflow with HDR environment lighting and accurate tone mapping for look-dev previews.",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="about-feature-svg" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+        <circle cx="12" cy="12" r="4" stroke="currentColor" strokeWidth="2" />
+        <circle cx="12" cy="12" r="1.5" fill="currentColor" />
+      </svg>
+    ),
+  },
+];
+
 export default function About() {
   const navigate = useNavigate();
   const { user } = useAuth();
 
   return (
     <div className="site-wrapper">
-      {/* Background effects */}
-      <div className="grid-glow" aria-hidden="true" />
-      <div className="scanline-overlay" aria-hidden="true" />
-
       <main className="home-shell">
-        <section className="about-section">
-          <div className="about-header">
-            <h2 className="section-title">Redefining 3D Creation</h2>
-            <p className="section-subtitle">
-              Where innovation meets immersion in the browser.
+        {/* Hero */}
+        <section className="text-center" style={{ animation: "fade-up 0.7s ease-out" }}>
+          <span className="hero-badge-top">About Objekta</span>
+          <h1 className="hero-title" style={{ marginTop: "1.5rem", marginBottom: "1.5rem" }}>
+            Redefining <span className="title-gradient">3D Creation</span>
+          </h1>
+          <p className="hero-subtitle" style={{ maxWidth: "680px", margin: "0 auto" }}>
+            A browser-native 3D studio built for design teams who need professional-grade tools without
+            the overhead of legacy desktop software.
+          </p>
+        </section>
+
+        {/* Mission */}
+        <section
+          className="panel-glass neon-rim"
+          style={{ padding: "clamp(2rem,5vw,3.5rem)", borderRadius: "24px", animation: "fade-up 0.8s ease-out" }}
+        >
+          <div style={{ maxWidth: "820px", margin: "0 auto" }}>
+            <h2 className="section-title" style={{ marginBottom: "1.5rem" }}>Our Mission</h2>
+            <p style={{ color: "var(--text-light)", lineHeight: "1.8", marginBottom: "1.25rem", fontSize: "1.05rem" }}>
+              Objekta was built to remove the friction between creative intent and production output. We believe
+              professional 3D tooling shouldn't require terabytes of local installs, expensive workstations, or
+              platform lock-in. The browser is the most accessible creative surface on the planet — we're making
+              it the most capable one too.
             </p>
-          </div>
-          <div className="about-content">
-            <div className="about-text">
-              <p>
-                Objekta represents the future of 3D design—a revolutionary platform that brings professional-grade
-                tools directly to your browser. Born from the vision of democratizing creative technology, we've
-                eliminated the barriers between imagination and execution.
-              </p>
-              <p>
-                Our WebGL-powered engine delivers desktop-level performance with zero installation. Experience
-                real-time collaboration, advanced material systems, and GPU-accelerated rendering that rivals
-                traditional CAD software. From concept to production, Objekta empowers creators to build
-                extraordinary worlds without compromise.
-              </p>
-              <div className="about-features">
-                <div className="feature-highlight">
-                  <div className="feature-icon">⚡</div>
-                  <h4>Lightning Fast</h4>
-                  <p>Sub-second rendering with WebAssembly acceleration</p>
-                </div>
-                <div className="feature-highlight">
-                  <div className="feature-icon">🌐</div>
-                  <h4>Cloud Native</h4>
-                  <p>Seamless collaboration across any device, anywhere</p>
-                </div>
-                <div className="feature-highlight">
-                  <div className="feature-icon">🎨</div>
-                  <h4>Physically Based</h4>
-                  <p>Industry-standard PBR materials and lighting</p>
-                </div>
-              </div>
-            </div>
-            <div className="about-stats">
-              <div className="stat-item">
-                <span className="stat-number">25k+</span>
-                <span className="stat-label">Creative Professionals</span>
-              </div>
-              <div className="stat-item">
-                <span className="stat-number">500k+</span>
-                <span className="stat-label">3D Scenes Built</span>
-              </div>
-              <div className="stat-item">
-                <span className="stat-number">4.9/5</span>
-                <span className="stat-label">User Satisfaction</span>
-              </div>
-              <div className="stat-item">
-                <span className="stat-number">24/7</span>
-                <span className="stat-label">Global Support</span>
-              </div>
-            </div>
+            <p style={{ color: "var(--text-muted)", lineHeight: "1.8", fontSize: "0.975rem" }}>
+              From look-dev sessions to stakeholder reviews, Objekta keeps every collaborator in the same
+              viewport regardless of their device. WebGL 2 handles the rendering; the cloud handles persistence.
+              Your team handles the creative work.
+            </p>
           </div>
         </section>
 
-        {/* Call to Action */}
-        <section className="text-center py-16">
-          <h2 className="section-title mb-4">Ready to Transform Your Workflow?</h2>
-          <p className="section-subtitle mb-8">
-            Join thousands of creators already building with Objekta.
+        {/* Feature Highlights */}
+        <section style={{ animation: "fade-up 0.9s ease-out" }}>
+          <div className="text-center" style={{ marginBottom: "3rem" }}>
+            <h2 className="section-title">Capabilities</h2>
+            <p className="section-subtitle">Core technology that powers the studio</p>
+          </div>
+          <div className="about-features">
+            {ABOUT_FEATURES.map((feat) => (
+              <div key={feat.title} className="feature-highlight panel-glass">
+                <div className="about-feature-icon-wrap">{feat.icon}</div>
+                <h4>{feat.title}</h4>
+                <p>{feat.desc}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Technology stack note */}
+        <section
+          className="panel-glass"
+          style={{ padding: "2rem 2.5rem", borderRadius: "20px", animation: "fade-up 1s ease-out" }}
+        >
+          <h2 className="section-title" style={{ marginBottom: "1rem", fontSize: "1.4rem" }}>Built On Open Web Standards</h2>
+          <p style={{ color: "var(--text-muted)", lineHeight: "1.8", maxWidth: "780px" }}>
+            The entire rendering pipeline runs on WebGL 2 via Three.js and React Three Fiber. Assets follow
+            the open glTF 2.0 / GLB standard. Collaboration is powered by Socket.IO over WebSockets. Nothing
+            proprietary is required — your files stay portable.
+          </p>
+        </section>
+
+        {/* CTA */}
+        <section className="text-center" style={{ animation: "fade-up 1.1s ease-out" }}>
+          <h2 className="section-title" style={{ marginBottom: "1rem" }}>Start Building</h2>
+          <p className="section-subtitle" style={{ marginBottom: "2rem" }}>
+            Open the studio and bring your first scene to life in the browser.
           </p>
           <button
-            onClick={() => navigate(user ? '/dashboard' : '/login')}
+            onClick={() => navigate(user ? "/dashboard" : "/login")}
             className="cta-button cta-primary"
             data-magnetic="0.15"
           >
-            {user ? 'Enter Studio' : 'Start Free Trial'}
+            {user ? "Enter Studio" : "Open Studio"}
           </button>
         </section>
       </main>

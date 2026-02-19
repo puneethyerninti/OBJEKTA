@@ -100,6 +100,7 @@ const PaletteItem = React.memo(({ item, onAdd }) => {
     </div>
   );
 });
+PaletteItem.displayName = "PaletteItem";
 
 /* Collapsible section with debounced localStorage persistence */
 const Section = ({ title, children, defaultOpen = true }) => {

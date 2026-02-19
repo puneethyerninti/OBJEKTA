@@ -51,7 +51,7 @@ test('processScenePayload stores to disk when over threshold', async () => {
   };
   fs.writeFileSync(sceneFile.path, zlib.deflateSync(buffer));
 
-  const result = await processScenePayload({ sceneFile, inlineData: undefined, maxInlineBytes: 20 * 1024, sceneDir: tmpDir });
+  const result = await processScenePayload({ sceneFile, inlineData: undefined, maxInlineBytes: 1024, sceneDir: tmpDir });
   assert.strictEqual(result.sceneStorageType, 'disk');
   assert.ok(result.sceneFilePath);
   assert.ok(fs.existsSync(result.sceneFilePath));

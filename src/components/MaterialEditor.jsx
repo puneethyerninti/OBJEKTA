@@ -1,4 +1,5 @@
 // src/components/MaterialEditor.jsx
+import * as THREE from "three";
 /**
  * createMaterialEditor({ container, getSelectedMesh })
  * - container: DOM element to attach the UI (will append a small panel)

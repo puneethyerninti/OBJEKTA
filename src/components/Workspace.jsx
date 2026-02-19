@@ -5,7 +5,6 @@ import * as THREE from "three";
 // three/examples imports MUST include .js for Vite
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import createSafeGLTFLoader from "../utils/gltfLoader";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader";
 import { KTX2Loader } from "three/examples/jsm/loaders/KTX2Loader";
@@ -29,7 +28,7 @@ import AnimationScrubber from "../components/AnimationScrubber";
 import BloomTagPanel from "../components/BloomTagPanel";
 import AnimationKeyframeEditor from "../components/AnimationKeyframeEditor";
 import ObjectProperties from "../components/ObjectProperties";
-import { persistAdaptiveScale, loadAdaptiveScale, togglePerfPanel, loadPref, saveBool, PREF_KEYS } from "../utils/preferences";
+import { persistAdaptiveScale, loadAdaptiveScale, loadPref, PREF_KEYS } from "../utils/preferences";
 import AnimationEngine from "../engine/AnimationEngine";
 
 import { apiUrl } from "../utils/api";
@@ -61,7 +60,7 @@ try {
   }
 } catch (e) {}
 
-const Workspace = forwardRef(({ selected, onSelect, onFullScreenChange, panelTopOffset = 12, onSceneChange }, ref) => {
+const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChange, panelTopOffset = 12, onSceneChange, onLightChange }, ref) => {
   // DOM refs
   const containerRef = useRef(null);
   const canvasRef = useRef(null);

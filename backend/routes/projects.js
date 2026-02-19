@@ -479,9 +479,11 @@ router.put("/:id", protect, handleProjectFiles, async (req, res) => {
 router.delete("/:id", protect, async (req, res) => {
   try {
     const { id } = req.params;
-    const removed = await Project.findByIdAndDelete(id);
-    if (!removed) return res.status(404).json({ message: "Project not found" });
-    if (!canAccess(removed, req.userId)) return res.status(403).json({ message: "Forbidden" });
+    const existing = await Project.findById(id);
+    if (!existing) return res.status(404).json({ message: "Project not found" });
+    if (!canAccess(existing, req.userId)) return res.status(403).json({ message: "Forbidden" });
+
+    await Project.deleteOne({ _id: id });
 
     getIO()?.emit?.("project_deleted", String(id));
     getIO()?.emit?.("projects:changed");

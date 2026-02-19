@@ -1,8 +1,9 @@
 // src/App.jsx
 import React, { useEffect, useState } from "react";
-import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 // Pages (keep your existing pages)
 import Home from "./pages/Home";
@@ -26,10 +27,17 @@ import { DndProvider } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
 
 function Layout({ children }) {
+  const { pathname } = useLocation();
+  // Dashboard is fullscreen — no global navbar/footer chrome needed.
+  const hideChromeRoutes = ["/dashboard", "/studio"];
+  const hideChrome = hideChromeRoutes.some((r) => pathname.startsWith(r));
+  if (hideChrome) {
+    return <>{children}</>;
+  }
   return (
     <div className="app-shell">
       <Navbar />
-      <main>{children}</main>
+      <div>{children}</div>
       <Footer />
     </div>
   );
@@ -63,10 +71,11 @@ export default function App() {
   ) : null;
   return (
     <AuthProvider>
-      <ContextBanner />
-      <Router>
-        <AppInit />
-        <Routes>
+      <ErrorBoundary>
+        <ContextBanner />
+        <Router>
+          <AppInit />
+          <Routes>
           {/* Public pages */}
           <Route path="/" element={<Layout><Home /></Layout>} />
           <Route path="/about" element={<Layout><About /></Layout>} />
@@ -100,8 +109,9 @@ export default function App() {
 
           {/* fallback */}
           <Route path="*" element={<h1 style={{ padding: "2rem" }}>404 — Not Found</h1>} />
-        </Routes>
-      </Router>
+          </Routes>
+        </Router>
+      </ErrorBoundary>
     </AuthProvider>
   );
 }

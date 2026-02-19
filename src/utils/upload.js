@@ -1,7 +1,8 @@
 import * as tus from "tus-js-client";
+import { apiUrl } from "./api";
 
 export async function presignPut({ filename, contentType, projectId }) {
-	const res = await fetch(`/api/uploads/presign`, {
+	const res = await fetch(apiUrl(`/api/uploads/presign`), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		credentials: "include",
@@ -12,7 +13,7 @@ export async function presignPut({ filename, contentType, projectId }) {
 }
 
 export async function registerProjectAssetS3({ projectId, payload }) {
-	const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/assets/s3`, {
+	const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/assets/s3`), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		credentials: "include",
@@ -42,7 +43,7 @@ export async function uploadSmallViaPresign({ file, projectId, onProgress }) {
 }
 
 export async function multipartStart({ file, projectId }) {
-	const res = await fetch(`/api/uploads/multipart/start`, {
+	const res = await fetch(apiUrl(`/api/uploads/multipart/start`), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		credentials: "include",
@@ -53,7 +54,7 @@ export async function multipartStart({ file, projectId }) {
 }
 
 export async function signPart({ uploadId, partNumber }) {
-	const res = await fetch(`/api/uploads/multipart/sign`, {
+	const res = await fetch(apiUrl(`/api/uploads/multipart/sign`), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		credentials: "include",
@@ -64,7 +65,7 @@ export async function signPart({ uploadId, partNumber }) {
 }
 
 export async function multipartComplete({ uploadId, parts }) {
-	const res = await fetch(`/api/uploads/multipart/complete`, {
+	const res = await fetch(apiUrl(`/api/uploads/multipart/complete`), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		credentials: "include",
@@ -115,7 +116,8 @@ export async function uploadMultipartToS3({ file, projectId, onProgress, concurr
 			await uploadOne(n);
 		}
 	}
-	await Promise.all(Array.from({ length: Math.min(concurrency, count) }, worker));
+	const maxWorkers = typeof window === "undefined" ? 1 : Math.min(concurrency, count);
+	await Promise.all(Array.from({ length: maxWorkers }, worker));
 
 	const done = await multipartComplete({ uploadId, parts });
 	// register with project
@@ -123,7 +125,7 @@ export async function uploadMultipartToS3({ file, projectId, onProgress, concurr
 	return { key: done.key, asset: reg.asset };
 }
 
-export function uploadWithTus({ file, projectId, endpoint = "/api/uploads/tus", onProgress }) {
+export function uploadWithTus({ file, projectId, endpoint = apiUrl("/api/uploads/tus"), onProgress }) {
 	return new Promise((resolve, reject) => {
 		const upload = new tus.Upload(file, {
 			endpoint,

@@ -26,12 +26,13 @@ describe('normalizeModel', () => {
 
     const { box, size, center } = worldBox(root);
     expect(Math.abs(center.x)).toBeLessThan(1e-3);
-    expect(Math.abs(center.y)).toBeLessThan(1e-3);
     expect(Math.abs(center.z)).toBeLessThan(1e-3);
     // scaled to fit maxDimension ~= 10
     expect(size.x).toBeLessThanOrEqual(10.01);
     // grounded (min y ~= 0)
     expect(Math.abs(box.min.y)).toBeLessThan(1e-3);
+    // center.y should reflect grounded placement (half height)
+    expect(center.y).toBeGreaterThan(0);
   });
 
   it('runs only once per root (idempotent)', () => {

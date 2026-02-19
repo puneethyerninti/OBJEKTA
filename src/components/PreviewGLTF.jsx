@@ -1,6 +1,6 @@
 import React, { useMemo, useEffect, useState, useRef } from 'react';
 import * as THREE from 'three';
-import { useThree, useFrame } from '@react-three/fiber';
+import { useFrame } from '@react-three/fiber';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
@@ -67,7 +67,6 @@ void main() {
 // Accepts either a preloaded `gltf` prop or a `src` URL to load immediately.
 export default function PreviewGLTF({ src, gltf, fitSize = 3, fitAxis = 'max', position = [0,0,0] }) {
   const [local, setLocal] = useState(gltf || null);
-  const { gl, scene: r3Scene } = useThree && useThree() || {};
   const mixerRef = useRef(null);
 
   // Create hologram materials for preview (subtle version)
@@ -96,7 +95,7 @@ export default function PreviewGLTF({ src, gltf, fitSize = 3, fitAxis = 'max', p
         super(manager);
       }
       
-      load(url, onLoad, onProgress, onError) {
+      load(url, onLoad, _onProgress, _onError) {
         // Create a 1x1 transparent placeholder texture
         const canvas = document.createElement('canvas');
         canvas.width = 1;

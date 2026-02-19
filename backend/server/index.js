@@ -164,7 +164,7 @@ server.listen(PORT, () => {
 });
 
 // generic error handler (add just before server.listen)
-app.use((err, req, res, next) => {
+app.use((err, req, res, _next) => {
   console.error("Unhandled error:", err);
   res.status(500).json({ error: "Server error", message: err?.message || '' });
 });

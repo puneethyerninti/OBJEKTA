@@ -44,7 +44,7 @@ function requireS3(res) {
 router.post("/presign", async (req, res) => {
   try {
     if (!requireS3(res)) return;
-    const { filename, contentType, projectId, purpose } = req.body;
+    const { filename, contentType, projectId, purpose: _purpose } = req.body;
     if (!filename || !contentType) return res.status(400).json({ message: "filename & contentType required" });
 
     // build a safe key: projekta/{projectId||temp}/{uuid}-{safeName}

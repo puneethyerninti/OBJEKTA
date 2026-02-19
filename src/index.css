@@ -1706,6 +1706,136 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
   color: var(--brand-teal);
 }
 
+/* -------------------------
+   Full Footer (multi-column)
+------------------------- */
+.site-footer-full {
+  border-top: 1px solid rgba(127, 90, 240, 0.15);
+  background: linear-gradient(180deg, transparent, rgba(4, 4, 14, 0.6));
+  padding: 4rem 1.5rem 2rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.footer-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
+  gap: 3rem;
+  margin-bottom: 3rem;
+}
+
+.footer-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.footer-logo {
+  font-size: 1.5rem;
+  font-weight: 700;
+  text-decoration: none;
+  background: linear-gradient(120deg, #ffffff, var(--brand-teal), var(--brand-purple));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.01em;
+}
+
+.footer-tagline {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  line-height: 1.7;
+  max-width: 340px;
+  margin: 0;
+}
+
+.footer-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.footer-col-heading {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-light);
+  margin: 0 0 1.25rem 0;
+}
+
+.footer-col-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.footer-link {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.9rem;
+  transition: color 0.18s;
+}
+.footer-link:hover {
+  color: var(--brand-teal);
+}
+
+.footer-bottom {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding-top: 2rem;
+  border-top: 1px solid rgba(127, 90, 240, 0.1);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  color: rgba(157, 166, 212, 0.6);
+}
+
+.footer-bottom p { margin: 0; }
+
+@media (max-width: 900px) {
+  .footer-inner {
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+  }
+  .footer-brand { grid-column: span 2; }
+}
+
+@media (max-width: 600px) {
+  .footer-inner {
+    grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+  .footer-brand { grid-column: span 1; }
+  .footer-bottom {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* -------------------------
+   About page — SVG feature icons
+------------------------- */
+.about-feature-icon-wrap {
+  color: var(--brand-teal);
+  margin-bottom: 1rem;
+  display: flex;
+  justify-content: center;
+}
+
+.about-feature-svg {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
 /* New Section Styles */
 .about-section,
 .gallery-section,

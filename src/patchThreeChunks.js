@@ -2,7 +2,6 @@
 // If a dependency expects colorspace_* chunks but our Three provides encodings_*, alias them.
 try {
   // Import on demand to avoid bundler side effects if tree-shaken
-  // eslint-disable-next-line import/no-extraneous-dependencies
   const three = await import('three');
   const ShaderChunk = three?.ShaderChunk;
   if (ShaderChunk) {
