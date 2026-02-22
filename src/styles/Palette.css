@@ -1,69 +1,55 @@
-/* src/styles/Palette.css (polished) */
+/* src/styles/Palette.css — polished & fixed */
+/* Fonts loaded via <link> in index.html; tokens from tokens.css */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
-:root {
-  --radius: 12px;
-  --gap: 12px;
-  --panel-border: var(--panel-border, 1px solid rgba(127,90,240,0.1));
-  --control-bg: var(--control-bg, rgba(30, 0, 60, 0.4));
-  --control-hover-bg: var(--control-hover-bg, rgba(127,90,240,0.12));
-  --accent-glow: var(--accent-glow, 0 0 12px rgba(127,90,240,0.35));
-  --brand-purple: var(--brand-purple, #7f5af0);
-  --brand-pink: var(--brand-pink, #ff66c4);
-}
-
-/* container — apply to the actual panel markup: .palette-panel > .palette-inner */
+/* ── Container ─────────────────────────────────────────── */
 .palette-panel .palette-inner {
-  background: rgba(10, 0, 30, 0.0);
-  border-radius: var(--radius);
+  background: rgba(10, 0, 30, 0.35);
+  border-radius: var(--radius, 10px);
   width: 100%;
-  /* Use flex instead of fixed height so the inner container can resolve
-     its height inside the left column flex layout. This prevents
-     `height:100%` fragility when parent sizes aren't explicit. */
   display: flex;
   flex-direction: column;
-  gap: var(--gap);
-  padding: 0; /* padding handled by parent panel */
-  box-shadow: inset 0 0 0 rgba(0,0,0,0);
-  /* Allow vertical scrolling when content overflows */
+  gap: var(--gap, 8px);
+  padding: 0;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
   flex: 1 1 auto;
-  min-height: 0; /* allow flex children to shrink inside constrained containers */
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
 }
 
-/* header */
+/* ── Header ────────────────────────────────────────────── */
 .palette-header {
   color: var(--text-light);
   font-family: 'Inter', sans-serif;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
   text-align: center;
   margin-bottom: 4px;
-  /* lighter glow for readability */
-  text-shadow: 0 0 6px rgba(255,255,255,0.02);
-  letter-spacing: 0.2px;
+  text-shadow: 0 0 6px rgba(127,90,240,0.15);
+  letter-spacing: 0.3px;
 }
 
-/* search */
+/* ── Search ────────────────────────────────────────────── */
 .palette-search {
   width: 100%;
   padding: 8px 12px;
   border-radius: 8px;
-  border: var(--panel-border);
-  background: rgba(0,0,0,0.28);
+  border: 1px solid rgba(127,90,240,0.18);
+  background: rgba(0,0,0,0.32);
   color: #fff;
   font-size: 13px;
   outline: none;
-  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+  transition: box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.palette-search::placeholder {
+  color: rgba(255,255,255,0.35);
 }
 .palette-search:focus {
-  box-shadow: var(--accent-glow);
-  border-color: rgba(127, 90, 240, 0.6);
+  box-shadow: 0 0 0 2px rgba(0,215,255,0.45), 0 0 18px -4px rgba(127,90,240,0.5);
+  border-color: rgba(127,90,240,0.5);
 }
 
-/* filters */
+/* ── Filter buttons ────────────────────────────────────── */
 .palette-filters {
   display: flex;
   flex-wrap: wrap;
@@ -73,28 +59,30 @@
 .filter-btn {
   padding: 6px 12px;
   border-radius: 999px;
-  border: 1px solid transparent;
-  background: var(--control-bg);
+  border: 1px solid rgba(127,90,240,0.15);
+  background: rgba(255,255,255,0.03);
   color: var(--text-muted);
   cursor: pointer;
   font-size: 12px;
   font-weight: 500;
-  transition: transform 0.14s ease, background 0.14s ease;
+  transition: transform 0.14s ease, background 0.14s ease, border-color 0.14s ease;
 }
 .filter-btn:hover,
 .filter-btn:focus-visible {
   transform: translateY(-2px);
-  background: var(--control-hover-bg);
+  background: rgba(127,90,240,0.12);
   color: var(--text-light);
+  border-color: rgba(127,90,240,0.35);
 }
 .filter-btn.active {
   background: linear-gradient(90deg, var(--brand-purple), var(--brand-pink));
   color: #fff;
   font-weight: 700;
-  border-color: rgba(255,255,255,0.12);
+  border-color: rgba(255,255,255,0.15);
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.2), 0 0 16px -4px rgba(127,90,240,0.55);
 }
 
-/* sections */
+/* ── Sections ──────────────────────────────────────────── */
 .palette-section {
   margin-bottom: 8px;
 }
@@ -104,27 +92,31 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: rgba(0,0,0,0.12);
-  border: 1px solid rgba(127,90,240,0.06);
+  background: linear-gradient(110deg, rgba(12,10,20,0.55), rgba(18,14,28,0.55));
+  border: 1px solid rgba(127,90,240,0.14);
   border-radius: 8px;
   padding: 8px 10px;
   color: var(--text-light);
   font-weight: 700;
   font-size: 13px;
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition: background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
 }
 .section-header:hover,
 .section-header:focus-visible {
-  background: rgba(127,90,240,0.06);
-  border-color: rgba(127,90,240,0.28);
+  background: rgba(127,90,240,0.08);
+  border-color: rgba(127,90,240,0.32);
+  box-shadow: 0 0 0 1px rgba(0,215,255,0.4);
 }
 .section-arrow {
   transform: rotate(0deg);
-  transition: transform 0.15s ease;
+  transition: transform 0.18s ease;
+  font-size: 11px;
+  opacity: 0.7;
 }
 .section-arrow.open {
   transform: rotate(90deg);
+  opacity: 1;
 }
 
 .section-content {
@@ -133,70 +125,71 @@
   gap: 8px;
 }
 
-/* items */
+/* ── Items ─────────────────────────────────────────────── */
 .palette-item {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 8px;
   border-radius: 8px;
-  background: var(--control-bg);
+  background: linear-gradient(130deg, rgba(30,16,44,0.6), rgba(10,6,22,0.6));
   color: var(--text-muted);
   cursor: grab;
   font-weight: 600;
   font-size: 13px;
   -webkit-user-select: none;
   user-select: none;
-  transition: transform 0.14s ease, box-shadow 0.14s ease, background 0.14s ease;
-  border: 1px solid transparent;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+  border: 1px solid rgba(127,90,240,0.18);
   will-change: transform, box-shadow;
   outline: none;
 }
 
-/* hover/active/dragging */
 .palette-item:hover {
-  transform: translate3d(6px,0,0);
-  box-shadow: var(--accent-glow);
-  background: var(--control-hover-bg);
+  transform: translate3d(6px, 0, 0);
+  box-shadow: 0 0 0 1px rgba(127,90,240,0.5), 0 0 22px -4px rgba(0,215,255,0.5), 0 0 40px -8px rgba(127,90,240,0.6);
+  background: linear-gradient(130deg, rgba(50,26,74,0.7), rgba(20,12,42,0.7));
   color: #fff;
-  border-color: rgba(127, 90, 240, 0.32);
+  border-color: rgba(127,90,240,0.4);
 }
-.palette-item:active { transform: translate3d(3px,0,0) scale(0.995); }
+.palette-item:active {
+  transform: translate3d(3px, 0, 0) scale(0.995);
+}
 .palette-item.dragging {
   background: linear-gradient(90deg, var(--brand-purple), var(--brand-pink));
-  box-shadow: 0 0 20px rgba(127,90,240,0.9);
+  box-shadow: 0 0 0 2px rgba(0,215,255,0.7), 0 0 32px -4px rgba(127,90,240,0.85);
   color: #fff;
   cursor: grabbing;
 }
 
 /* keyboard focus */
 .palette-item:focus-visible {
-  box-shadow: 0 0 0 4px rgba(127,90,240,0.12);
-  border-color: rgba(127,90,240,0.3);
+  box-shadow: 0 0 0 4px rgba(127,90,240,0.18);
+  border-color: rgba(127,90,240,0.4);
 }
 
-/* icon */
+/* ── Item icon ─────────────────────────────────────────── */
 .palette-item-icon {
   width: 32px;
   height: 32px;
-  background: rgba(0,0,0,0.28);
+  background: rgba(0,0,0,0.32);
   border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 18px;
   flex-shrink: 0;
-  border: 1px solid rgba(255,255,255,0.04);
+  border: 1px solid rgba(127,90,240,0.12);
 }
 
-/* name */
+/* ── Item name ─────────────────────────────────────────── */
 .palette-item-name {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* drag preview */
+/* ── Drag preview ──────────────────────────────────────── */
 .drag-preview {
   display: flex;
   align-items: center;
@@ -207,14 +200,14 @@
   color: #fff;
   box-shadow: 0 12px 40px rgba(0,0,0,0.6);
   min-width: 140px;
-  border: var(--panel-border);
+  border: 1px solid rgba(127,90,240,0.25);
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   pointer-events: none;
   transform: translateZ(0);
 }
 
-/* collapsed helper: hide text and compact icon */
+/* ── Collapsed state ───────────────────────────────────── */
 .palette-panel.collapsed .palette-header,
 .palette-panel.collapsed .palette-search,
 .palette-panel.collapsed .palette-filters,
@@ -223,107 +216,112 @@
 .palette-panel.collapsed .palette-item-name {
   display: none;
 }
-.palette-panel.collapsed .palette-item { justify-content: center; padding: 6px; }
+.palette-panel.collapsed .palette-item {
+  justify-content: center;
+  padding: 6px;
+}
 
-/* scrollbars */
+/* ── Scrollbar ─────────────────────────────────────────── */
 .palette-panel .palette-inner::-webkit-scrollbar {
-  width: 12px;
+  width: 8px;
+}
+.palette-panel .palette-inner::-webkit-scrollbar-track {
+  background: transparent;
 }
 .palette-panel .palette-inner::-webkit-scrollbar-thumb {
-  background: rgba(180,180,180,0.28);
+  background: linear-gradient(180deg, rgba(127,90,240,0.35), rgba(0,215,255,0.25));
   border-radius: 8px;
-  border: 3px solid transparent;
+  border: 2px solid transparent;
   background-clip: padding-box;
 }
-
 .palette-panel .palette-inner::-webkit-scrollbar-thumb:hover {
-  background: rgba(200,200,200,0.5);
+  background: linear-gradient(180deg, rgba(127,90,240,0.55), rgba(0,215,255,0.45));
+}
+@supports (scrollbar-width: thin) {
+  .palette-panel .palette-inner {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(127,90,240,0.32) transparent;
+  }
 }
 
-/* reduced motion */
-@media (prefers-reduced-motion: reduce) {
-  .palette-item, .filter-btn, .section-header { transition: none !important; animation: none !important; }
-}
-
-/* small screens */
-@media (max-width: 720px) {
-  .palette-container { padding: 8px; gap: 8px; }
-  .palette-item { padding: 6px; font-size: 12px; }
-}
-
-/* ================= CYBERPUNK ENHANCEMENTS ================= */
-/* Layered neon/glass effects added after base styling */
-
+/* ── Cyberpunk grid overlay ────────────────────────────── */
 .palette-container {
   position: relative;
   background:
     linear-gradient(135deg, rgba(14,10,26,0.55), rgba(8,4,18,0.55)),
-    radial-gradient(circle at 20% 16%, rgba(127,90,240,0.18), transparent 60%);
+    radial-gradient(circle at 20% 16%, rgba(127,90,240,0.15), transparent 60%);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
-  border: 1px solid rgba(127,90,240,0.25);
+  border: 1px solid rgba(127,90,240,0.22);
+  border-radius: 12px;
 }
 .palette-container::before {
-  content: ""; position: absolute; inset: 0;
-  background: repeating-linear-gradient(90deg, rgba(127,90,240,0.08) 0 1px, transparent 1px 110px), repeating-linear-gradient(0deg, rgba(0,215,255,0.10) 0 1px, transparent 1px 110px);
-  opacity: .12; mix-blend-mode: screen; pointer-events: none;
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(90deg, rgba(127,90,240,0.06) 0 1px, transparent 1px 110px),
+    repeating-linear-gradient(0deg, rgba(0,215,255,0.08) 0 1px, transparent 1px 110px);
+  opacity: 0.1;
+  mix-blend-mode: screen;
+  pointer-events: none;
+  border-radius: inherit;
   animation: paletteGrid 42s linear infinite;
 }
 @keyframes paletteGrid { to { background-position: 140px 140px, 0 160px; } }
 
-/* Item hologram accent */
-.palette-item {
-  background: linear-gradient(130deg, rgba(30,16,44,0.65), rgba(10,6,22,0.65));
-  border: 1px solid rgba(127,90,240,0.26);
-}
-.palette-item:hover {
-  box-shadow: 0 0 0 1px rgba(127,90,240,0.55), 0 0 22px -4px rgba(0,215,255,0.55), 0 0 44px -8px rgba(127,90,240,0.65);
-}
-.palette-item.dragging {
-  box-shadow: 0 0 0 2px rgba(0,215,255,0.7), 0 0 32px -4px rgba(127,90,240,0.85);
-}
-
-/* Section header glow */
-.section-header {
-  background: linear-gradient(110deg, rgba(12,10,20,0.55), rgba(18,14,28,0.55));
-  border: 1px solid rgba(127,90,240,0.22);
-}
-.section-header:hover { box-shadow: 0 0 0 1px rgba(0,215,255,0.5); }
-
-/* Active filter button emissive edge */
-.filter-btn.active {
-  box-shadow: 0 0 0 1px rgba(255,255,255,0.2), 0 0 16px -4px rgba(127,90,240,0.55);
-}
-
-/* Search focus neon */
-.palette-search:focus { box-shadow: 0 0 0 2px rgba(0,215,255,0.55), 0 0 20px -4px rgba(127,90,240,0.6); }
-
-/* Reduced motion safety */
-@media (prefers-reduced-motion: reduce) {
-  .palette-container::before { animation: none !important; }
-}
-/* ================= END CYBERPUNK ENHANCEMENTS ================= */
-
-/* --------------------------------------------
-   Swatches & Handle
-   design tokens — cyberpunk 3d — modified 2025-11-19
---------------------------------------------- */
-/* usage: <button class="swatch neon-rim" aria-label="Cyan" /> */
+/* ── Swatches & Handle ─────────────────────────────────── */
 .swatch {
-  width: 44px; height: 44px; border-radius: 10px; border: 1px solid rgba(127,90,240,0.28);
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  border: 1px solid rgba(127,90,240,0.28);
   background: linear-gradient(140deg, rgba(18,14,34,0.65), rgba(10,8,22,0.65));
-  display: inline-flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: transform .12s ease, box-shadow .12s ease; outline: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  outline: none;
 }
-.swatch:hover { transform: translateY(-2px); box-shadow: 0 10px 22px rgba(0,0,0,0.35); }
-.swatch.selected { box-shadow: 0 0 0 2px rgba(0,215,255,0.6), 0 0 18px -4px rgba(127,90,240,0.6); transform: translateY(-2px) scale(0.98); }
-.swatch:focus-visible { box-shadow: 0 0 0 3px rgba(0,215,255,0.55); }
+.swatch:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 22px rgba(0,0,0,0.35);
+}
+.swatch.selected {
+  box-shadow: 0 0 0 2px rgba(0,215,255,0.6), 0 0 18px -4px rgba(127,90,240,0.6);
+  transform: translateY(-2px) scale(0.98);
+}
+.swatch:focus-visible {
+  box-shadow: 0 0 0 3px rgba(0,215,255,0.55);
+}
 
-/* Draggable handle */
-/* usage: <div class="palette-handle tilt-on-hover" /> */
 .palette-handle {
-  width: 24px; height: 6px; border-radius: 999px; align-self: center; margin: 4px 0 8px 0;
+  width: 24px;
+  height: 6px;
+  border-radius: 999px;
+  align-self: center;
+  margin: 4px 0 8px 0;
   background: linear-gradient(90deg, rgba(127,90,240,0.45), rgba(0,215,255,0.45));
   cursor: grab;
 }
-.palette-handle:active { cursor: grabbing; }
+.palette-handle:active {
+  cursor: grabbing;
+}
+
+/* ── Reduced motion ────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .palette-item,
+  .filter-btn,
+  .section-header,
+  .palette-container::before {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* ── Small screens ─────────────────────────────────────── */
+@media (max-width: 720px) {
+  .palette-container { padding: 8px; gap: 8px; }
+  .palette-item { padding: 6px; font-size: 12px; }
+}

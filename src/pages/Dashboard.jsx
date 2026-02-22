@@ -818,7 +818,7 @@ export default function Dashboard() {
             </div>
 
             <div className="dash-controls">
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <div className="dash-controls-inner">
                 <input
                   aria-label="Search projects"
                   placeholder="Search projects..."
@@ -827,6 +827,7 @@ export default function Dashboard() {
                   className="input-search"
                 />
                 <select
+                  aria-label="Sort projects"
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value)}
                   className="select-sort"
@@ -877,17 +878,8 @@ export default function Dashboard() {
 
             {projectsError && (
               <div
-                className="mini-card"
-                style={{
-                  border: "1px solid rgba(255,60,80,0.3)",
-                  background: "rgba(255,60,80,0.08)",
-                  color: "#ffb4c4",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 12,
-                  flexWrap: "wrap",
-                }}
+                className="mini-card projects-error"
+                role="alert"
               >
                 <span>{projectsError}</span>
                 <button className="btn-ghost" onClick={handleRetryProjects}>
@@ -911,7 +903,7 @@ export default function Dashboard() {
           </section>
 
           {/* Saved scenes */}
-          <section className="projects-section" style={{ marginTop: 18 }}>
+          <section className="projects-section saved-scenes-section">
             <h2 className="section-title">Saved Scenes</h2>
             <p className="text-muted">Scenes you've saved — load them directly into the Studio.</p>
 
@@ -920,9 +912,9 @@ export default function Dashboard() {
             ) : !Array.isArray(scenes) || scenes.length === 0 ? (
               <div className="mini-card">No saved scenes yet. Save a scene from the Studio to see it here.</div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12 }}>
+              <div className="saved-scenes-grid">
                 {scenes.map((s, i) => (
-                  <div key={s._id || `scene-${i}`} className="project-card" style={{ cursor: "default" }}>
+                  <div key={s._id || `scene-${i}`} className="project-card scene-card">
                     <div className="thumb">
                       {s.thumbnailUrl ? (
                         <img src={s.thumbnailUrl} alt={s.name} />
@@ -945,11 +937,11 @@ export default function Dashboard() {
                       )}
                     </div>
                     <div className="card-body">
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                      <div className="card-header-row">
                         <div className="card-title" title={s.name}>
                           {s.name}
                         </div>
-                        <div style={{ display: "flex", gap: 8 }}>
+                        <div className="card-actions-inline">
                           <button className="btn-ghost small" onClick={() => loadSceneInStudio(s._id)}>
                             Load in Studio
                           </button>
@@ -1010,8 +1002,8 @@ export default function Dashboard() {
             </div>
           </section>
 
-          <footer className="dash-footer" style={{ marginTop: 18 }}>
-            © 2025 Objekta. All rights reserved.
+          <footer className="dash-footer">
+            © {new Date().getFullYear()} Objekta. All rights reserved.
           </footer>
         </main>
       </div>
@@ -1042,7 +1034,7 @@ export default function Dashboard() {
           <label className="label">Title</label>
           <input className="auth-input" value={renameValue} onChange={(e) => setRenameValue(e.target.value)} />
 
-          <label className="label" style={{ marginTop: 10 }}>Progress</label>
+          <label className="label label--spaced">Progress</label>
           <div className="progress-row">
             <div className="progress-track">
               <div className="progress-fill" style={{ width: `${selectedProject.progress ?? 0}%` }} />
@@ -1050,7 +1042,7 @@ export default function Dashboard() {
             <div className="progress-num">{selectedProject.progress ?? 0}%</div>
           </div>
 
-          <div className="modal-actions" style={{ marginTop: 14 }}>
+          <div className="modal-actions">
             <button className="btn btn-primary" onClick={saveRename} disabled={modalLoading}>
               {modalLoading ? 'Saving…' : 'Save'}
             </button>
@@ -1071,8 +1063,8 @@ export default function Dashboard() {
       {/* Preview modal */}
       {preview && (
         <Modal title={`Preview: ${preview.title}`} onClose={closePreview} width={820}>
-          <div style={{ display: 'flex', gap: 12, flexDirection: 'row', flexWrap: 'wrap' }}>
-            <div style={{ flex: 1, minWidth: 280 }}>
+          <div className="preview-layout">
+            <div className="preview-media">
               <div className="preview-box">
                 {renderThumbSrc(preview.thumbnailUrl) ? (
                   <img
@@ -1081,17 +1073,16 @@ export default function Dashboard() {
                     alt={preview.title}
                     onError={handleThumbError}
                     loading="lazy"
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                   />
                 ) : (
                   <div className="text-muted">No preview available</div>
                 )}
               </div>
             </div>
-            <div style={{ width: 260, minWidth: 220 }}>
-              <div style={{ fontWeight: 700, fontSize: 16 }}>{preview.title}</div>
-              <div className="text-muted" style={{ marginTop: 8 }}>Last saved: {safeDate(preview.updatedAt || preview.createdAt)}</div>
-              <div style={{ marginTop: 16 }}>
+            <div className="preview-info">
+              <div className="preview-info__title">{preview.title}</div>
+              <div className="text-muted preview-info__meta">Last saved: {safeDate(preview.updatedAt || preview.createdAt)}</div>
+              <div className="preview-info__actions">
                 <button className="btn btn-primary" onClick={() => { navToStudio(preview); closePreview(); }}>
                   Open in Studio
                 </button>

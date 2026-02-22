@@ -2,18 +2,18 @@ import React from 'react';
 import PropTypes from 'prop-types';
 import { ProjectCard } from './ProjectCard';
 
-export default function ProjectGrid({ projects, loading, filteredProjects, presenceMap, saveProgressMap, onOpen, onPreview, onDuplicate, onContext, onOpenStudio }) {
+function ProjectGrid({ projects, loading, filteredProjects, presenceMap, saveProgressMap, onOpen, onPreview, onDuplicate, onContext, onOpenStudio }) {
   if (loading || projects === null) {
     return (
-      <div className="projects-grid" role="list">
+      <div className="projects-grid" role="list" aria-busy="true" aria-label="Loading projects">
         {Array.from({ length: 3 }).map((_, i) => (
-          <article key={`skeleton-${i}`} className="project-card skeleton" aria-hidden>
+          <div key={`skeleton-${i}`} className="project-card skeleton" aria-hidden="true" role="listitem">
             <div className="thumb skeleton-box" />
             <div className="card-body">
               <div className="skeleton-line short" />
               <div className="skeleton-line" />
             </div>
-          </article>
+          </div>
         ))}
       </div>
     );
@@ -24,7 +24,7 @@ export default function ProjectGrid({ projects, loading, filteredProjects, prese
   }
 
   return (
-    <div className="projects-grid dash-grid" role="list">
+    <div className="projects-grid dash-grid" role="list" aria-label="Projects">
       {filteredProjects.map((p, i) => (
         <ProjectCard
           key={(p._id || `${p.title || 'untitled'}-${i}`) + '-' + i}
@@ -55,3 +55,5 @@ ProjectGrid.propTypes = {
   onContext: PropTypes.func,
   onOpenStudio: PropTypes.func,
 };
+
+export default React.memo(ProjectGrid);

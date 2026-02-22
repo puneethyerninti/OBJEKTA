@@ -17,16 +17,27 @@ export default class ErrorBoundary extends React.Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{ padding: 16, color: "#fff", background: "#1a1a26", borderRadius: 8, margin: 12 }}>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Something went wrong</div>
-          <div style={{ opacity: 0.85 }}>{this.state.message}</div>
-          <button
-            style={{ marginTop: 10, padding: "6px 10px", borderRadius: 6 }}
-            onClick={() => window.location.reload()}
-            type="button"
-          >
-            Reload
-          </button>
+        <div className="error-boundary-fallback" role="alert" aria-live="assertive">
+          <div className="error-boundary-fallback__title">Something went wrong</div>
+          <div className="error-boundary-fallback__message">{this.state.message}</div>
+          <div className="error-boundary-fallback__actions">
+            <button
+              className="error-boundary-fallback__btn"
+              onClick={() => this.setState({ hasError: false, message: '' })}
+              type="button"
+              aria-label="Try again"
+            >
+              Try Again
+            </button>
+            <button
+              className="error-boundary-fallback__btn error-boundary-fallback__btn--primary"
+              onClick={() => window.location.reload()}
+              type="button"
+              aria-label="Reload page"
+            >
+              Reload Page
+            </button>
+          </div>
         </div>
       );
     }

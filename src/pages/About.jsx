@@ -1,38 +1,68 @@
 // src/pages/About.jsx
 import React from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 
-const ABOUT_FEATURES = [
+const CORE_CAPABILITIES = [
   {
     title: "GPU-Accelerated Rendering",
-    desc: "WebGL 2 powered engine runs PBR shading with realtime reflections and post-processing in the browser — no install required.",
+    desc: "WebGL 2 powered engine delivers PBR shading with real-time reflections and post-processing directly in the browser — zero installation overhead.",
     icon: (
-      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="about-feature-svg" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" className="about-icon" aria-hidden="true">
         <path d="M13 2L3 14H12L11 22L21 10H12L13 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     ),
   },
   {
     title: "Real-Time Collaboration",
-    desc: "Multiplayer scene state, live cursors and instant version snapshots let distributed teams review and iterate together.",
+    desc: "Multiplayer scene editing with live cursors, shared viewports and instant version snapshots — distributed teams stay in sync effortlessly.",
     icon: (
-      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="about-feature-svg" aria-hidden="true">
-        <path d="M20 7L12 3L4 7M20 7L12 11M20 7V17L12 21M12 11L4 7M12 11V21M4 7V17L12 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <svg viewBox="0 0 24 24" fill="none" className="about-icon" aria-hidden="true">
+        <path d="M17 21V19C17 17.9391 16.5786 16.9217 15.8284 16.1716C15.0783 15.4214 14.0609 15 13 15H5C3.93913 15 2.92172 15.4214 2.17157 16.1716C1.42143 16.9217 1 17.9391 1 19V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx="9" cy="7" r="4" stroke="currentColor" strokeWidth="2" />
+        <path d="M23 21V19C22.9993 18.1137 22.7044 17.2528 22.1614 16.5523C21.6184 15.8519 20.8581 15.3516 20 15.13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M16 3.13C16.8604 3.35031 17.623 3.85071 18.1676 4.55232C18.7122 5.25392 19.0078 6.11683 19.0078 7.005C19.0078 7.89318 18.7122 8.75608 18.1676 9.45769C17.623 10.1593 16.8604 10.6597 16 10.88" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     ),
   },
   {
     title: "Physically Based Materials",
-    desc: "Full PBR metalness-roughness workflow with HDR environment lighting and accurate tone mapping for look-dev previews.",
+    desc: "Full metalness-roughness PBR workflow with HDR environment lighting, accurate tone mapping and material variant presets for production look-dev.",
     icon: (
-      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="about-feature-svg" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" className="about-icon" aria-hidden="true">
         <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
         <circle cx="12" cy="12" r="4" stroke="currentColor" strokeWidth="2" />
         <circle cx="12" cy="12" r="1.5" fill="currentColor" />
       </svg>
     ),
   },
+  {
+    title: "Resumable Asset Pipeline",
+    desc: "Upload multi-gigabyte GLB files with tus-based resumable transfers. Automatic thumbnail generation, version history and CDN-backed delivery.",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" className="about-icon" aria-hidden="true">
+        <path d="M21 15V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        <polyline points="17 8 12 3 7 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        <line x1="12" y1="3" x2="12" y2="15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+];
+
+const TECH_STACK = [
+  { name: "Three.js", desc: "Core 3D rendering engine", url: "https://threejs.org" },
+  { name: "React Three Fiber", desc: "Declarative scene graph", url: "https://docs.pmnd.rs/react-three-fiber" },
+  { name: "glTF 2.0 / GLB", desc: "Open asset format standard", url: "https://www.khronos.org/gltf/" },
+  { name: "WebGL 2", desc: "GPU-accelerated graphics API", url: "https://www.khronos.org/webgl/" },
+  { name: "Socket.IO", desc: "Real-time collaboration transport", url: "https://socket.io" },
+  { name: "tus Protocol", desc: "Resumable upload standard", url: "https://tus.io" },
+];
+
+const STATS = [
+  { value: "< 2s", label: "Average scene load time" },
+  { value: "glTF", label: "Industry-standard format" },
+  { value: "60 fps", label: "Target render performance" },
+  { value: "Zero", label: "Desktop installs required" },
 ];
 
 export default function About() {
@@ -43,81 +73,103 @@ export default function About() {
     <div className="site-wrapper">
       <main className="home-shell">
         {/* Hero */}
-        <section className="text-center" style={{ animation: "fade-up 0.7s ease-out" }}>
+        <section className="text-center" style={{ animation: "fadeInUp 0.7s ease-out" }}>
           <span className="hero-badge-top">About Objekta</span>
           <h1 className="hero-title" style={{ marginTop: "1.5rem", marginBottom: "1.5rem" }}>
-            Redefining <span className="title-gradient">3D Creation</span>
+            Professional <span className="title-gradient">3D Tooling</span> for the Web
           </h1>
-          <p className="hero-subtitle" style={{ maxWidth: "680px", margin: "0 auto" }}>
-            A browser-native 3D studio built for design teams who need professional-grade tools without
-            the overhead of legacy desktop software.
+          <p className="hero-subtitle" style={{ maxWidth: "720px", margin: "0 auto" }}>
+            Objekta is a browser-native 3D studio engineered for design teams who need production-grade
+            rendering, real-time collaboration and asset management — without the overhead of legacy desktop software.
           </p>
         </section>
 
+        {/* Stats row */}
+        <section className="about-stats-grid" style={{ animation: "fadeInUp 0.8s ease-out" }}>
+          {STATS.map((stat) => (
+            <div key={stat.label} className="about-stat-card panel-glass">
+              <div className="about-stat-value">{stat.value}</div>
+              <div className="about-stat-label">{stat.label}</div>
+            </div>
+          ))}
+        </section>
+
         {/* Mission */}
-        <section
-          className="panel-glass neon-rim"
-          style={{ padding: "clamp(2rem,5vw,3.5rem)", borderRadius: "24px", animation: "fade-up 0.8s ease-out" }}
-        >
+        <section className="panel-glass neon-rim about-mission-panel" style={{ animation: "fadeInUp 0.85s ease-out" }}>
           <div style={{ maxWidth: "820px", margin: "0 auto" }}>
             <h2 className="section-title" style={{ marginBottom: "1.5rem" }}>Our Mission</h2>
-            <p style={{ color: "var(--text-light)", lineHeight: "1.8", marginBottom: "1.25rem", fontSize: "1.05rem" }}>
-              Objekta was built to remove the friction between creative intent and production output. We believe
-              professional 3D tooling shouldn't require terabytes of local installs, expensive workstations, or
-              platform lock-in. The browser is the most accessible creative surface on the planet — we're making
-              it the most capable one too.
+            <p className="about-body-text">
+              We built Objekta to eliminate the gap between creative intent and production output. Professional 3D
+              tooling shouldn't demand terabytes of local installs, expensive GPU workstations, or vendor lock-in.
+              The browser is the most accessible creative platform on the planet — we're engineering it into
+              the most capable one.
             </p>
-            <p style={{ color: "var(--text-muted)", lineHeight: "1.8", fontSize: "0.975rem" }}>
-              From look-dev sessions to stakeholder reviews, Objekta keeps every collaborator in the same
-              viewport regardless of their device. WebGL 2 handles the rendering; the cloud handles persistence.
-              Your team handles the creative work.
+            <p className="about-body-text-muted">
+              From look-dev sessions to stakeholder reviews, Objekta keeps every team member in the same viewport
+              regardless of their device or location. WebGL 2 handles real-time rendering; the cloud handles
+              persistence and collaboration. Your team focuses on what matters — the creative work.
             </p>
           </div>
         </section>
 
-        {/* Feature Highlights */}
-        <section style={{ animation: "fade-up 0.9s ease-out" }}>
+        {/* Core Capabilities */}
+        <section style={{ animation: "fadeInUp 0.9s ease-out" }}>
           <div className="text-center" style={{ marginBottom: "3rem" }}>
-            <h2 className="section-title">Capabilities</h2>
-            <p className="section-subtitle">Core technology that powers the studio</p>
+            <h2 className="section-title">Core Capabilities</h2>
+            <p className="section-subtitle">The technology powering every scene</p>
           </div>
-          <div className="about-features">
-            {ABOUT_FEATURES.map((feat) => (
-              <div key={feat.title} className="feature-highlight panel-glass">
-                <div className="about-feature-icon-wrap">{feat.icon}</div>
-                <h4>{feat.title}</h4>
-                <p>{feat.desc}</p>
-              </div>
+          <div className="about-capabilities-grid">
+            {CORE_CAPABILITIES.map((cap) => (
+              <article key={cap.title} className="about-capability-card panel-glass" data-tilt="4">
+                <div className="about-capability-icon">{cap.icon}</div>
+                <h3 className="about-capability-title">{cap.title}</h3>
+                <p className="about-capability-desc">{cap.desc}</p>
+              </article>
             ))}
           </div>
         </section>
 
-        {/* Technology stack note */}
-        <section
-          className="panel-glass"
-          style={{ padding: "2rem 2.5rem", borderRadius: "20px", animation: "fade-up 1s ease-out" }}
-        >
-          <h2 className="section-title" style={{ marginBottom: "1rem", fontSize: "1.4rem" }}>Built On Open Web Standards</h2>
-          <p style={{ color: "var(--text-muted)", lineHeight: "1.8", maxWidth: "780px" }}>
-            The entire rendering pipeline runs on WebGL 2 via Three.js and React Three Fiber. Assets follow
-            the open glTF 2.0 / GLB standard. Collaboration is powered by Socket.IO over WebSockets. Nothing
-            proprietary is required — your files stay portable.
-          </p>
+        {/* Technology Stack */}
+        <section style={{ animation: "fadeInUp 0.95s ease-out" }}>
+          <div className="text-center" style={{ marginBottom: "2.5rem" }}>
+            <h2 className="section-title">Built on Open Standards</h2>
+            <p className="section-subtitle">No proprietary lock-in — your files stay portable</p>
+          </div>
+          <div className="about-tech-grid">
+            {TECH_STACK.map((tech) => (
+              <a
+                key={tech.name}
+                href={tech.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="about-tech-card panel-glass"
+              >
+                <h4 className="about-tech-name">{tech.name}</h4>
+                <p className="about-tech-desc">{tech.desc}</p>
+                <span className="about-tech-arrow">&#8599;</span>
+              </a>
+            ))}
+          </div>
         </section>
 
         {/* CTA */}
-        <section className="text-center" style={{ animation: "fade-up 1.1s ease-out" }}>
-          <h2 className="section-title" style={{ marginBottom: "1rem" }}>Start Building</h2>
+        <section className="panel-glass neon-rim about-cta-panel" style={{ animation: "fadeInUp 1.05s ease-out" }}>
+          <h2 className="section-title" style={{ marginBottom: "1rem" }}>Ready to Create?</h2>
           <p className="section-subtitle" style={{ marginBottom: "2rem" }}>
-            Open the studio and bring your first scene to life in the browser.
+            Open the studio and bring your first scene to life — entirely in the browser.
           </p>
-          <button
-            onClick={() => navigate(user ? "/dashboard" : "/login")}
-            className="cta-button cta-primary"
-            data-magnetic="0.15"
-          >
-            {user ? "Enter Studio" : "Open Studio"}
-          </button>
+          <div className="hero-actions" style={{ justifyContent: "center" }}>
+            <button
+              onClick={() => navigate(user ? "/dashboard" : "/login")}
+              className="cta-button cta-primary"
+              data-magnetic="0.15"
+            >
+              {user ? "Enter Studio" : "Get Started Free"}
+            </button>
+            <Link to="/gallery" className="cta-button cta-secondary" data-magnetic="0.1">
+              Explore Gallery
+            </Link>
+          </div>
         </section>
       </main>
     </div>

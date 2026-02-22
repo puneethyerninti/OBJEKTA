@@ -1,3 +1,4 @@
+// src/pages/Projects.jsx
 import React, { useState, useRef, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
@@ -7,7 +8,7 @@ const PROJECTS = [
     name: "Neon Workspace Revamp",
     status: "In Review",
     owner: "Design Ops",
-    summary: "Lighting pass approval and shader polish for the home studio layout.",
+    summary: "Final lighting pass and shader polish for the home studio layout. Stakeholder approvals pending.",
     progress: 85,
     team: 4,
     deadline: "2 days",
@@ -16,7 +17,7 @@ const PROJECTS = [
     name: "Aurora Product Launch",
     status: "Client Preview",
     owner: "Marketing",
-    summary: "Hero renders plus AR-ready exports for the launch campaign.",
+    summary: "Hero product renders and AR-ready GLB exports for the Q3 launch campaign.",
     progress: 92,
     team: 6,
     deadline: "5 days",
@@ -25,7 +26,7 @@ const PROJECTS = [
     name: "Concept Vehicle Sprint",
     status: "Lighting QA",
     owner: "Automotive",
-    summary: "Material variants, studio HDRIs, and presentation turntables.",
+    summary: "Material variants, studio HDRIs, and presentation turntables for design review.",
     progress: 67,
     team: 5,
     deadline: "1 week",
@@ -34,7 +35,7 @@ const PROJECTS = [
     name: "Character Animation",
     status: "In Progress",
     owner: "Game Studio",
-    summary: "Rigging, skinning, and motion capture integration for hero character.",
+    summary: "Rigging, skinning, and motion capture integration for the hero character asset.",
     progress: 45,
     team: 3,
     deadline: "2 weeks",
@@ -43,7 +44,7 @@ const PROJECTS = [
     name: "VR Environment",
     status: "Planning",
     owner: "XR Team",
-    summary: "Immersive 360° environment with interactive elements.",
+    summary: "Immersive 360-degree environment with interactive elements and spatial audio markers.",
     progress: 20,
     team: 7,
     deadline: "3 weeks",
@@ -52,7 +53,7 @@ const PROJECTS = [
     name: "Product Configurator",
     status: "Testing",
     owner: "E-commerce",
-    summary: "Real-time product customization with material swapping.",
+    summary: "Real-time product customization with material swapping and live price calculation.",
     progress: 78,
     team: 4,
     deadline: "4 days",
@@ -62,32 +63,58 @@ const PROJECTS = [
 const WORKFLOW_STEPS = [
   {
     title: "Ideate",
-    desc: "Collect references, colorways, and scene briefs in one workspace.",
-    icon: "💡",
+    desc: "Collect references, colorways, and scene briefs in one shared workspace.",
+    num: "01",
   },
   {
     title: "Build",
-    desc: "Iterate on meshes, lighting rigs, and materials with instant playback.",
-    icon: "🔨",
+    desc: "Iterate on meshes, lighting rigs, and materials with real-time playback.",
+    num: "02",
   },
   {
     title: "Review",
-    desc: "Invite stakeholders, compare versions, and lock approvals faster.",
-    icon: "👀",
+    desc: "Invite stakeholders, compare versions side-by-side, and lock approvals.",
+    num: "03",
   },
   {
     title: "Ship",
-    desc: "Export USDZ/GLB and publish ready-to-share assets instantly.",
-    icon: "🚀",
+    desc: "Export production-ready GLB, USDZ and publish shareable links instantly.",
+    num: "04",
   },
 ];
 
 const PROJECT_TEMPLATES = [
-  { name: "Product Showcase", desc: "Studio lighting and material setup", icon: "📦" },
-  { name: "Character Design", desc: "Rigged character with animations", icon: "🎭" },
-  { name: "Environment Scene", desc: "Atmospheric 3D environment", icon: "🌄" },
-  { name: "Architectural Viz", desc: "Interior and exterior renders", icon: "🏢" },
+  { name: "Product Showcase", desc: "Studio lighting with material presets", icon: "cube" },
+  { name: "Character Design", desc: "Rigged character with animation clips", icon: "user" },
+  { name: "Environment Scene", desc: "Atmospheric 3D world with day/night", icon: "globe" },
+  { name: "Architectural Viz", desc: "Interior and exterior walkthrough", icon: "building" },
 ];
+
+const TEMPLATE_ICONS = {
+  cube: (
+    <svg viewBox="0 0 24 24" fill="none" width="36" height="36" aria-hidden="true">
+      <path d="M20 7L12 3L4 7M20 7L12 11M20 7V17L12 21M12 11L4 7M12 11V21M4 7V17L12 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+  user: (
+    <svg viewBox="0 0 24 24" fill="none" width="36" height="36" aria-hidden="true">
+      <path d="M20 21V19C20 17.9391 19.5786 16.9217 18.8284 16.1716C18.0783 15.4214 17.0609 15 16 15H8C6.93913 15 5.92172 15.4214 5.17157 16.1716C4.42143 16.9217 4 17.9391 4 19V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="12" cy="7" r="4" stroke="currentColor" strokeWidth="2" />
+    </svg>
+  ),
+  globe: (
+    <svg viewBox="0 0 24 24" fill="none" width="36" height="36" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" />
+      <path d="M2 12H22M12 2C14.5 4.5 15.5 8 15.5 12C15.5 16 14.5 19.5 12 22C9.5 19.5 8.5 16 8.5 12C8.5 8 9.5 4.5 12 2Z" stroke="currentColor" strokeWidth="2" />
+    </svg>
+  ),
+  building: (
+    <svg viewBox="0 0 24 24" fill="none" width="36" height="36" aria-hidden="true">
+      <rect x="4" y="2" width="16" height="20" rx="2" stroke="currentColor" strokeWidth="2" />
+      <path d="M9 22V18H15V22M9 6H10M14 6H15M9 10H10M14 10H15M9 14H10M14 14H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  ),
+};
 
 export default function Projects() {
   const { user } = useAuth();
@@ -101,25 +128,21 @@ export default function Projects() {
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add('is-visible');
-          }
+          if (entry.isIntersecting) entry.target.classList.add("is-visible");
         });
       },
-      { threshold: 0.1 }
+      { threshold: 0.08 }
     );
-
     cardsRef.current.forEach((card) => {
       if (card) observer.observe(card);
     });
-
     return () => observer.disconnect();
   }, [selectedStatus]);
 
-  const statuses = ["All", "In Progress", "In Review", "Client Preview", "Testing", "Planning"];
-  const filteredProjects = selectedStatus === "All" 
-    ? PROJECTS 
-    : PROJECTS.filter(p => p.status === selectedStatus);
+  const statuses = ["All", "In Progress", "In Review", "Client Preview", "Testing", "Planning", "Lighting QA"];
+  const filteredProjects = selectedStatus === "All"
+    ? PROJECTS
+    : PROJECTS.filter((p) => p.status === selectedStatus);
 
   const sortedProjects = [...filteredProjects].sort((a, b) => {
     if (sortBy === "progress") return b.progress - a.progress;
@@ -127,32 +150,37 @@ export default function Projects() {
     return 0;
   });
 
+  const totalTeamMembers = PROJECTS.reduce((sum, p) => sum + p.team, 0);
+  const avgProgress = Math.round(PROJECTS.reduce((sum, p) => sum + p.progress, 0) / PROJECTS.length);
+  const nearCompletion = PROJECTS.filter((p) => p.progress >= 80).length;
+
+  const statusColor = (status) => {
+    const map = {
+      "In Progress": "#7f5af0",
+      "In Review": "#00d7ff",
+      "Client Preview": "#ff9a3e",
+      Testing: "#b4ff3a",
+      Planning: "#9da6d4",
+      "Lighting QA": "#ff47a3",
+    };
+    return map[status] || "#7f5af0";
+  };
+
   return (
     <div className="site-wrapper">
-      {/* Background effects */}
-      <div className="grid-glow" aria-hidden="true" />
-      <div className="scanline-overlay" aria-hidden="true" />
-
       <main className="home-shell">
-        {/* Hero Section */}
-        <section className="text-center mb-14" style={{ animation: 'fade-up 0.7s ease-out' }}>
-          <span className="hero-badge-top" style={{ display: 'inline-block', marginBottom: '1.5rem' }}>
-            Project Hub
-          </span>
-          <h1 className="hero-title" style={{ marginBottom: '1.5rem' }}>
-            Manage Your
-            <span className="title-gradient"> Creative Pipeline</span>
+        {/* Hero */}
+        <section className="text-center" style={{ animation: "fadeInUp 0.7s ease-out", marginBottom: "3.5rem" }}>
+          <span className="hero-badge-top">Project Hub</span>
+          <h1 className="hero-title" style={{ marginBottom: "1.5rem" }}>
+            Manage Your <span className="title-gradient">Creative Pipeline</span>
           </h1>
-          <p className="hero-subtitle" style={{ maxWidth: '720px', margin: '0 auto 2rem' }}>
-            Track active projects, coordinate with teams, and deliver pixel-perfect assets on schedule.
+          <p className="hero-subtitle" style={{ maxWidth: "720px", margin: "0 auto 2rem" }}>
+            Track active projects, coordinate across teams, and deliver production-ready 3D assets on schedule.
           </p>
-          <div className="hero-actions" style={{ justifyContent: 'center' }}>
-            <button 
-              onClick={() => navigate(studioTarget)} 
-              className="cta-button cta-primary"
-              data-magnetic="0.15"
-            >
-              {user ? 'Open Dashboard' : 'Start Free Trial'}
+          <div className="hero-actions" style={{ justifyContent: "center" }}>
+            <button onClick={() => navigate(studioTarget)} className="cta-button cta-primary" data-magnetic="0.15">
+              {user ? "Open Dashboard" : "Get Started Free"}
             </button>
             <Link to="/gallery" className="cta-button cta-secondary" data-magnetic="0.1">
               View Gallery
@@ -161,102 +189,57 @@ export default function Projects() {
         </section>
 
         {/* Workflow Steps */}
-        <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-14" style={{ animation: 'fade-up 0.8s ease-out' }}>
-          {WORKFLOW_STEPS.map((step, index) => (
-            <div
-              key={step.title}
-              ref={(el) => (cardsRef.current[index] = el)}
-              className="panel-glass card-3d"
-              style={{ padding: '2rem', borderRadius: '16px', textAlign: 'center' }}
-              data-tilt="5"
-            >
-              <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>{step.icon}</div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--brand-teal)', fontWeight: '700', marginBottom: '0.5rem' }}>
-                Step {index + 1}
-              </div>
-              <h3 style={{ fontSize: '1.3rem', fontWeight: '700', marginBottom: '0.75rem' }}>{step.title}</h3>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', lineHeight: '1.6' }}>{step.desc}</p>
+        <section className="projects-workflow-grid" style={{ animation: "fadeInUp 0.8s ease-out" }}>
+          {WORKFLOW_STEPS.map((step) => (
+            <div key={step.title} className="projects-workflow-card panel-glass" data-tilt="4">
+              <span className="projects-step-num">{step.num}</span>
+              <h3 className="projects-step-title">{step.title}</h3>
+              <p className="projects-step-desc">{step.desc}</p>
             </div>
           ))}
         </section>
 
-        {/* Project Stats */}
-        <section className="panel-glass" style={{ padding: '2rem', borderRadius: '20px', marginBottom: '3rem', animation: 'fade-up 0.85s ease-out' }}>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
-            <div>
-              <div style={{ fontSize: '2.5rem', fontWeight: '800', color: 'var(--brand-teal)', marginBottom: '0.5rem' }}>
-                {PROJECTS.length}
-              </div>
-              <div style={{ fontSize: '0.95rem', color: 'var(--text-muted)', fontWeight: '600' }}>Active Projects</div>
-            </div>
-            <div>
-              <div style={{ fontSize: '2.5rem', fontWeight: '800', color: 'var(--brand-teal)', marginBottom: '0.5rem' }}>
-                24
-              </div>
-              <div style={{ fontSize: '0.95rem', color: 'var(--text-muted)', fontWeight: '600' }}>Team Members</div>
-            </div>
-            <div>
-              <div style={{ fontSize: '2.5rem', fontWeight: '800', color: 'var(--brand-teal)', marginBottom: '0.5rem' }}>
-                89%
-              </div>
-              <div style={{ fontSize: '0.95rem', color: 'var(--text-muted)', fontWeight: '600' }}>Avg Progress</div>
-            </div>
-            <div>
-              <div style={{ fontSize: '2.5rem', fontWeight: '800', color: 'var(--brand-teal)', marginBottom: '0.5rem' }}>
-                12
-              </div>
-              <div style={{ fontSize: '0.95rem', color: 'var(--text-muted)', fontWeight: '600' }}>Completed</div>
-            </div>
+        {/* Stats */}
+        <section className="projects-stats-bar panel-glass" style={{ animation: "fadeInUp 0.85s ease-out" }}>
+          <div className="projects-stat">
+            <span className="projects-stat-value">{PROJECTS.length}</span>
+            <span className="projects-stat-label">Active Projects</span>
+          </div>
+          <div className="projects-stat">
+            <span className="projects-stat-value">{totalTeamMembers}</span>
+            <span className="projects-stat-label">Team Members</span>
+          </div>
+          <div className="projects-stat">
+            <span className="projects-stat-value">{avgProgress}%</span>
+            <span className="projects-stat-label">Avg Progress</span>
+          </div>
+          <div className="projects-stat">
+            <span className="projects-stat-value">{nearCompletion}</span>
+            <span className="projects-stat-label">Near Completion</span>
           </div>
         </section>
 
-        {/* Filters & Sort */}
-        <section style={{ marginBottom: '2rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem' }}>
-            <h2 className="section-title" style={{ margin: 0, fontSize: '1.8rem' }}>Active Boards</h2>
-            <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value)}
-                style={{
-                  background: 'rgba(8,10,26,0.8)',
-                  border: '1px solid rgba(127,90,240,0.3)',
-                  borderRadius: '10px',
-                  padding: '0.6rem 1rem',
-                  color: 'var(--text-light)',
-                  fontSize: '0.9rem',
-                  cursor: 'pointer',
-                  outline: 'none'
-                }}
-              >
+        {/* Filter + Sort */}
+        <section className="projects-controls">
+          <div className="projects-controls-top">
+            <h2 className="section-title" style={{ margin: 0, fontSize: "1.6rem" }}>Active Boards</h2>
+            <div className="projects-controls-actions">
+              <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="projects-sort-select">
                 <option value="progress">Sort by Progress</option>
                 <option value="team">Sort by Team Size</option>
               </select>
-              <button
-                onClick={() => navigate(studioTarget)}
-                className="cta-button cta-primary"
-                style={{ padding: '0.6rem 1.5rem', fontSize: '0.9rem' }}
-              >
+              <button onClick={() => navigate(studioTarget)} className="cta-button cta-primary projects-new-btn">
                 + New Project
               </button>
             </div>
           </div>
-
-          {/* Status Filters */}
-          <div className="flex flex-wrap gap-3">
+          <div className="projects-filter-bar">
             {statuses.map((status) => (
               <button
                 key={status}
                 onClick={() => setSelectedStatus(status)}
-                className="cta-button"
-                style={{
-                  background: selectedStatus === status ? 'linear-gradient(135deg, var(--brand-purple), var(--brand-teal))' : 'rgba(127,90,240,0.1)',
-                  color: selectedStatus === status ? '#fff' : 'var(--text-muted)',
-                  border: selectedStatus === status ? 'none' : '1px solid rgba(127,90,240,0.3)',
-                  padding: '0.5rem 1rem',
-                  fontSize: '0.85rem',
-                  fontWeight: selectedStatus === status ? '700' : '500'
-                }}
+                className={`gallery-filter-btn${selectedStatus === status ? " active" : ""}`}
+                aria-pressed={selectedStatus === status}
               >
                 {status}
               </button>
@@ -264,113 +247,69 @@ export default function Projects() {
           </div>
         </section>
 
-        {/* Projects Grid */}
-        <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-16">
+        {/* Project Cards */}
+        <section className="projects-grid">
+          {sortedProjects.length === 0 && (
+            <article className="gallery-empty panel-glass">
+              <h3>No boards found</h3>
+              <p>Try a different status filter or create a new board.</p>
+              <button onClick={() => setSelectedStatus("All")} className="cta-button cta-secondary" data-magnetic="0.1">
+                Show All Boards
+              </button>
+            </article>
+          )}
           {sortedProjects.map((project, idx) => (
             <article
               key={project.name}
-              ref={(el) => (cardsRef.current[idx + 10] = el)}
-              className="panel-glass card-3d showcase-card"
-              style={{ borderRadius: '16px', padding: '2rem', cursor: 'pointer' }}
+              ref={(el) => (cardsRef.current[idx] = el)}
+              className="projects-card panel-glass showcase-card"
               data-tilt="4"
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                <span style={{
-                  fontSize: '0.75rem',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.1em',
-                  color: 'var(--brand-teal)',
-                  fontWeight: '700',
-                  padding: '0.4rem 0.8rem',
-                  background: 'rgba(0,215,255,0.1)',
-                  borderRadius: '6px'
-                }}>
+              <div className="projects-card-header">
+                <span className="projects-card-status" style={{ color: statusColor(project.status), borderColor: statusColor(project.status) }}>
                   {project.status}
                 </span>
-                <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                  {project.owner}
-                </span>
+                <span className="projects-card-owner">{project.owner}</span>
               </div>
+              <h3 className="projects-card-name">{project.name}</h3>
+              <p className="projects-card-summary">{project.summary}</p>
 
-              <h3 style={{ fontSize: '1.3rem', fontWeight: '700', marginBottom: '0.75rem' }}>
-                {project.name}
-              </h3>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', lineHeight: '1.6', marginBottom: '1.5rem' }}>
-                {project.summary}
-              </p>
-
-              {/* Progress Bar */}
-              <div style={{ marginBottom: '1.5rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
-                  <span style={{ color: 'var(--text-light)', fontWeight: '600' }}>Progress</span>
-                  <span style={{ color: 'var(--brand-teal)', fontWeight: '700' }}>{project.progress}%</span>
+              {/* Progress */}
+              <div className="projects-progress-wrap">
+                <div className="projects-progress-top">
+                  <span className="projects-progress-label">Progress</span>
+                  <span className="projects-progress-pct" style={{ color: statusColor(project.status) }}>{project.progress}%</span>
                 </div>
-                <div style={{ 
-                  width: '100%',
-                  height: '8px',
-                  background: 'rgba(127,90,240,0.2)',
-                  borderRadius: '10px',
-                  overflow: 'hidden'
-                }}>
-                  <div style={{
-                    width: `${project.progress}%`,
-                    height: '100%',
-                    background: 'linear-gradient(90deg, var(--brand-purple), var(--brand-teal))',
-                    borderRadius: '10px',
-                    transition: 'width 0.3s ease'
-                  }} />
+                <div className="projects-progress-track">
+                  <div className="projects-progress-fill" style={{ width: `${project.progress}%`, background: `linear-gradient(90deg, ${statusColor(project.status)}, var(--brand-teal))` }} />
                 </div>
               </div>
 
-              {/* Project Meta */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '1rem', borderTop: '1px solid rgba(127,90,240,0.2)' }}>
-                <div style={{ display: 'flex', gap: '1rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                  <span>👥 {project.team}</span>
-                  <span>⏱️ {project.deadline}</span>
+              {/* Meta */}
+              <div className="projects-card-meta">
+                <div className="projects-card-meta-left">
+                  <span>Team: {project.team}</span>
+                  <span>Due: {project.deadline}</span>
                 </div>
-                <button
-                  className="cta-button"
-                  style={{
-                    padding: '0.4rem 1rem',
-                    fontSize: '0.8rem',
-                    background: 'rgba(127,90,240,0.1)',
-                    border: '1px solid rgba(127,90,240,0.3)'
-                  }}
-                >
-                  View →
-                </button>
+                <button className="cta-button projects-details-btn">View</button>
               </div>
             </article>
           ))}
         </section>
 
-        {/* Project Templates */}
-        <section style={{ marginBottom: '4rem' }}>
-          <div className="text-center" style={{ marginBottom: '3rem' }}>
+        {/* Templates */}
+        <section style={{ marginTop: "4rem" }}>
+          <div className="text-center" style={{ marginBottom: "2.5rem" }}>
             <h2 className="section-title">Start with a Template</h2>
-            <p className="section-subtitle">Pre-configured setups to kickstart your next project</p>
+            <p className="section-subtitle">Pre-configured project setups to accelerate your workflow</p>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {PROJECT_TEMPLATES.map((template, idx) => (
-              <article
-                key={template.name}
-                ref={(el) => (cardsRef.current[idx + 30] = el)}
-                className="panel-glass card-3d"
-                style={{ padding: '2rem', borderRadius: '16px', textAlign: 'center', cursor: 'pointer' }}
-                data-tilt="5"
-              >
-                <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>{template.icon}</div>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '0.5rem' }}>
-                  {template.name}
-                </h3>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1rem' }}>
-                  {template.desc}
-                </p>
-                <button
-                  onClick={() => navigate(studioTarget)}
-                  className="cta-button cta-secondary"
-                  style={{ width: '100%', padding: '0.6rem', fontSize: '0.85rem' }}
-                >
+          <div className="projects-template-grid">
+            {PROJECT_TEMPLATES.map((tmpl) => (
+              <article key={tmpl.name} className="projects-template-card panel-glass" data-tilt="5">
+                <div className="projects-template-icon">{TEMPLATE_ICONS[tmpl.icon]}</div>
+                <h3 className="projects-template-name">{tmpl.name}</h3>
+                <p className="projects-template-desc">{tmpl.desc}</p>
+                <button onClick={() => navigate(studioTarget)} className="cta-button cta-secondary projects-template-btn">
                   Use Template
                 </button>
               </article>
@@ -378,21 +317,17 @@ export default function Projects() {
           </div>
         </section>
 
-        {/* CTA Section */}
-        <section className="panel-glass neon-rim" style={{ padding: '4rem 2rem', borderRadius: '24px', textAlign: 'center' }}>
-          <h2 className="section-title" style={{ marginBottom: '1rem' }}>
+        {/* CTA */}
+        <section className="panel-glass neon-rim gallery-cta-panel" style={{ marginTop: "4rem" }}>
+          <h2 className="section-title" style={{ marginBottom: "1rem" }}>
             Ready to Streamline Your Workflow?
           </h2>
-          <p className="section-subtitle" style={{ marginBottom: '2rem', maxWidth: '600px', margin: '0 auto 2rem' }}>
-            Join teams using OBJEKTA to manage complex 3D projects with ease and deliver faster.
+          <p className="section-subtitle" style={{ marginBottom: "2rem", maxWidth: "600px", margin: "0 auto 2rem" }}>
+            Join teams using Objekta to manage complex 3D projects and deliver faster.
           </p>
-          <div className="hero-actions" style={{ justifyContent: 'center' }}>
-            <button 
-              onClick={() => navigate(studioTarget)} 
-              className="cta-button cta-primary"
-              data-magnetic="0.18"
-            >
-              {user ? 'Create Project' : 'Get Started'}
+          <div className="hero-actions" style={{ justifyContent: "center" }}>
+            <button onClick={() => navigate(studioTarget)} className="cta-button cta-primary" data-magnetic="0.18">
+              {user ? "Create Project" : "Get Started"}
             </button>
             <Link to="/contact" className="cta-button cta-secondary" data-magnetic="0.1">
               Talk to Sales

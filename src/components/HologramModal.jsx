@@ -108,7 +108,7 @@ export default function HologramModal({ model, onClose }) {
               toneMapping: THREE.ACESFilmicToneMapping,
               toneMappingExposure: 1.2,
             }}
-            camera={{ position: [-0.5, 1, 10], fov: isFullscreen ? 60 : 75 }}
+            camera={{ position: [0, 2, 12], fov: isFullscreen ? 45 : 50 }}
           >
             <ambientLight intensity={1.2} />
             <spotLight
@@ -126,8 +126,8 @@ export default function HologramModal({ model, onClose }) {
               <Hologram
                 modelPath={model.src}
                 color={color}
-                scale={isFullscreen ? 1.6 : 1.2}
-                fitSize={isFullscreen ? 4.5 : 2.8}
+                scale={isFullscreen ? 1.8 : 1.4}
+                fitSize={isFullscreen ? 5 : 3.5}
                 fitAxis="max"
                 showPlaceholder={!isFullscreen}
               />
@@ -135,12 +135,12 @@ export default function HologramModal({ model, onClose }) {
             
             <OrbitControls
               enableZoom={true}
-              enablePan={false}
+              enablePan={true}
               autoRotate={true}
               autoRotateSpeed={1.2}
-              target={[0, 1.5, 0]}
-              minDistance={5}
-              maxDistance={25}
+              target={[0, 1.2, 0]}
+              minDistance={3}
+              maxDistance={30}
             />
           </Canvas>
         </div>

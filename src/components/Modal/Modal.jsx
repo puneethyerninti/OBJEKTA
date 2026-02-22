@@ -1,8 +1,9 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useId } from 'react';
 import PropTypes from 'prop-types';
 
 export default function Modal({ children, onClose, title, width = 520 }) {
   const rootRef = useRef(null);
+  const titleId = useId();
 
   useEffect(() => {
     const prev = document.activeElement;
@@ -13,7 +14,7 @@ export default function Modal({ children, onClose, title, width = 520 }) {
       if (e.key === 'Escape') onClose?.();
       if (e.key === 'Tab') {
         // Simple focus trap: keep focus inside modal
-        const focusables = node.querySelectorAll('button, a, input, [tabindex]:not([tabindex="-1"])');
+        const focusables = node.querySelectorAll('button, a, input, select, textarea, [tabindex]:not([tabindex="-1"])');
         if (!focusables.length) return;
         const arr = Array.from(focusables);
         const idx = arr.indexOf(document.activeElement);
@@ -35,10 +36,16 @@ export default function Modal({ children, onClose, title, width = 520 }) {
   }, [onClose]);
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true">
+    <div
+      className="modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={title ? titleId : undefined}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose?.(); }}
+    >
       <div ref={rootRef} className="modal-card" style={{ width, maxWidth: '95%' }}>
-        <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
-        {title && <h3>{title}</h3>}
+        <button className="modal-close" onClick={onClose} aria-label="Close modal">×</button>
+        {title && <h3 id={titleId} className="modal-title">{title}</h3>}
         <div className="modal-body">{children}</div>
       </div>
     </div>

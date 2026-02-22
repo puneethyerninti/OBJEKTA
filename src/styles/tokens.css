@@ -1,0 +1,140 @@
+/* ==========================================================================
+   OBJEKTA — Unified Design Tokens (CSS Custom Properties)
+   Source of truth for all colors, spacing, radii, shadows, typography,
+   animation, breakpoints, and z-index stack.
+   
+   Generated from tokens.json — all component CSS files should reference
+   these variables instead of hardcoding values.
+   ========================================================================== */
+
+:root {
+  /* ── Color Palette (default theme) ────────────────────────────────── */
+  --token-primary: #00F0FF;
+  --token-secondary: #FF00D5;
+  --token-accent: #7F5AF0;
+  --token-background: #0A0A0F;
+  --token-surface: #151520;
+  --token-surface-light: #1F1F2E;
+  --token-text: #E8E8F0;
+  --token-text-muted: #9CA3AF;
+  --token-border: #2D2D3F;
+
+  /* ── Semantic Colors ──────────────────────────────────────────────── */
+  --token-success: #27d27a;
+  --token-warning: #ffbb40;
+  --token-danger: #ff4d6a;
+  --token-info: #37c1ff;
+
+  /* ── Brand Colors (mapped to tokens) ──────────────────────────────── */
+  --brand-purple: var(--token-accent);
+  --brand-teal: var(--token-primary);
+  --brand-pink: #ff47a3;
+  --brand-amber: #ff9a3e;
+
+  /* ── Spacing Scale ────────────────────────────────────────────────── */
+  --sp-xs: 4px;
+  --sp-sm: 8px;
+  --sp-md: 16px;
+  --sp-lg: 24px;
+  --sp-xl: 32px;
+  --sp-2xl: 48px;
+  --sp-3xl: 64px;
+  --sp-4xl: 96px;
+
+  /* ── Border Radii ─────────────────────────────────────────────────── */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+
+  /* ── Shadows ──────────────────────────────────────────────────────── */
+  --shadow-glow-sm: 0 0 12px rgba(0, 240, 255, 0.3);
+  --shadow-glow-md: 0 0 24px rgba(0, 240, 255, 0.4);
+  --shadow-glow-lg: 0 0 48px rgba(0, 240, 255, 0.5);
+  --shadow-glow-magenta: 0 0 24px rgba(255, 0, 213, 0.4);
+  --shadow-glow-violet: 0 0 24px rgba(127, 90, 240, 0.4);
+  --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --shadow-card-hover: 0 12px 48px rgba(0, 0, 0, 0.6);
+
+  /* ── Focus Ring (WCAG AA compliant) ───────────────────────────────── */
+  --token-focus-ring: 0 0 0 3px rgba(127, 90, 240, 0.45);
+  --token-focus-ring-offset: 2px;
+
+  /* ── Typography ───────────────────────────────────────────────────── */
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+
+  --fs-xs: 12px;
+  --fs-sm: 14px;
+  --fs-base: 16px;
+  --fs-lg: 18px;
+  --fs-xl: 20px;
+  --fs-2xl: 24px;
+  --fs-3xl: 32px;
+  --fs-4xl: 48px;
+
+  --fw-normal: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+  --fw-black: 900;
+
+  --lh-tight: 1.2;
+  --lh-normal: 1.5;
+  --lh-relaxed: 1.7;
+
+  /* ── Animation ────────────────────────────────────────────────────── */
+  --duration-fast: 150ms;
+  --duration-normal: 300ms;
+  --duration-slow: 600ms;
+  --duration-slower: 900ms;
+
+  --ease-smooth: cubic-bezier(0.22, 0.9, 0.37, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out: cubic-bezier(0.33, 1, 0.68, 1);
+  --ease-in: cubic-bezier(0.32, 0, 0.67, 0);
+
+  /* ── Z-Index Stack ────────────────────────────────────────────────── */
+  --z-base: 1;
+  --z-panel: 250;
+  --z-toolbar: 300;
+  --z-context: 8500;
+  --z-toast: 9000;
+  --z-modal: 10000;
+
+  /* ── Component Tokens ─────────────────────────────────────────────── */
+  --panel-bg: rgba(10, 6, 18, 0.65);
+  --panel-border: 1px solid rgba(127, 90, 240, 0.2);
+  --control-bg: rgba(30, 0, 60, 0.4);
+  --control-hover-bg: rgba(127, 90, 240, 0.25);
+  --accent-glow: 0 0 12px rgba(127, 90, 240, 0.4);
+  --glass-dark: rgba(12, 10, 16, 0.5);
+
+  /* ── Button Tokens ────────────────────────────────────────────────── */
+  --btn-padding: 8px 14px;
+  --btn-padding-sm: 6px 8px;
+  --btn-radius: 10px;
+  --btn-font-size: 14px;
+  --btn-font-weight: 600;
+  --btn-transition: background var(--duration-fast) ease,
+                    transform var(--duration-fast) ease,
+                    box-shadow var(--duration-fast) ease;
+
+  /* ── Breakpoints (for reference — use in @media queries) ──────────── */
+  /* mobile: 640px, tablet: 1024px, desktop: 1025px */
+}
+
+/* ── Utility classes ────────────────────────────────────────────────── */
+.text-muted { color: var(--token-text-muted); }
+.text-success { color: var(--token-success); }
+.text-warning { color: var(--token-warning); }
+.text-danger { color: var(--token-danger); }
+
+/* ── Focus-visible global baseline ──────────────────────────────────── */
+:focus-visible {
+  outline: 3px solid rgba(127, 90, 240, 0.45);
+  outline-offset: var(--token-focus-ring-offset);
+  border-radius: var(--radius-sm);
+}

@@ -122,7 +122,7 @@ export default function Home() {
   const { user } = useAuth();
   const [saveData, setSaveData] = useState(false);
   const [deviceTier, setDeviceTier] = useState("full");
-  const [showcaseVisible, setShowcaseVisible] = useState(false);
+  const [showcaseVisible, setShowcaseVisible] = useState(true);
   const [visibleCards, setVisibleCards] = useState({});
   const [interactionsEnabled, setInteractionsEnabled] = useState(true);
   const [prefetched, setPrefetched] = useState({});
@@ -260,26 +260,14 @@ export default function Home() {
       }
     };
 
-    eager.forEach((src) => {
+    // Load ALL models eagerly for instant display
+    modelsToPrefetch.forEach((src) => {
       if (prefetchedRef.current[src] && parsedRef.current[src]) {
         updateProgress(src, 100);
         return;
       }
       loadModel(src);
     });
-
-    const idleHandle = typeof requestIdleCallback !== "undefined"
-      ? requestIdleCallback
-      : (cb) => setTimeout(cb, 500);
-
-    if (showcaseVisible) {
-      deferred.forEach((src) => loadModel(src));
-    } else {
-      idleHandle(() => {
-        if (!mounted || !showcaseVisible) return;
-        deferred.forEach((src) => loadModel(src));
-      });
-    }
 
     return () => {
       mounted = false;
@@ -552,8 +540,7 @@ export default function Home() {
               const progress = progressMap[modelSrc] ?? 0;
               const cardKey = model.title;
               const isVisible = visibleCards[cardKey];
-              const previewLimit = deviceTier === "full" ? 3 : 1;
-              const shouldRenderPreview = showcaseVisible && isVisible && index < previewLimit;
+              const shouldRenderPreview = Boolean(parsedPrefetch[modelSrc] || prefetched[modelSrc]);
               const dprCap = deviceTier === "full" ? 1.5 : deviceTier === "medium" ? 1.1 : 1;
               const ambientIntensity = deviceTier === "full" ? 1.1 : deviceTier === "medium" ? 0.95 : 0.75;
               const dirIntensity = deviceTier === "full" ? 0.9 : deviceTier === "medium" ? 0.75 : 0.6;
@@ -569,17 +556,28 @@ export default function Home() {
                     <div className={`showcase-poster showcase-poster-${model.accent}`} style={{ backgroundColor: 'rgba(16, 18, 27, 0.95)' }}>
                       <div className="preview-canvas" style={{ width: '100%', height: '100%', position: 'relative' }}>
                         {!previewReady && (
-                          <div className="preview-loader rich-loader">
-                            <div className="loader-glow" aria-hidden="true" />
-                            <div className="loader-ring" aria-hidden="true">
-                              <div className="loader-dot" />
+                          <div className="preview-loader-premium">
+                            <svg className="preview-loader-ring" viewBox="0 0 80 80" fill="none">
+                              <circle cx="40" cy="40" r="35" stroke="rgba(127,90,240,0.1)" strokeWidth="2" />
+                              <circle cx="40" cy="40" r="35" stroke="url(#prevGrad)" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="55 165" className="preview-ring-spin" />
+                              <circle cx="40" cy="40" r="26" stroke="rgba(0,215,255,0.08)" strokeWidth="1.5" />
+                              <circle cx="40" cy="40" r="26" stroke="url(#prevGrad2)" strokeWidth="2" strokeLinecap="round" strokeDasharray="35 128" className="preview-ring-spin-reverse" />
+                              <defs>
+                                <linearGradient id="prevGrad" x1="0" y1="0" x2="80" y2="80">
+                                  <stop offset="0%" stopColor="#7f5af0" />
+                                  <stop offset="100%" stopColor="#00d7ff" />
+                                </linearGradient>
+                                <linearGradient id="prevGrad2" x1="80" y1="0" x2="0" y2="80">
+                                  <stop offset="0%" stopColor="#00d7ff" />
+                                  <stop offset="100%" stopColor="#ff47a3" />
+                                </linearGradient>
+                              </defs>
+                            </svg>
+                            <div className="preview-loader-info">
+                              <span className="preview-loader-pct">{Math.max(5, progress)}%</span>
                             </div>
-                            <div className="loader-meta">
-                              <span className="loader-label">Preparing</span>
-                              <span className="loader-value">{Math.max(5, progress)}%</span>
-                            </div>
-                            <div className="loader-bar" aria-hidden="true">
-                              <div className="loader-bar-fill" style={{ width: `${Math.max(5, progress)}%` }} />
+                            <div className="preview-loader-bar">
+                              <div className="preview-loader-bar-fill" style={{ width: `${Math.max(5, progress)}%` }} />
                             </div>
                           </div>
                         )}
@@ -601,14 +599,15 @@ export default function Home() {
                                 } catch (e) {}
                               }}
                             >
-                              <PerspectiveCamera makeDefault fov={75} position={[-0.5, 1, 10]} />
+                              <PerspectiveCamera makeDefault fov={50} position={[0, 1.5, 8]} />
                               <ambientLight intensity={ambientIntensity} />
                               <directionalLight intensity={dirIntensity} position={[5, 5, 5]} />
+                              <directionalLight intensity={0.3} position={[-3, 2, -3]} />
                               <PreviewGLTF
                                 gltf={parsedPrefetch[modelSrc] || prefetched[modelSrc]}
                                 src={modelSrc}
-                                fitSize={6}
-                                fitAxis="y"
+                                fitSize={4.5}
+                                fitAxis="max"
                                 position={[0, 0, 0]}
                               />
                             </Canvas>

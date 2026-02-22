@@ -28,11 +28,11 @@ const ProjectCard = React.memo(function ProjectCard({
   );
 
   return (
-    <article
+    <div
       className="project-card card-3d neon-rim"
       tabIndex={0}
-      role="button"
-      aria-label={project.title}
+      role="listitem"
+      aria-label={`Project: ${project.title}`}
       onClick={() => onOpen?.(project)}
       onKeyDown={handleKeyDown}
       onContextMenu={(e) => onContext?.(e, project)}
@@ -73,19 +73,19 @@ const ProjectCard = React.memo(function ProjectCard({
         <div className="card-meta">
           <div className="date text-muted">{project.updatedAt ? new Date(project.updatedAt).toLocaleDateString() : ''}</div>
           <div className="card-actions">
-            <button className="btn btn-ghost btn-small" onClick={(e) => { e.stopPropagation(); onOpenStudio?.(project); }}>
+            <button className="btn btn-ghost btn-small" aria-label={`Open ${project.title} in Studio`} onClick={(e) => { e.stopPropagation(); onOpenStudio?.(project); }}>
               Open
             </button>
-            <button className="btn btn-ghost btn-small" onClick={(e) => { e.stopPropagation(); onPreview?.(project); }}>
+            <button className="btn btn-ghost btn-small" aria-label={`Preview ${project.title}`} onClick={(e) => { e.stopPropagation(); onPreview?.(project); }}>
               Preview
             </button>
-            <button className="btn btn-ghost btn-small" onClick={(e) => { e.stopPropagation(); onDuplicate?.(project); }}>
+            <button className="btn btn-ghost btn-small" aria-label={`Duplicate ${project.title}`} onClick={(e) => { e.stopPropagation(); onDuplicate?.(project); }}>
               Duplicate
             </button>
           </div>
         </div>
       </div>
-    </article>
+    </div>
   );
 });
 

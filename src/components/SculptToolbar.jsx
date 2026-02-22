@@ -479,6 +479,10 @@ export default function SculptToolbar({ workspaceRef, rendererSelector = null, p
   // keyboard shortcuts
   useEffect(() => {
     const onKey = (e) => {
+      // Guard: don't intercept when user is typing in an input/textarea/select
+      const tag = e.target?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target?.isContentEditable) return;
+
       if (e.key === "b" || e.key === "B") toggleActive();
       const idx = parseInt(e.key, 10);
       if (!Number.isNaN(idx) && idx >= 1 && idx <= modes.length) setMode(modes[idx - 1]);

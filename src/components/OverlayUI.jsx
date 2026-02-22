@@ -71,7 +71,7 @@ const HackerText = ({ text, colorVar = '--neon-blue', speed, delay }) => {
 export default function OverlayUI() {
     return (
         <>
-            <div className="overlay-ui">
+            <div className="overlay-ui" aria-hidden="true">
                 {/* Top-Left Status */}
                 <div style={{ position: 'absolute', top: '40px', left: '40px' }}>
                     <HackerText text="ENCOM: LEGACY" colorVar="--neon-blue" delay={0} />

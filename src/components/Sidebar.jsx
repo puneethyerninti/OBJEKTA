@@ -1,7 +1,7 @@
 import React from 'react';
 import PropTypes from 'prop-types';
 
-export default function Sidebar({ user, stats, onCreate, onOpenStudio, onLogout, onImport }) {
+function Sidebar({ user, stats, onCreate, onOpenStudio, onLogout, onImport }) {
   return (
     <aside className="dash-sidecard" aria-label="Sidebar">
       <div>
@@ -39,14 +39,14 @@ export default function Sidebar({ user, stats, onCreate, onOpenStudio, onLogout,
           </button>
         </div>
 
-        <div className="dash-member-since" style={{ marginTop: 12 }}>
+        <div className="dash-member-since">
           Member since: <strong>{new Date(user?.createdAt || Date.now()).toLocaleDateString()}</strong>
         </div>
       </div>
 
-      <div style={{ marginTop: 12 }}>
+      <div className="dash-member-since">
         <div className="muted-small">Quick actions</div>
-        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+        <div className="quick-actions-row">
           <button className="btn btn-primary" onClick={onCreate} aria-label="New project">
             New Project
           </button>
@@ -67,3 +67,5 @@ Sidebar.propTypes = {
   onLogout: PropTypes.func,
   onImport: PropTypes.func,
 };
+
+export default React.memo(Sidebar);

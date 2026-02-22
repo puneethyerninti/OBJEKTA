@@ -1,4 +1,5 @@
-﻿import React, { useState, useRef, useEffect } from "react";
+// src/pages/Gallery.jsx
+import React, { useState, useRef, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 
@@ -6,60 +7,77 @@ const GALLERY_ITEMS = [
   {
     title: "Command Desk",
     tag: "Product Viz",
-    desc: "UI overlays, lighting variants, and material states ready for review.",
+    desc: "Multi-screen command center with studio lighting and material variants for stakeholder approvals.",
     poster: "/assets/desk-poster.webp",
+    accent: "violet",
   },
   {
     title: "Portable Rig",
     tag: "Studio Kit",
-    desc: "Shader diagnostics layered with live annotations and QA checkpoints.",
+    desc: "Travel-ready workstation with shader diagnostics, live annotations, and QA checkpoints.",
     poster: "/assets/laptop-poster.webp",
+    accent: "cyan",
   },
   {
     title: "Concept Vehicle",
     tag: "Automotive",
-    desc: "Hero-grade reflections, trim decals, and realtime paint swaps.",
+    desc: "Hero-grade exterior with reflective clear-coat, trim decals, and real-time paint swaps for design iteration.",
     poster: "/assets/porsche-poster.webp",
+    accent: "amber",
   },
   {
-    title: "Neon Workspace",
-    tag: "Environment",
-    desc: "Atmospheric lighting tuned for multi-angle client reviews.",
-    gradient: "linear-gradient(135deg, rgba(58,180,255,0.35), rgba(127,90,240,0.45))",
-  },
-  {
-    title: "Hologram HUD",
-    tag: "UX Prototype",
-    desc: "Floating panels and HUD layouts for gesture-driven tooling.",
-    gradient: "linear-gradient(135deg, rgba(0,255,209,0.25), rgba(58,180,255,0.35))",
-  },
-  {
-    title: "Material Lab",
-    tag: "Look Dev",
-    desc: "Procedural mats, tone mapping, and ACES preview calibration.",
-    gradient: "linear-gradient(135deg, rgba(255,182,66,0.28), rgba(127,90,240,0.35))",
-  },
-  {
-    title: "Cyberpunk City",
-    tag: "Environment",
-    desc: "Neon-lit streets with volumetric fog and dynamic lighting.",
-    gradient: "linear-gradient(135deg, rgba(255,0,128,0.3), rgba(127,90,240,0.4))",
-  },
-  {
-    title: "Product Showcase",
-    tag: "Product Viz",
-    desc: "Photorealistic materials with HDR environment lighting.",
-    gradient: "linear-gradient(135deg, rgba(127,90,240,0.3), rgba(58,180,255,0.3))",
-  },
-  {
-    title: "Robot Character",
+    title: "Black Dragon",
     tag: "Character Design",
-    desc: "PBR materials and rigged animation ready for real-time rendering.",
+    desc: "Fully rigged creature with idle animation, layered PBR skin detail, and subsurface scattering setup.",
+    gradient: "linear-gradient(135deg, rgba(167,139,250,0.35), rgba(127,90,240,0.45))",
+    accent: "violet",
+  },
+  {
+    title: "Flynn's Arcade",
+    tag: "Environment",
+    desc: "Neon-lit retro interior with volumetric fog, emissive signage, and cinematic depth-of-field passes.",
+    gradient: "linear-gradient(135deg, rgba(0,215,255,0.25), rgba(58,180,255,0.35))",
+    accent: "cyan",
+  },
+  {
+    title: "Gipsy Avenger",
+    tag: "Mech Design",
+    desc: "High-poly mech-scale asset with metallic weathering, panel lines, and optimized LOD variants.",
+    gradient: "linear-gradient(135deg, rgba(255,154,62,0.28), rgba(127,90,240,0.35))",
+    accent: "amber",
+  },
+  {
+    title: "iPhone 17 Pro",
+    tag: "Product Viz",
+    desc: "Product launch mockup with studio-grade lighting, configurable finishes, and AR-ready export.",
     gradient: "linear-gradient(135deg, rgba(0,215,255,0.3), rgba(127,90,240,0.35))",
+    accent: "cyan",
+  },
+  {
+    title: "Retail Pop-up Set",
+    tag: "Environment",
+    desc: "Modular retail booth scene with day/night lighting variants and configurable branding panels.",
+    gradient: "linear-gradient(135deg, rgba(255,0,128,0.3), rgba(127,90,240,0.4))",
+    accent: "violet",
+  },
+  {
+    title: "Wearable Device",
+    tag: "Product Viz",
+    desc: "Campaign-ready smartwatch scene with configurable straps, dials, and material presets.",
+    gradient: "linear-gradient(135deg, rgba(127,90,240,0.3), rgba(58,180,255,0.3))",
+    accent: "amber",
   },
 ];
 
-const GALLERY_FILTERS = ["All", "Product Viz", "Automotive", "Environment", "UX Prototype", "Look Dev", "Character Design"];
+const GALLERY_FILTERS = [
+  "All",
+  "Product Viz",
+  "Automotive",
+  "Environment",
+  "Character Design",
+  "Mech Design",
+  "Studio Kit",
+];
 
 export default function Gallery() {
   const [selectedFilter, setSelectedFilter] = useState("All");
@@ -76,7 +94,7 @@ export default function Gallery() {
           }
         });
       },
-      { threshold: 0.1 }
+      { threshold: 0.08 }
     );
     cardsRef.current.forEach((card) => {
       if (card) observer.observe(card);
@@ -93,15 +111,14 @@ export default function Gallery() {
     <div className="site-wrapper">
       <main className="home-shell">
         {/* Hero */}
-        <section className="text-center" style={{ animation: "fade-up 0.7s ease-out" }}>
+        <section className="text-center" style={{ animation: "fadeInUp 0.7s ease-out" }}>
           <span className="hero-badge-top">Scene Gallery</span>
           <h1 className="hero-title" style={{ marginTop: "1.5rem", marginBottom: "1.5rem" }}>
-            Explore Creative
-            <span className="title-gradient"> Excellence</span>
+            Creative <span className="title-gradient">Showcase</span>
           </h1>
-          <p className="hero-subtitle" style={{ maxWidth: "680px", margin: "0 auto 2rem" }}>
-            Curated 3D scenes, lighting passes, and interactive prototypes â€” each one built and reviewed
-            directly in the Objekta studio.
+          <p className="hero-subtitle" style={{ maxWidth: "700px", margin: "0 auto 2rem" }}>
+            Browse curated 3D scenes built and reviewed in Objekta — from product visualization and
+            automotive design to character rigs and immersive environments.
           </p>
           <div className="hero-actions" style={{ justifyContent: "center" }}>
             <button
@@ -119,27 +136,16 @@ export default function Gallery() {
 
         {/* Filter Bar */}
         <section
-          className="flex flex-wrap justify-center gap-3"
-          style={{ animation: "fade-up 0.85s ease-out" }}
-          aria-label="Filter gallery by category"
+          className="gallery-filter-bar"
+          style={{ animation: "fadeInUp 0.85s ease-out" }}
+          aria-label="Filter by category"
         >
           {GALLERY_FILTERS.map((filter) => (
             <button
               key={filter}
               onClick={() => setSelectedFilter(filter)}
-              className="cta-button"
+              className={`gallery-filter-btn${selectedFilter === filter ? " active" : ""}`}
               aria-pressed={selectedFilter === filter}
-              style={{
-                background:
-                  selectedFilter === filter
-                    ? "linear-gradient(135deg, var(--brand-purple), var(--brand-teal))"
-                    : "rgba(127,90,240,0.1)",
-                color: selectedFilter === filter ? "#fff" : "var(--text-muted)",
-                border: selectedFilter === filter ? "none" : "1px solid rgba(127,90,240,0.3)",
-                padding: "0.6rem 1.2rem",
-                fontSize: "0.9rem",
-                fontWeight: selectedFilter === filter ? "700" : "500",
-              }}
             >
               {filter}
             </button>
@@ -147,18 +153,20 @@ export default function Gallery() {
         </section>
 
         {/* Gallery Grid */}
-        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+        <section className="gallery-grid">
+          <p className="sr-only" aria-live="polite">
+            Showing {filteredItems.length} gallery {filteredItems.length === 1 ? "item" : "items"}.
+          </p>
           {filteredItems.map((item, idx) => (
             <article
               key={item.title}
               ref={(el) => (cardsRef.current[idx] = el)}
-              className="panel-glass card-3d showcase-card"
-              style={{ borderRadius: "16px", overflow: "hidden", cursor: "pointer" }}
+              className={`gallery-card panel-glass showcase-card gallery-accent-${item.accent}`}
               data-tilt="4"
             >
               {/* Thumbnail */}
               <div
-                className="h-48 w-full"
+                className="gallery-card-thumb"
                 style={{
                   backgroundImage: item.poster ? `url(${item.poster})` : item.gradient,
                   backgroundSize: "cover",
@@ -167,39 +175,35 @@ export default function Gallery() {
               />
 
               {/* Card Body */}
-              <div style={{ padding: "1.5rem" }}>
-                <span
-                  style={{
-                    fontSize: "0.75rem",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.1em",
-                    color: "var(--brand-teal)",
-                    fontWeight: "700",
-                  }}
-                >
-                  {item.tag}
-                </span>
-                <h3 style={{ fontSize: "1.2rem", fontWeight: "700", margin: "0.5rem 0 0.4rem" }}>
-                  {item.title}
-                </h3>
-                <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", lineHeight: "1.55", margin: 0 }}>
-                  {item.desc}
-                </p>
+              <div className="gallery-card-body">
+                <span className="gallery-card-tag">{item.tag}</span>
+                <h3 className="gallery-card-title">{item.title}</h3>
+                <p className="gallery-card-desc">{item.desc}</p>
               </div>
             </article>
           ))}
+          {filteredItems.length === 0 && (
+            <article className="gallery-empty panel-glass">
+              <h3>No scenes in this category</h3>
+              <p>Try a different filter or upload a new scene from the studio.</p>
+              <button
+                onClick={() => setSelectedFilter("All")}
+                className="cta-button cta-secondary"
+                data-magnetic="0.1"
+              >
+                View All Scenes
+              </button>
+            </article>
+          )}
         </section>
 
         {/* CTA */}
-        <section
-          className="panel-glass neon-rim"
-          style={{ padding: "4rem 2rem", borderRadius: "24px", textAlign: "center" }}
-        >
+        <section className="panel-glass neon-rim gallery-cta-panel">
           <h2 className="section-title" style={{ marginBottom: "1rem" }}>
-            Want to feature your work here?
+            Want to feature your work?
           </h2>
           <p className="section-subtitle" style={{ marginBottom: "2rem", maxWidth: "600px", margin: "0 auto 2rem" }}>
-            Build your scene in Objekta and share it with the community.
+            Build a scene in Objekta and share it with the community — the best submissions are featured here.
           </p>
           <div className="hero-actions" style={{ justifyContent: "center" }}>
             <button

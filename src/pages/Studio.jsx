@@ -1,5 +1,5 @@
 // src/pages/Studio.jsx
-import React, { useRef, useState, useEffect, useCallback } from "react";
+import React, { useRef, useState, useEffect, useCallback, lazy, Suspense } from "react";
 // Static pako import keeps compression available even if dynamic import fails
 import { deflate } from "pako";
 import * as THREE from "three";
@@ -17,13 +17,13 @@ import { useAuth } from "../contexts/AuthContext";
 import Palette from "../components/Palette";
 import Workspace from "../components/Workspace";
 import ObjectProperties from "../components/ObjectProperties";
-import SculptToolbar from "../components/SculptToolbar";
+const SculptToolbar = lazy(() => import("../components/SculptToolbar"));
 import { loadInitialPanels, persistPanelStates } from "../utils/preferences";
 import { ensurePersistentStorage, logQuotaIfAny } from "../utils/storage";
 import Timeline from "../components/Timeline";
 import StudioToast from "../components/StudioToast";
 import Loader from "../components/Loader";
-import BackupsPanel from "../components/BackupsPanel";
+const BackupsPanel = lazy(() => import("../components/BackupsPanel"));
 import "../styles/Studio.css";
 
 import { SceneGraphStore } from "../store/SceneGraphStore";
@@ -55,11 +55,11 @@ const ConfirmModal = ({ open, title, message, onCancel, onConfirm }) => {
   return (
     <div className="modal-container" onClick={onCancel} role="dialog" aria-modal="true">
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-        <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 12 }}>{title}</div>
-        <p style={{ color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.5 }}>{message}</p>
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <div className="confirm-modal__title">{title}</div>
+        <p className="confirm-modal__message">{message}</p>
+        <div className="confirm-modal__actions">
           <button onClick={onCancel} className="studio-btn">Cancel</button>
-          <button onClick={onConfirm} className="launch-btn" style={{ padding: '8px 16px', fontSize: 14 }}>Confirm</button>
+          <button onClick={onConfirm} className="launch-btn confirm-modal__confirm">Confirm</button>
         </div>
       </div>
     </div>
@@ -128,41 +128,42 @@ const OutlinerView = ({ onSelect, sceneVersion, outlinerSearch: parentSearch, se
   };
 
   const deleteObject = (obj) => {
-    if (!confirm('Delete object?')) return;
-    try {
-      if (workspaceRef.current?.selectObject) {
-        workspaceRef.current.selectObject(obj);
-        disposeObjectResources(obj);
-        workspaceRef.current.deleteSelected?.();
-      } else {
-        const scene = workspaceRef.current?.scene;
-        const found = scene?.getObjectByProperty('uuid', obj.uuid);
-        if (found && found.parent) {
-          disposeObjectResources(found);
-          found.parent.remove(found);
-        }
-      }
-      pushToast?.({ type: "info", message: "Deleted" });
-    } catch (e) { pushToast?.({ type: "error", message: "Delete failed" }); }
+    setConfirmState({
+      open: true,
+      title: 'Delete Object',
+      message: `Delete "${obj.name || obj.type || 'this object'}"?`,
+      onConfirm: () => {
+        try {
+          if (workspaceRef.current?.selectObject) {
+            workspaceRef.current.selectObject(obj);
+            disposeObjectResources(obj);
+            workspaceRef.current.deleteSelected?.();
+          } else {
+            const scene = workspaceRef.current?.scene;
+            const found = scene?.getObjectByProperty('uuid', obj.uuid);
+            if (found && found.parent) {
+              disposeObjectResources(found);
+              found.parent.remove(found);
+            }
+          }
+          pushToast?.({ type: "info", message: "Deleted" });
+        } catch (e) { pushToast?.({ type: "error", message: "Delete failed" }); }
+      },
+    });
   };
 
   return (
     <div
       // Use flex rather than height:100% so parent flex layouts can resolve
       // the inner container's size and allow overflow to work reliably.
-      style={{ padding: 8, overflowY: 'auto', flex: '1 1 auto', minHeight: 0 }}>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-        <input aria-label="Filter outliner" placeholder="Filter..." value={parentSearch} onChange={e => setParentSearch(e.target.value)} style={{ flex: 1, padding: 6 }} />
+      className="outliner-scroll">
+      <div className="outliner-filter-row">
+        <input aria-label="Filter outliner" placeholder="Filter..." value={parentSearch} onChange={e => setParentSearch(e.target.value)} className="outliner-filter-input" />
         <button aria-label="Clear filter" onClick={() => { setParentSearch(''); }} className="studio-btn icon-btn"><FiSearch /></button>
       </div>
       {items.map((it) => (
-        <div key={it.uuid} style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          padding: '6px 8px', borderRadius: 8,
-          background: it.userData?.__selected ? 'rgba(127,90,240,0.12)' : 'transparent',
-          marginBottom: 6
-        }}>
-          <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => {
+        <div key={it.uuid} className={`outliner-item${it.userData?.__selected ? ' outliner-item--selected' : ''}`}>
+          <div className="outliner-item__name" onClick={() => {
             if (workspaceRef.current?.selectObject) {
               workspaceRef.current.selectObject(it);
               onSelect?.(it);
@@ -1427,9 +1428,15 @@ export default function Studio() {
   useEffect(() => {
     const onKey = (e) => {
       const meta = e.ctrlKey || e.metaKey;
+      // Allow ctrl/cmd shortcuts regardless of focus (save, undo, redo)
       if (meta && e.key.toLowerCase() === "s") { e.preventDefault(); saveJSON(); return; }
       if (meta && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); workspaceRef.current?.undo?.(); return; }
       if ((meta && e.key.toLowerCase() === "y") || (meta && e.shiftKey && e.key.toLowerCase() === "z")) { e.preventDefault(); workspaceRef.current?.redo?.(); return; }
+
+      // Guard: don't intercept bare keys when user is typing
+      const tag = e.target?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target?.isContentEditable) return;
+
       if (e.key === "Delete") { requestDeleteSelected(); return; }
       if (!meta && e.key.toLowerCase() === "p") { setPaletteCollapsed((v) => !v); return; }
       // inspector collapse shortcut removed
@@ -2263,25 +2270,31 @@ export default function Studio() {
 
   const deleteProject = useCallback(async (id) => {
     if (!id) return;
-    if (!confirm("Delete this project permanently?")) return;
-    try {
-      await deleteProjectOnServer(id);
-      if (id === projectId) {
-        setProjectId(null);
-        setProjectName("Untitled Project");
-        setIsDirty(false);
-        setLastSavedAt(null);
-        lastLocalSnapshotRef.current = null;
-        lastServerSavedAtRef.current = null;
-        if (workspaceRef.current?.resetScene) workspaceRef.current.resetScene();
-        if (projectSocketRef.current) projectSocketRef.current.emit("leave");
-      }
-      fetchProjects();
-      pushToast({ type: "info", message: "Project deleted" });
-    } catch (err) {
-      console.error("deleteProject failed", err);
-      pushToast({ type: "error", message: "Delete failed" });
-    }
+    setConfirmState({
+      open: true,
+      title: 'Delete Project',
+      message: 'Delete this project permanently? This cannot be undone.',
+      onConfirm: async () => {
+        try {
+          await deleteProjectOnServer(id);
+          if (id === projectId) {
+            setProjectId(null);
+            setProjectName("Untitled Project");
+            setIsDirty(false);
+            setLastSavedAt(null);
+            lastLocalSnapshotRef.current = null;
+            lastServerSavedAtRef.current = null;
+            if (workspaceRef.current?.resetScene) workspaceRef.current.resetScene();
+            if (projectSocketRef.current) projectSocketRef.current.emit("leave");
+          }
+          fetchProjects();
+          pushToast({ type: "info", message: "Project deleted" });
+        } catch (err) {
+          console.error("deleteProject failed", err);
+          pushToast({ type: "error", message: "Delete failed" });
+        }
+      },
+    });
   }, [projectId, fetchProjects, deleteProjectOnServer]);
 
   // Autosave logic: uses saveProject (which itself has fallback)
@@ -2362,14 +2375,12 @@ export default function Studio() {
   const CenterWelcomeCard = () => {
     const sceneSummary = workspaceRef.current?.getSceneSummary?.();
     return (
-      <div className="welcome-card reveal" style={{
-        position: "absolute", left: 12, top: panelTopOffset + 12, width: 420, maxWidth: "40%", minHeight: 220,
-        borderRadius: 12, padding: 14, background: "linear-gradient(180deg, rgba(28,10,36,0.95), rgba(12,6,18,0.85))", color: "#fff", zIndex: 40,
-        boxShadow: "0 20px 60px rgba(0,0,0,0.6)"
+      <div className="welcome-card reveal welcome-card--positioned" style={{
+        top: panelTopOffset + 12
       }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-          <div style={{ fontSize: 18, fontWeight: 800 }}>Welcome to Objekta</div>
-          <div style={{ display: "flex", gap: 8 }}>
+        <div className="welcome-card__header">
+          <div className="welcome-card__title">Welcome to Objekta</div>
+          <div className="welcome-card__icon-group">
             <button className="studio-btn icon-btn" onClick={() => { workspaceRef.current?.resetScene?.(); pushToast({ type: "info", message: "Reset scene" }); }} title="Reset scene" aria-label="Reset scene"><FiRefreshCcw /></button>
             <button className="studio-btn icon-btn" onClick={() => {
               (async () => {
@@ -2389,22 +2400,22 @@ export default function Studio() {
           </div>
         </div>
 
-        <div style={{ marginTop: 12, color: 'var(--text-muted)' }}>
+        <div className="welcome-card__desc">
           Use the palette (left) to add primitives and lights, or drag-and-drop a GLB into the viewport.
         </div>
 
-        <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
+        <div className="welcome-card__quick-actions">
           <button className="launch-btn" onClick={() => { workspaceRef.current?.addItem?.('Cube'); pushToast({ type: "info", message: "Cube added" }); }}>Add Cube</button>
           <button className="studio-btn" onClick={() => { workspaceRef.current?.addItem?.('Sphere'); pushToast({ type: "info", message: "Sphere added" }); }}>Add Sphere</button>
-          <label style={{ display: "inline-block", marginLeft: 6 }}>
-            <input aria-label="Import GLB" type="file" accept=".glb,.gltf" style={{ display: 'none' }} onChange={(e) => importGLTF(e.target.files?.[0])} />
+          <label className="welcome-card__import-label">
+            <input aria-label="Import GLB" type="file" accept=".glb,.gltf" className="sr-only" onChange={(e) => importGLTF(e.target.files?.[0])} />
             <button className="studio-btn">Import GLB</button>
           </label>
         </div>
 
-        <div style={{ marginTop: 12, display: "flex", gap: 12, alignItems: "center" }}>
-          <div style={{ fontWeight: 700 }}>Scene</div>
-          <div style={{ color: "var(--text-muted)" }}>{sceneSummary ? `${sceneSummary.objects} objects · ${sceneSummary.totalTris} tris` : 'No objects yet'}</div>
+        <div className="welcome-card__scene-info">
+          <div className="panel-title">Scene</div>
+          <div className="panel-empty">{sceneSummary ? `${sceneSummary.objects} objects · ${sceneSummary.totalTris} tris` : 'No objects yet'}</div>
         </div>
       </div>
     );
@@ -2435,7 +2446,7 @@ export default function Studio() {
 
         {/* Palette panel */}
         <div className="studio-panel palette-panel reveal" style={{ width: paletteWidth, minWidth: 44 }}>
-          <div className="palette-inner" style={{ display: 'flex', flex: '1 1 auto', minHeight: 0, flexDirection: 'column' }}>
+          <div className="palette-inner">
             <Palette
               items={PALETTE_ITEMS.map((it) => ({ ...it, fav: false }))}
               onAction={(name, client) => workspaceRef.current?.addItem?.(name, client)}
@@ -2478,8 +2489,8 @@ export default function Studio() {
               ))}
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontWeight: 600, fontSize: 12 }}>Shading</span>
+            <div className="toolbar-shading-group">
+              <span className="toolbar-shading-label">Shading</span>
               <div className="segmented-control" role="group" aria-label="Viewport shading">
                 {[ ['rendered', 'Rendered'], ['material', 'Material'], ['wireframe', 'Wireframe'] ].map(([mode, label]) => (
                   <button key={mode} onClick={() => setViewMode(mode)} className={viewMode === mode ? 'active' : ''} title={`${label} view`} aria-pressed={viewMode === mode}>{label}</button>
@@ -2488,7 +2499,7 @@ export default function Studio() {
             </div>
 
             <div className="studio-btn snap-control" role="group" aria-label="Snap controls">
-              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }} title="Toggle snapping">
+              <label className="snap-toggle-label" title="Toggle snapping">
                 <input aria-label="Toggle snap" type="checkbox" checked={snapEnabled} onChange={() => { setSnapEnabled((v) => !v); workspaceRef.current?.toggleSnap?.(); }} />
                 Snap
               </label>
@@ -2499,7 +2510,7 @@ export default function Studio() {
 
             <label className="studio-btn icon-btn" title="Import GLB/GLTF" aria-label="Import">
               <FiUpload />
-              <input aria-label="Import GLB or GLTF" type="file" accept=".glb,.gltf" style={{ display: "none" }} onChange={(e) => { const file = e.target.files?.[0]; if (file) { importGLTF(file); e.target.value = ""; } }} />
+              <input aria-label="Import GLB or GLTF" type="file" accept=".glb,.gltf" className="sr-only" onChange={(e) => { const file = e.target.files?.[0]; if (file) { importGLTF(file); e.target.value = ""; } }} />
             </label>
 
             <button className="studio-btn icon-btn" onClick={() => exportGLTF(true)} title="Export as GLB" aria-label="Export"><FiSave /></button>
@@ -2523,7 +2534,7 @@ export default function Studio() {
             <button className="studio-btn icon-btn" onClick={() => toggleSculpt()} title="Toggle sculpt" aria-label="Toggle sculpt">🪵</button>
 
             {/* new helpers to fill empty space */}
-            <div style={{ display: "flex", gap: 8, marginLeft: 12 }}>
+            <div className="toolbar-helpers">
               <button className="studio-btn icon-btn" onClick={() => { try { workspaceRef.current?.frameAll?.(); cameraControlsApiRef.current?.resetView?.(); } catch (e) { workspaceRef.current?.onFullScreenChange?.(true); } }} title="Fit to view" aria-label="Fit to view"><FiMove /></button>
               <button className="studio-btn icon-btn" onClick={() => {
                 (async () => {
@@ -2538,9 +2549,9 @@ export default function Studio() {
                   } else pushToast({ type: "error", message: "Screenshot failed" });
                 })();
               }} title="Capture" aria-label="Capture"><FiCamera /></button>
-              <label className={`studio-btn icon-btn ${environmentActive ? 'active' : ''}`} title="Load Environment" aria-label="Load environment" style={environmentActive ? { boxShadow:'0 0 0 2px #7f5af0 inset' } : {}}>
+              <label className={`studio-btn icon-btn ${environmentActive ? 'active' : ''}`} title="Load Environment" aria-label="Load environment">
                 {environmentActive ? '🌌*' : '🌌'}
-                <input type="file" accept=".hdr,.exr,.jpg,.jpeg,.png" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) { applyEnvironmentFromFile(f); e.target.value=''; } }} />
+                <input type="file" accept=".hdr,.exr,.jpg,.jpeg,.png" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; if (f) { applyEnvironmentFromFile(f); e.target.value=''; } }} />
               </label>
               <button className="studio-btn icon-btn" title="View Selected Camera" aria-label="View camera POV" onClick={() => {
                 if (selected && selected.isCamera) {
@@ -2564,7 +2575,7 @@ export default function Studio() {
             </div>
 
             {/* Project cloud controls */}
-            <div style={{ marginLeft: "12px", display: "flex", gap: 8, alignItems: "center" }}>
+            <div className="toolbar-project-controls">
               <select
                 aria-label="Open project"
                 value={projectId || ""}
@@ -2572,7 +2583,7 @@ export default function Studio() {
                   const id = e.target.value || null;
                   if (id) loadProject(id);
                 }}
-                style={{ padding: "6px 10px", borderRadius: 8, background: "#111" }}
+                className="toolbar-project-select"
               >
                 <option value="">-- Open Project --</option>
                 {projects.map((p) => {
@@ -2599,40 +2610,26 @@ export default function Studio() {
                 } else pushToast({ type: "error", message: "No preview available" });
               }}>Preview</button>
 
-              <button className="studio-btn" onClick={() => { if (confirm("Create new blank project?")) newProject(); }}>New</button>
+              <button className="studio-btn" onClick={() => { setConfirmState({ open: true, title: 'New Project', message: 'Create new blank project? Unsaved changes will be lost.', onConfirm: () => newProject() }); }}>New</button>
               <button className="studio-btn" onClick={() => deleteProject(projectId)} disabled={!projectId}>Delete</button>
             </div>
 
-            <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-              <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
+            <div className="toolbar-status">
+              <div className="toolbar-status__text">
                 {lastSavedAt ? `Last saved: ${new Date(lastSavedAt).toLocaleString()}` : (isDirty ? "Unsaved changes" : "No saves yet")}
               </div>
               {(isSaving || saveProgress > 0) && (
                 <div
                   role="status"
                   aria-live="polite"
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    minWidth: 160,
-                  }}
+                  className="toolbar-save-progress"
                 >
-                  <div style={{
-                    height: 6,
-                    width: 120,
-                    background: "rgba(255,255,255,0.12)",
-                    borderRadius: 999,
-                    overflow: "hidden",
-                  }}>
-                    <div style={{
-                      height: "100%",
+                  <div className="toolbar-save-track">
+                    <div className="toolbar-save-fill" style={{
                       width: `${Math.round(saveProgress * 100)}%`,
-                      background: "linear-gradient(90deg, #7f5af0, #00f0ff)",
-                      transition: "width 120ms ease",
                     }} />
                   </div>
-                  <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                  <div className="toolbar-save-percent">
                     {Math.round(saveProgress * 100)}%
                   </div>
                 </div>
@@ -2640,7 +2637,9 @@ export default function Studio() {
             </div>
           </div>
 
-          <SculptToolbar workspaceRef={workspaceRef} rendererSelector=".workspace-area canvas" />
+          <Suspense fallback={null}>
+            <SculptToolbar workspaceRef={workspaceRef} rendererSelector=".workspace-area canvas" />
+          </Suspense>
 
           <Workspace
             ref={workspaceRef}
@@ -2687,17 +2686,17 @@ export default function Studio() {
               }}><div /><div /><div /></div>
                   {/* inspector collapse UI removed */}
 
-              <div role="tablist" aria-label="Inspector Tabs" style={{ display: 'flex', gap: 6, padding: 8 }}>
-                <button role="tab" aria-selected={propsTab === 'props'} onClick={() => setPropsTab('props')} className={propsTab === 'props' ? 'active' : ''}>Transform</button>
-                <button role="tab" aria-selected={propsTab === 'material'} onClick={() => setPropsTab('material')} className={propsTab === 'material' ? 'active' : ''}>Material</button>
-                <button role="tab" aria-selected={propsTab === 'lights'} onClick={() => setPropsTab('lights')} className={propsTab === 'lights' ? 'active' : ''}>Lighting</button>
-                <button role="tab" aria-selected={propsTab === 'outliner'} onClick={() => setPropsTab('outliner')} className={propsTab === 'outliner' ? 'active' : ''}>Outliner</button>
-                <button role="tab" aria-selected={propsTab === 'validate'} onClick={() => setPropsTab('validate')} className={propsTab === 'validate' ? 'active' : ''}>Validate</button>
-                <button role="tab" aria-selected={propsTab === 'environment'} onClick={() => setPropsTab('environment')} className={propsTab === 'environment' ? 'active' : ''}>Environment</button>
-                <button role="tab" aria-selected={propsTab === 'backups'} onClick={() => setPropsTab('backups')} className={propsTab === 'backups' ? 'active' : ''}>Backups</button>
+              <div role="tablist" aria-label="Inspector Tabs" className="inspector-tabs">
+                <button role="tab" id="tab-props" aria-selected={propsTab === 'props'} aria-controls="tabpanel-props" onClick={() => setPropsTab('props')} className={propsTab === 'props' ? 'active' : ''}>Transform</button>
+                <button role="tab" id="tab-material" aria-selected={propsTab === 'material'} aria-controls="tabpanel-material" onClick={() => setPropsTab('material')} className={propsTab === 'material' ? 'active' : ''}>Material</button>
+                <button role="tab" id="tab-lights" aria-selected={propsTab === 'lights'} aria-controls="tabpanel-lights" onClick={() => setPropsTab('lights')} className={propsTab === 'lights' ? 'active' : ''}>Lighting</button>
+                <button role="tab" id="tab-outliner" aria-selected={propsTab === 'outliner'} aria-controls="tabpanel-outliner" onClick={() => setPropsTab('outliner')} className={propsTab === 'outliner' ? 'active' : ''}>Outliner</button>
+                <button role="tab" id="tab-validate" aria-selected={propsTab === 'validate'} aria-controls="tabpanel-validate" onClick={() => setPropsTab('validate')} className={propsTab === 'validate' ? 'active' : ''}>Validate</button>
+                <button role="tab" id="tab-environment" aria-selected={propsTab === 'environment'} aria-controls="tabpanel-environment" onClick={() => setPropsTab('environment')} className={propsTab === 'environment' ? 'active' : ''}>Environment</button>
+                <button role="tab" id="tab-backups" aria-selected={propsTab === 'backups'} aria-controls="tabpanel-backups" onClick={() => setPropsTab('backups')} className={propsTab === 'backups' ? 'active' : ''}>Backups</button>
               </div>
 
-              <div className="object-properties" style={{ padding: 8, flex: '1 1 auto', minHeight: 0 }}>
+              <div className="object-properties inspector-content" id={`tabpanel-${propsTab}`} role="tabpanel" aria-labelledby={`tab-${propsTab}`}>
                 {/* Transform (ObjectProperties component) */}
                 {propsTab === 'props' && (selected ? (
                   <>
@@ -2718,8 +2717,8 @@ export default function Studio() {
                     />
                     {/* Bloom tagging quick toggle */}
                     {postApiRef.current?.tagForBloom && selected.isObject3D && (
-                      <div style={{ marginTop: 12, padding: 8, border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8 }}>
-                        <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>Post FX</div>
+                      <div className="postfx-section">
+                        <div className="postfx-title">Post FX</div>
                         <button className="studio-btn" onClick={() => {
                           const enabled = !selected.userData.__bloom;
                           postApiRef.current.tagForBloom(selected, enabled);
@@ -2730,34 +2729,34 @@ export default function Studio() {
                       </div>
                     )}
                   </>
-                ) : <div style={{ color: 'var(--text-muted)' }}>No object selected.</div>)}
+                ) : <div className="panel-empty">No object selected.</div>)}
 
                 {/* Material */}
                 {propsTab === 'material' && (
                   <div>
-                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Material Editor</div>
+                    <div className="panel-title">Material Editor</div>
                     <form onSubmit={(e) => { e.preventDefault(); const input = document.getElementById("tex-upload-input"); const file = input?.files?.[0] ?? null; applyMaterialToSelection({ color: matColor, roughness: matRough, metalness: matMetal, mapFile: file }); }}>
-                      <div style={{ marginBottom: 8 }}>
-                        <label style={{ display: 'block', fontSize: 12 }}>Color</label>
+                      <div className="mat-field">
+                        <label className="mat-label">Color</label>
                         <input aria-label="Material color" type="color" value={matColor} onChange={(e) => setMatColor(e.target.value)} />
                       </div>
-                      <div style={{ marginBottom: 8 }}>
-                        <label style={{ display: 'block', fontSize: 12 }}>Roughness: {matRough.toFixed(2)}</label>
-                        <input aria-label="Material roughness" type="range" min="0" max="1" step="0.01" value={matRough} onChange={(e) => setMatRough(parseFloat(e.target.value))} style={{ width: '100%' }} />
+                      <div className="mat-field">
+                        <label className="mat-label">Roughness: {matRough.toFixed(2)}</label>
+                        <input aria-label="Material roughness" type="range" min="0" max="1" step="0.01" value={matRough} onChange={(e) => setMatRough(parseFloat(e.target.value))} className="mat-range" />
                       </div>
-                      <div style={{ marginBottom: 8 }}>
-                        <label style={{ display: 'block', fontSize: 12 }}>Metalness: {matMetal.toFixed(2)}</label>
-                        <input aria-label="Material metalness" type="range" min="0" max="1" step="0.01" value={matMetal} onChange={(e) => setMatMetal(parseFloat(e.target.value))} style={{ width: '100%' }} />
+                      <div className="mat-field">
+                        <label className="mat-label">Metalness: {matMetal.toFixed(2)}</label>
+                        <input aria-label="Material metalness" type="range" min="0" max="1" step="0.01" value={matMetal} onChange={(e) => setMatMetal(parseFloat(e.target.value))} className="mat-range" />
                       </div>
 
-                      <div style={{ marginBottom: 8 }}>
-                        <label style={{ display: 'block', fontSize: 12 }}>Texture (optional)</label>
+                      <div className="mat-field">
+                        <label className="mat-label">Texture (optional)</label>
                         <input id="tex-upload-input" aria-label="Upload texture" type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) setMatMapURL(URL.createObjectURL(f)); }} />
-                        {matMapURL && <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
-                          <img src={matMapURL} alt="preview" style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 6 }} />
-                          <div style={{ display: 'flex', flexDirection: 'column' }}>
-                            <div style={{ fontSize: 12 }}>{matHasMap ? 'Applied texture' : 'New texture (pending)'}</div>
-                            <div style={{ marginTop: 6 }}>
+                        {matMapURL && <div className="mat-texture-preview">
+                          <img src={matMapURL} alt="preview" className="mat-texture-img" />
+                          <div className="mat-texture-info">
+                            <div className="mat-texture-status">{matHasMap ? 'Applied texture' : 'New texture (pending)'}</div>
+                            <div className="mat-texture-actions">
                               <button type="button" className="studio-btn" onClick={() => {
                                 const file = document.getElementById('tex-upload-input')?.files?.[0];
                                 applyMaterialToSelection({ color: matColor, roughness: matRough, metalness: matMetal, mapFile: file });
@@ -2768,7 +2767,7 @@ export default function Studio() {
                         </div>}
                       </div>
 
-                      <div style={{ display: 'flex', gap: 8 }}>
+                      <div className="mat-form-actions">
                         <button type="submit" className="launch-btn">Apply</button>
                         <button type="button" className="studio-btn" onClick={() => { if (selected) { selected.traverse((n) => { if (n.isMesh && n.material) { try { n.material.color.set('#888888'); n.material.roughness = 0.5; n.material.metalness = 0.0; } catch (e) {} } }); pushToast({ type: "info", message: "Reset material" }); } }}>Reset</button>
                       </div>
@@ -2779,8 +2778,8 @@ export default function Studio() {
                 {/* Lighting */}
                 {propsTab === 'lights' && (
                   <div>
-                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Lighting</div>
-                    <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                    <div className="panel-title">Lighting</div>
+                    <div className="light-add-row">
                       <button className="studio-btn" onClick={() => { workspaceRef.current?.addItem?.('Point Light'); pushToast({ type: "info", message: "PointLight added" }); }}>Point</button>
                       <button className="studio-btn" onClick={() => { workspaceRef.current?.addItem?.('Spot Light'); pushToast({ type: "info", message: "SpotLight added" }); }}>Spot</button>
                       <button className="studio-btn" onClick={() => { workspaceRef.current?.addItem?.('Directional Light'); pushToast({ type: "info", message: "DirectionalLight added" }); }}>Dir</button>
@@ -2788,21 +2787,21 @@ export default function Studio() {
                     </div>
 
                     <div>
-                      {lights.length === 0 && <div style={{ color: 'var(--text-muted)' }}>No lights in scene</div>}
+                      {lights.length === 0 && <div className="panel-empty">No lights in scene</div>}
                       {lights.map(l => (
-                        <div key={l.uuid} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', padding: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: 700 }}>{l.name}</div>
-                            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{l.type}</div>
+                        <div key={l.uuid} className="light-item">
+                          <div className="light-item__info">
+                            <div className="light-item__name">{l.name}</div>
+                            <div className="light-item__type">{l.type}</div>
                           </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+                          <div className="light-item__controls">
                             <input aria-label={`Color for ${l.name}`} type="color" value={l.color} onChange={(e) => {
                               try { const scene = workspaceRef.current?.scene; const light = scene?.getObjectByProperty('uuid', l.uuid); if (light) light.color.set(e.target.value); refreshLightListFromScene(); } catch (e) {}
                             }} />
                             <input aria-label={`Intensity for ${l.name}`} type="range" min="0" max="4" step="0.01" value={l.intensity} onChange={(e) => {
                               try { const scene = workspaceRef.current?.scene; const light = scene?.getObjectByProperty('uuid', l.uuid); if (light) light.intensity = parseFloat(e.target.value); refreshLightListFromScene(); } catch(e) {}
                             }} />
-                            <div style={{ display: 'flex', gap: 6 }}>
+                            <div className="light-item__actions">
                               <button className="studio-btn" onClick={() => {
                                 try { const scene = workspaceRef.current?.scene; const light = scene?.getObjectByProperty('uuid', l.uuid); if (light && light.parent) light.parent.remove(light); refreshLightListFromScene(); } catch (e) {}
                               }}>Remove</button>
@@ -2817,7 +2816,7 @@ export default function Studio() {
                 {/* Outliner */}
                 {propsTab === 'outliner' && (
                   <div>
-                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Scene Outliner</div>
+                    <div className="panel-title">Scene Outliner</div>
                     <OutlinerView
                       onSelect={(o) => { handleOutlinerSelect(o); }}
                       sceneVersion={sceneVersion}
@@ -2833,16 +2832,16 @@ export default function Studio() {
                 {/* Validate */}
                 {propsTab === 'validate' && (
                   <div>
-                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Validation</div>
-                    <div style={{ marginBottom: 10 }}>
+                    <div className="panel-title">Validation</div>
+                    <div className="validate-controls">
                       <button className="launch-btn" onClick={() => runValidation()}>Run Validation</button>
                       <button className="studio-btn" onClick={() => setValidationResult(null)}>Clear</button>
                     </div>
-                    {!validationResult && <div style={{ color: 'var(--text-muted)' }}>No validation run yet. Click "Run Validation".</div>}
+                    {!validationResult && <div className="panel-empty">No validation run yet. Click "Run Validation".</div>}
                     {validationResult && (
-                      <div style={{ fontSize: 13 }}>
-                        {validationResult.ok ? <div style={{ color: 'var(--success)' }}>OK</div> : <div style={{ color: 'var(--danger)' }}>Issues found</div>}
-                        <pre style={{ whiteSpace: 'pre-wrap', marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+                      <div className="validate-result">
+                        {validationResult.ok ? <div className="text-success">OK</div> : <div className="text-danger">Issues found</div>}
+                        <pre className="validate-pre">
 {JSON.stringify(validationResult, null, 2)}
                         </pre>
                       </div>
@@ -2853,23 +2852,25 @@ export default function Studio() {
                 {/* Environment */}
                 {propsTab === 'environment' && (
                   <div>
-                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Environment</div>
-                    <div style={{ display: 'flex', gap: 8 }}>
+                    <div className="panel-title">Environment</div>
+                    <div className="env-controls">
                       <input aria-label="Environment color" type="color" value={envColor} onChange={(e) => setEnvColor(e.target.value)} />
                       <button className="studio-btn" onClick={() => applyEnvironmentColor(envColor)}>Apply Color</button>
-                      <label className="studio-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                        <input aria-label="Import environment image" type="file" accept=".hdr,.exr,.jpg,.png" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) applyEnvironmentFromFile(f); e.target.value = ''; }} />
-                        <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}><FiImage />Import...</span>
+                      <label className="studio-btn env-import-label">
+                        <input aria-label="Import environment image" type="file" accept=".hdr,.exr,.jpg,.png" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; if (f) applyEnvironmentFromFile(f); e.target.value = ''; }} />
+                        <span className="env-import-text"><FiImage />Import...</span>
                       </label>
                     </div>
                   </div>
                 )}
 
                 {propsTab === 'backups' && (
-                  <BackupsPanel
-                    onRestore={handleRestoreBackup}
-                    onNotify={(type, message) => pushToast({ type, message })}
-                  />
+                  <Suspense fallback={<div className="panel-empty">Loading backups…</div>}>
+                    <BackupsPanel
+                      onRestore={handleRestoreBackup}
+                      onNotify={(type, message) => pushToast({ type, message })}
+                    />
+                  </Suspense>
                 )}
               </div>
             </div>
