@@ -39,6 +39,7 @@ const SHOWCASE_MODELS = [
     desc: "Multi-screen control deck for layout, approvals, and lighting passes.",
     accent: "violet",
     poster: "assets/desk-poster.webp",
+    fullscreenTarget: [0, 1.0, 0],
   },
   {
     src: "models/laptop_free.glb",
@@ -46,6 +47,10 @@ const SHOWCASE_MODELS = [
     desc: "Travel-ready laptop kit showing shader tweaks and annotation overlays.",
     accent: "cyan",
     poster: "assets/laptop-poster.webp",
+    previewPosition: [0, 0.45, 0],
+    fullscreenPosition: [0, 0.75, 0],
+    fullscreenFitSize: 4.2,
+    fullscreenTarget: [0, 0.85, 0],
   },
   {
     src: "models/porsche.glb",
@@ -53,6 +58,7 @@ const SHOWCASE_MODELS = [
     desc: "Hero-grade automotive model tuned for material look-dev and lighting overrides.",
     accent: "amber",
     poster: "assets/porsche-poster.webp",
+    fullscreenTarget: [0, 1.0, 0],
   },
   {
     src: "models/black_dragon_with_idle_animation.glb",
@@ -60,6 +66,9 @@ const SHOWCASE_MODELS = [
     desc: "Creature rig with idle animation and layered surface detail.",
     accent: "violet",
     poster: "assets/thumbnail-placeholder.svg",
+    previewRotation: [Math.PI, 0, 0],
+    fullscreenRotation: [Math.PI, 0, 0],
+    fullscreenTarget: [0, 1.2, 0],
   },
   {
     src: "models/flynns_arcade.glb",
@@ -67,6 +76,7 @@ const SHOWCASE_MODELS = [
     desc: "Retro interior scene built for neon lighting and cinematic depth.",
     accent: "cyan",
     poster: "assets/thumbnail-placeholder.svg",
+    fullscreenTarget: [0, 1.0, 0],
   },
   {
     src: "models/gipsy_avenger_-_pacific_rim.glb",
@@ -74,6 +84,7 @@ const SHOWCASE_MODELS = [
     desc: "Mech-scale asset optimized for real-time material previews.",
     accent: "amber",
     poster: "assets/thumbnail-placeholder.svg",
+    fullscreenTarget: [0, 1.0, 0],
   },
   {
     src: "models/iphone_17_pro.glb",
@@ -81,6 +92,7 @@ const SHOWCASE_MODELS = [
     desc: "Product visualization mockup with clean PBR finishes.",
     accent: "cyan",
     poster: "assets/thumbnail-placeholder.svg",
+    fullscreenTarget: [0, 1.0, 0],
   },
 ];
 
@@ -540,8 +552,9 @@ export default function Home() {
               const progress = progressMap[modelSrc] ?? 0;
               const cardKey = model.title;
               const isVisible = visibleCards[cardKey];
-              const shouldRenderPreview = Boolean(parsedPrefetch[modelSrc] || prefetched[modelSrc]);
+              const shouldRenderPreview = Boolean(isVisible && (parsedPrefetch[modelSrc] || prefetched[modelSrc]));
               const dprCap = deviceTier === "full" ? 1.5 : deviceTier === "medium" ? 1.1 : 1;
+              const devicePixelRatio = typeof window !== "undefined" ? (window.devicePixelRatio || 1) : 1;
               const ambientIntensity = deviceTier === "full" ? 1.1 : deviceTier === "medium" ? 0.95 : 0.75;
               const dirIntensity = deviceTier === "full" ? 0.9 : deviceTier === "medium" ? 0.75 : 0.6;
               return (
@@ -586,7 +599,7 @@ export default function Home() {
                             <Canvas
                               eventSource={typeof document !== 'undefined' ? document : undefined}
                               style={{ width: '100%', height: '100%' }}
-                              dpr={Math.min(dprCap, window.devicePixelRatio || 1)}
+                              dpr={Math.min(dprCap, devicePixelRatio)}
                               frameloop="demand"
                               gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
                               onCreated={({ gl }) => {
@@ -608,7 +621,8 @@ export default function Home() {
                                 src={modelSrc}
                                 fitSize={4.5}
                                 fitAxis="max"
-                                position={[0, 0, 0]}
+                                position={model.previewPosition || [0, 0, 0]}
+                                rotation={model.previewRotation || [0, 0, 0]}
                               />
                             </Canvas>
                           </div>

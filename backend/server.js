@@ -12,6 +12,7 @@ const multer = require("multer");
 const crypto = require("crypto");
 const connectDB = require("./config/db");
 const { initSocket } = require("./socket");
+const { protect } = require("./middleware/authMiddleware");
 const tus = require("tus-node-server");
 const FileStore = tus.FileStore || (tus.stores && tus.stores.FileStore);
 
@@ -23,6 +24,7 @@ const scenesRoutes = require("./routes/scenes");
 const activityRoutes = require("./routes/activity");
 const collaboratorsRoutes = require("./routes/collaborators");
 const app = express();
+app.disable("x-powered-by");
 
 // ---------- Connect MongoDB ----------
 connectDB();
@@ -114,6 +116,18 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: { fileSize: 200 * 1024 * 1024 }, // 200 MB
+  fileFilter: (req, file, cb) => {
+    const allowed = [
+      "model/gltf-binary",
+      "application/octet-stream",
+      "application/gltf+json",
+    ];
+    const ext = path.extname(file?.originalname || "").toLowerCase();
+    const extAllowed = ext === ".glb" || ext === ".gltf";
+    const mimeAllowed = allowed.includes(file?.mimetype || "");
+    if (extAllowed || mimeAllowed) return cb(null, true);
+    return cb(new Error("Invalid file type. Only GLB/GLTF allowed."));
+  },
 });
 
 // ---------- Static Files ----------
@@ -145,7 +159,7 @@ try {
 }
 
 // ✅ Direct .glb upload endpoint (for quick uploads/testing)
-app.post("/api/upload-glb", (req, res, _next) => {
+app.post("/api/upload-glb", protect, (req, res, _next) => {
   upload.single("file")(req, res, function (err) {
     if (err instanceof multer.MulterError) {
       if (err.code === "LIMIT_FILE_SIZE") {

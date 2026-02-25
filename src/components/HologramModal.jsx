@@ -68,7 +68,14 @@ export default function HologramModal({ model, onClose }) {
     cyan: new THREE.Color("#22d3ee"),
     amber: new THREE.Color("#fbbf24"),
   };
+  const safeDpr = typeof window !== "undefined" ? (window.devicePixelRatio || 1) : 1;
   const color = colorMap[model.accent] || colorMap.cyan;
+  const modalPosition = model.fullscreenPosition || model.previewPosition || [0, 0, 0];
+  const modalRotation = model.fullscreenRotation || model.previewRotation || [0, 0, 0];
+  const modalTarget = model.fullscreenTarget || [0, 1.0, 0];
+  const modalFitSize = isFullscreen
+    ? (model.fullscreenFitSize || 5)
+    : (model.modalFitSize || 3.5);
 
   return (
     <div
@@ -99,7 +106,7 @@ export default function HologramModal({ model, onClose }) {
         <div className="hologram-modal-canvas" style={{ width: '100%', height: isFullscreen ? '100vh' : '60vh' }}>
           <Canvas
             style={{ width: '100%', height: '100%' }}
-            dpr={Math.min(1.5, window.devicePixelRatio || 1)}
+            dpr={Math.min(1.5, safeDpr)}
             shadows={false}
             gl={{
               alpha: true,
@@ -127,9 +134,11 @@ export default function HologramModal({ model, onClose }) {
                 modelPath={model.src}
                 color={color}
                 scale={isFullscreen ? 1.8 : 1.4}
-                fitSize={isFullscreen ? 5 : 3.5}
+                fitSize={modalFitSize}
                 fitAxis="max"
                 showPlaceholder={!isFullscreen}
+                position={modalPosition}
+                rotation={modalRotation}
               />
             </Suspense>
             
@@ -138,7 +147,7 @@ export default function HologramModal({ model, onClose }) {
               enablePan={true}
               autoRotate={true}
               autoRotateSpeed={1.2}
-              target={[0, 1.2, 0]}
+              target={modalTarget}
               minDistance={3}
               maxDistance={30}
             />

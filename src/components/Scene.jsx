@@ -11,6 +11,7 @@ export default function Scene() {
   const [effectsEnabled, setEffectsEnabled] = useState(false);
   const [useTunnelBackground, setUseTunnelBackground] = useState(false);
   const [useGalaxyBackground, setUseGalaxyBackground] = useState(true);
+  const safeDpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
 
   useEffect(() => {
     const tunnelEnabled =
@@ -37,7 +38,7 @@ export default function Scene() {
   return (
     <Canvas
       eventSource={typeof document !== 'undefined' ? document : undefined}
-      dpr={Math.min(2, window.devicePixelRatio || 1)}
+      dpr={Math.min(2, safeDpr)}
       shadows={false}
       gl={{
         powerPreference: 'high-performance',

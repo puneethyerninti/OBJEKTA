@@ -9,8 +9,12 @@ const {
 } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const { v4: uuidv4 } = require("uuid");
+const path = require("path");
+const fs = require("fs");
+const { protect } = require("../middleware/authMiddleware");
 
 const router = express.Router();
+router.use(protect);
 
 // Create S3 client from env
 const s3 = new S3Client({
@@ -24,6 +28,25 @@ const s3 = new S3Client({
 // In-memory map to track multipart uploads (uploadId -> { key, bucket, createdAt })
 const multipartMap = new Map();
 const MULTIPART_TTL_MS = parseInt(process.env.MULTIPART_TTL_MS || `${60 * 60 * 1000}`, 10); // 1h default
+
+const ALLOWED_MIME_PREFIXES = ["model/", "image/", "video/", "audio/"];
+const ALLOWED_MIME_TYPES = new Set([
+  "application/octet-stream",
+  "application/gltf+json",
+  "model/gltf-binary",
+]);
+
+function isAllowedContentType(contentType) {
+  if (!contentType || typeof contentType !== "string") return false;
+  if (ALLOWED_MIME_TYPES.has(contentType)) return true;
+  return ALLOWED_MIME_PREFIXES.some((prefix) => contentType.startsWith(prefix));
+}
+
+function sanitizeExt(filename) {
+  const rawExt = path.extname(String(filename || "")).toLowerCase();
+  if (!rawExt || rawExt.length > 10) return "bin";
+  return rawExt.replace(/[^a-z0-9.]/g, "").replace(/^\./, "") || "bin";
+}
 
 function isExpired(createdAt) {
   try { return Date.now() - (createdAt || 0) > MULTIPART_TTL_MS; } catch { return false; }
@@ -39,6 +62,15 @@ function requireS3(res) {
   return false;
 }
 
+setInterval(() => {
+  const now = Date.now();
+  for (const [uploadId, meta] of multipartMap.entries()) {
+    if (!meta?.createdAt || now - meta.createdAt > MULTIPART_TTL_MS) {
+      multipartMap.delete(uploadId);
+    }
+  }
+}, Math.max(60 * 1000, Math.floor(MULTIPART_TTL_MS / 2))).unref?.();
+
 // POST /api/uploads/presign
 // body: { filename, contentType, projectId, purpose } -> returns { url, key, publicUrl }
 router.post("/presign", async (req, res) => {
@@ -46,9 +78,10 @@ router.post("/presign", async (req, res) => {
     if (!requireS3(res)) return;
     const { filename, contentType, projectId, purpose: _purpose } = req.body;
     if (!filename || !contentType) return res.status(400).json({ message: "filename & contentType required" });
+    if (!isAllowedContentType(contentType)) return res.status(400).json({ message: "Unsupported contentType" });
 
     // build a safe key: projekta/{projectId||temp}/{uuid}-{safeName}
-    const ext = filename.split(".").pop();
+    const ext = sanitizeExt(filename);
     const key = `objekta/${projectId || "temp"}/${uuidv4()}.${ext}`;
 
     const command = new PutObjectCommand({
@@ -79,13 +112,17 @@ router.post("/multipart/start", async (req, res) => {
     if (!requireS3(res)) return;
     const { filename, contentType, projectId, fileSize } = req.body || {};
     if (!filename || !contentType) return res.status(400).json({ message: "filename & contentType required" });
+    if (!isAllowedContentType(contentType)) return res.status(400).json({ message: "Unsupported contentType" });
 
     const maxBytes = parseInt(process.env.MULTIPART_MAX_BYTES || "5368709120", 10); // default 5GB
     if (fileSize && Number(fileSize) > maxBytes) {
       return res.status(413).json({ message: `File too large. Max ${maxBytes} bytes.` });
     }
+    if (fileSize && Number(fileSize) <= 0) {
+      return res.status(400).json({ message: "Invalid fileSize" });
+    }
 
-    const ext = filename.includes(".") ? filename.split(".").pop() : "bin";
+    const ext = sanitizeExt(filename);
     const key = `objekta/${projectId || "temp"}/${uuidv4()}.${ext}`;
 
     const create = new CreateMultipartUploadCommand({
@@ -117,6 +154,10 @@ router.post("/multipart/sign", async (req, res) => {
     if (!requireS3(res)) return;
     const { uploadId, partNumber } = req.body || {};
     if (!uploadId || !partNumber) return res.status(400).json({ message: "uploadId & partNumber required" });
+    const parsedPartNumber = Number(partNumber);
+    if (!Number.isInteger(parsedPartNumber) || parsedPartNumber < 1 || parsedPartNumber > 10000) {
+      return res.status(400).json({ message: "Invalid partNumber" });
+    }
     const meta = multipartMap.get(uploadId);
     if (!meta) return res.status(404).json({ message: "Unknown uploadId" });
     if (isExpired(meta.createdAt)) {
@@ -128,7 +169,7 @@ router.post("/multipart/sign", async (req, res) => {
       Bucket: meta.bucket,
       Key: meta.key,
       UploadId: uploadId,
-      PartNumber: Number(partNumber),
+      PartNumber: parsedPartNumber,
     });
     const url = await getSignedUrl(s3, cmd, { expiresIn: 900 });
     res.json({ url });
@@ -146,6 +187,11 @@ router.post("/multipart/complete", async (req, res) => {
     if (!requireS3(res)) return;
     const { uploadId, parts } = req.body || {};
     if (!uploadId || !Array.isArray(parts) || parts.length === 0) return res.status(400).json({ message: "uploadId & parts required" });
+    const normalizedParts = parts
+      .map((p) => ({ ETag: p?.ETag, PartNumber: Number(p?.PartNumber) }))
+      .filter((p) => typeof p.ETag === "string" && p.ETag.trim().length > 0 && Number.isInteger(p.PartNumber) && p.PartNumber > 0)
+      .sort((a, b) => a.PartNumber - b.PartNumber);
+    if (!normalizedParts.length) return res.status(400).json({ message: "Invalid parts payload" });
     const meta = multipartMap.get(uploadId);
     if (!meta) return res.status(404).json({ message: "Unknown uploadId" });
     if (isExpired(meta.createdAt)) {
@@ -158,9 +204,7 @@ router.post("/multipart/complete", async (req, res) => {
       Key: meta.key,
       UploadId: uploadId,
       MultipartUpload: {
-        Parts: parts
-          .map((p) => ({ ETag: p.ETag, PartNumber: Number(p.PartNumber) }))
-          .sort((a, b) => a.PartNumber - b.PartNumber),
+        Parts: normalizedParts,
       },
     });
     const out = await s3.send(command);
@@ -180,12 +224,12 @@ router.post("/tus/finalize", async (req, res) => {
     if (!requireS3(res)) return;
     const { filename, projectId, contentType, originalName } = req.body || {};
     if (!filename) return res.status(400).json({ message: "filename required" });
-    const tusDir = require("path").resolve(__dirname, "..", "uploads", "tus");
-    const fp = require("path").join(tusDir, filename);
-    const fs = require("fs");
+    if (contentType && !isAllowedContentType(contentType)) return res.status(400).json({ message: "Unsupported contentType" });
+    const tusDir = path.resolve(__dirname, "..", "uploads", "tus");
+    const fp = path.join(tusDir, filename);
     if (!fs.existsSync(fp)) return res.status(404).json({ message: "tus file not found" });
     const data = fs.readFileSync(fp);
-    const ext = (originalName && originalName.includes(".")) ? originalName.split(".").pop() : (filename.split(".").pop() || "bin");
+    const ext = sanitizeExt(originalName || filename);
     const key = `objekta/${projectId || "temp"}/${uuidv4()}.${ext}`;
     await s3.send(new PutObjectCommand({ Bucket: process.env.S3_BUCKET, Key: key, Body: data, ContentType: contentType || "application/octet-stream", ACL: "private" }));
     try { fs.unlinkSync(fp); } catch (e) {}

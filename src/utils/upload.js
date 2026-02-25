@@ -1,10 +1,19 @@
 import * as tus from "tus-js-client";
 import { apiUrl } from "./api";
 
+function getAuthHeaders() {
+	try {
+		const token = localStorage.getItem("objekta_token");
+		return token ? { Authorization: `Bearer ${token}` } : {};
+	} catch (e) {
+		return {};
+	}
+}
+
 export async function presignPut({ filename, contentType, projectId }) {
 	const res = await fetch(apiUrl(`/api/uploads/presign`), {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
+		headers: { "Content-Type": "application/json", ...getAuthHeaders() },
 		credentials: "include",
 		body: JSON.stringify({ filename, contentType, projectId }),
 	});
@@ -15,7 +24,7 @@ export async function presignPut({ filename, contentType, projectId }) {
 export async function registerProjectAssetS3({ projectId, payload }) {
 	const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/assets/s3`), {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
+		headers: { "Content-Type": "application/json", ...getAuthHeaders() },
 		credentials: "include",
 		body: JSON.stringify(payload),
 	});
@@ -45,7 +54,7 @@ export async function uploadSmallViaPresign({ file, projectId, onProgress }) {
 export async function multipartStart({ file, projectId }) {
 	const res = await fetch(apiUrl(`/api/uploads/multipart/start`), {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
+		headers: { "Content-Type": "application/json", ...getAuthHeaders() },
 		credentials: "include",
 		body: JSON.stringify({ filename: file.name || "blob.bin", contentType: file.type || "application/octet-stream", projectId, fileSize: file.size }),
 	});
@@ -56,7 +65,7 @@ export async function multipartStart({ file, projectId }) {
 export async function signPart({ uploadId, partNumber }) {
 	const res = await fetch(apiUrl(`/api/uploads/multipart/sign`), {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
+		headers: { "Content-Type": "application/json", ...getAuthHeaders() },
 		credentials: "include",
 		body: JSON.stringify({ uploadId, partNumber }),
 	});
@@ -67,7 +76,7 @@ export async function signPart({ uploadId, partNumber }) {
 export async function multipartComplete({ uploadId, parts }) {
 	const res = await fetch(apiUrl(`/api/uploads/multipart/complete`), {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
+		headers: { "Content-Type": "application/json", ...getAuthHeaders() },
 		credentials: "include",
 		body: JSON.stringify({ uploadId, parts }),
 	});
