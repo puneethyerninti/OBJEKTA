@@ -60,7 +60,7 @@ try {
   }
 } catch (e) {}
 
-const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChange, panelTopOffset = 12, onSceneChange, onLightChange }, ref) => {
+const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChange, panelTopOffset = 12, onSceneChange, onLightChange, showInternalPanels = true }, ref) => {
   // DOM refs
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
@@ -90,7 +90,8 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
   const resolutionStateRef = useRef({ scale: 1, auto: false, fps: 60 });
   const [resolutionUi, setResolutionUi] = useState(resolutionStateRef.current);
   const autoResolutionRef = useRef(false);
-  const forceFullResRef = useRef(false);
+  // Force full resolution (100%) by default per request
+  const forceFullResRef = useRef(true);
   const animClockRef = useRef(performance.now());
 
   const shadingModeRef = useRef("rendered");
@@ -1677,22 +1678,7 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
         needsRenderRef.current = false;
       }
 
-      // Perf panel update
-      try {
-        if (perfPanelVisibleRef.current && perfPanelRef.current && rendererRef.current) {
-          const info = rendererRef.current.info;
-          let memStr = '';
-          try {
-            if (performance.memory) {
-              const { usedJSHeapSize, totalJSHeapSize } = performance.memory;
-              memStr = ` | Heap ${(usedJSHeapSize/1048576).toFixed(1)}/${(totalJSHeapSize/1048576).toFixed(1)}MB`;
-            }
-          } catch (e) {}
-          // GPU timing approximation via last frame dt (not true GPU timer extension but unique lightweight approach)
-          const frameMs = (1000 / Math.max(1, fpsRef.current.fps)).toFixed(1);
-          perfPanelRef.current.textContent = `FPS ${fpsRef.current.fps} (${frameMs}ms) | Calls ${info.render.calls} | Tris ${info.render.triangles} | Geoms ${info.memory.geometries} | Tex ${info.memory.textures} | Scale ${dynResRef.current.scale.toFixed(2)}${memStr}`;
-        }
-      } catch (e) {}
+      // Perf panel removed: HUD disabled for production
     };
     tick();
 
@@ -3838,6 +3824,7 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
     loadCameraBookmark,
     listCameraBookmarks,
     selectObject,
+    clearSelection,
     startSculpting: (mesh = null, opts = {}) => {
       const target = mesh || selectedInternal;
       if (!target) {
@@ -3946,6 +3933,7 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
       getRenderer: () => rendererRef.current,
       getCamera: () => cameraRef.current,
       getSelected: () => selectedInternal,
+      clearSelection: () => clearSelection(),
       selectObject: (o) => selectObject(o),
       frameSelection: () => frameSelection(),
       frameAll: () => frameAll(),
@@ -4601,57 +4589,8 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
       {/* main canvas */}
       <canvas ref={canvasRef} className="w-full h-full" />
 
-      {/* GPU / performance panel */}
-      <div style={{ position: 'absolute', left: 12, bottom: 12, padding: '6px 10px', background: 'rgba(0,0,0,0.55)', color: '#eee', fontSize: 11, fontFamily: 'monospace', borderRadius: 6, pointerEvents: 'none', zIndex: 90 }} ref={perfPanelRef} />
-      <div className="resolution-panel" role="group" aria-label="Viewport resolution controls">
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
-          <span>Viewport Scale</span>
-          <span>{sliderValue}%</span>
-        </div>
-        <input
-          type="range"
-          min={fullResLocked ? 100 : 50}
-          max={100}
-          step={fullResLocked ? 1 : 5}
-          value={sliderValue}
-          onChange={(e) => handleResolutionSlider(e.target.value)}
-          disabled={fullResLocked || resolutionUi.auto}
-          aria-label="Viewport resolution slider"
-        />
-        <div className="resolution-meta">
-          <label>
-            <input
-              type="checkbox"
-              checked={fullResLocked ? false : resolutionUi.auto}
-              onChange={(e) => handleResolutionAutoToggle(e.target.checked)}
-              disabled={fullResLocked}
-            />
-            Auto adapt
-          </label>
-          <span>{fpsDisplay}</span>
-        </div>
-        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.72)' }}>
-          {fullResLocked ? 'Viewport locked at 100% scale for maximum clarity.' : (resolutionUi.auto ? 'Auto lowers scale when FPS dips.' : 'Manual override active; slider stays pinned.')}
-        </div>
-        <div className="resolution-actions">
-          <button
-            className="studio-btn"
-            style={{ padding: '6px 8px', fontSize: 11 }}
-            onClick={() => handleResolutionReset(!resolutionUi.auto)}
-            disabled={fullResLocked || (sliderValue >= 99 && !resolutionUi.auto)}
-          >
-            Full clarity
-          </button>
-          <button
-            className="studio-btn"
-            style={{ padding: '6px 8px', fontSize: 11 }}
-            onClick={() => handleResolutionSlider(70)}
-            disabled={fullResLocked || resolutionUi.auto}
-          >
-            70%
-          </button>
-        </div>
-      </div>
+      {/* GPU / performance panel removed */}
+      {/* Resolution controls removed — viewport scale forced to 100% */}
       {/* Animation scrubber */}
       <AnimationScrubber />
       {/* Bloom tagging panel */}
@@ -4687,44 +4626,45 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
           position: "absolute",
           left: 12,
           top: 160,
-          width: 200,
+          width: 240,
           display: "grid",
           gridTemplateColumns: "repeat(3, 1fr)",
-          gap: 6,
-          background: "rgba(0,0,0,0.55)",
-          padding: "8px 10px",
-          borderRadius: 10,
+          gap: 4,
+          background: "rgba(0,0,0,0.7)",
+          padding: "4px 6px",
+          borderRadius: 6,
           color: "#eee",
           zIndex: 80,
-          boxShadow: "0 10px 30px rgba(0,0,0,0.45)",
+          boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+          fontSize: 10,
         }}
       >
-        <button className="studio-btn" style={{ fontSize: 11, padding: "6px 6px" }} title="Frame selection (Shift+F)" onClick={() => frameSelection()}>
-          Frame Sel
+        <button className="studio-btn" style={{ fontSize: 10, padding: "3px 6px", minHeight: 24 }} title="Frame selection (Shift+F)" onClick={() => frameSelection()}>
+          Sel
         </button>
-        <button className="studio-btn" style={{ fontSize: 11, padding: "6px 6px" }} title="Frame all (Shift+A)" onClick={() => frameAll()}>
-          Frame All
+        <button className="studio-btn" style={{ fontSize: 10, padding: "3px 6px", minHeight: 24 }} title="Frame all (Shift+A)" onClick={() => frameAll()}>
+          All
         </button>
-        <button className="studio-btn" style={{ fontSize: 11, padding: "6px 6px" }} title="Frame hierarchy (Shift+H)" onClick={() => frameHierarchy()}>
-          Hierarchy
+        <button className="studio-btn" style={{ fontSize: 10, padding: "3px 6px", minHeight: 24 }} title="Frame hierarchy (Shift+H)" onClick={() => frameHierarchy()}>
+          Hier
         </button>
-        <button className="studio-btn" style={{ fontSize: 11, padding: "6px 6px" }} title="Front view (Alt+1)" onClick={() => applyViewPreset("front")}>
-          Front
+        <button className="studio-btn" style={{ fontSize: 10, padding: "3px 6px", minHeight: 24 }} title="Front view (Alt+1)" onClick={() => applyViewPreset("front")}>
+          F
         </button>
-        <button className="studio-btn" style={{ fontSize: 11, padding: "6px 6px" }} title="Right view (Alt+2)" onClick={() => applyViewPreset("right")}>
-          Right
+        <button className="studio-btn" style={{ fontSize: 10, padding: "3px 6px", minHeight: 24 }} title="Right view (Alt+2)" onClick={() => applyViewPreset("right")}>
+          R
         </button>
-        <button className="studio-btn" style={{ fontSize: 11, padding: "6px 6px" }} title="Top view (Alt+3)" onClick={() => applyViewPreset("top")}>
-          Top
+        <button className="studio-btn" style={{ fontSize: 10, padding: "3px 6px", minHeight: 24 }} title="Top view (Alt+3)" onClick={() => applyViewPreset("top")}>
+          T
         </button>
-        <button className="studio-btn" style={{ fontSize: 11, padding: "6px 6px" }} title="Isometric view (Alt+4)" onClick={() => applyViewPreset("iso")}>
+        <button className="studio-btn" style={{ fontSize: 10, padding: "3px 6px", minHeight: 24 }} title="Isometric view (Alt+4)" onClick={() => applyViewPreset("iso")}>
           Iso
         </button>
-        <button className="studio-btn" style={{ fontSize: 11, padding: "6px 6px" }} title="Save bookmark 1 (Ctrl/Cmd+Shift+1)" onClick={() => saveCameraBookmark("1")}>
-          Save 1
+        <button className="studio-btn" style={{ fontSize: 10, padding: "3px 6px", minHeight: 24 }} title="Save bookmark 1 (Ctrl/Cmd+Shift+1)" onClick={() => saveCameraBookmark("1")}>
+          S1
         </button>
-        <button className="studio-btn" style={{ fontSize: 11, padding: "6px 6px" }} title="Load bookmark 1 (Ctrl/Cmd+1)" onClick={() => loadCameraBookmark("1")}>
-          Load 1
+        <button className="studio-btn" style={{ fontSize: 10, padding: "3px 6px", minHeight: 24 }} title="Load bookmark 1 (Ctrl/Cmd+1)" onClick={() => loadCameraBookmark("1")}>
+          L1
         </button>
       </div>
 
@@ -4771,7 +4711,7 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
         )}
       </div>
 
-      <PanelContainerInner />
+      {showInternalPanels && <PanelContainerInner />}
     </div>
   );
 });
