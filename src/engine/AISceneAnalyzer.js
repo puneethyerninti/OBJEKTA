@@ -511,11 +511,16 @@ export async function askAboutScene(question, sceneChildren, scene) {
     // ── Try LLM ──────────────────────────────────────────────────────
     if (await isAIAvailable()) {
       try {
-        const ctx = buildSceneContext(sceneChildren, scene);
+        // Only send scene context for scene-related questions — not for
+        // casual greetings or small talk, so the LLM responds naturally.
+        const isCasual = /^(hi|hello|hey|yo|sup|howdy|greetings|what'?s up|hiya|thanks|thank you|bye|goodbye|good morning|good evening|good night|how are you)\b/i.test(q);
+        const ctx = isCasual ? null : buildSceneContext(sceneChildren, scene);
         const chatHistory = store.chatHistory || [];
         const messages = chatHistory.slice(-8).map((m) => ({ role: m.role, content: m.content }));
         messages.push({ role: "user", content: question });
-        const res = await aiChat({ messages, sceneContext: ctx });
+        const payload = { messages };
+        if (ctx) payload.sceneContext = ctx;
+        const res = await aiChat(payload);
         if (res.text) {
           store.pushMessage("assistant", res.text);
           store.setStatus("ready", `via ${res.provider}`);

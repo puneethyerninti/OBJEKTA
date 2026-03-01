@@ -46,7 +46,7 @@ import { PALETTE_ITEMS } from "./studio/constants";
 import ConfirmModal from "./studio/ConfirmModal";
 import CenterWelcomeCard from "./studio/CenterWelcomeCard";
 import { saveBackupToIndexedDB } from "./studio/backupDB";
-const AIAssistantPanel = lazy(() => import("../components/AIAssistantPanel"));
+const AIChatPanel = lazy(() => import("../components/AIChatPanel"));
 const MeshToolsPanel = lazy(() => import("../components/MeshToolsPanel"));
 const OptimizationPanel = lazy(() => import("../components/OptimizationPanel"));
 const ProceduralPanel = lazy(() => import("../components/ProceduralPanel"));
@@ -2767,7 +2767,7 @@ export default function Studio() {
                 <button role="tab" id="tab-validate" aria-selected={propsTab === 'validate'} aria-controls="tabpanel-validate" onClick={() => setPropsTab('validate')} className={propsTab === 'validate' ? 'active' : ''}>Validate</button>
                 <button role="tab" id="tab-environment" aria-selected={propsTab === 'environment'} aria-controls="tabpanel-environment" onClick={() => setPropsTab('environment')} className={propsTab === 'environment' ? 'active' : ''}>Environment</button>
                 <button role="tab" id="tab-backups" aria-selected={propsTab === 'backups'} aria-controls="tabpanel-backups" onClick={() => setPropsTab('backups')} className={propsTab === 'backups' ? 'active' : ''}>Backups</button>
-                <button role="tab" id="tab-ai" aria-selected={propsTab === 'ai'} aria-controls="tabpanel-ai" onClick={() => setPropsTab('ai')} className={propsTab === 'ai' ? 'active' : ''}>AI</button>
+
                 <button role="tab" id="tab-mesh" aria-selected={propsTab === 'mesh'} aria-controls="tabpanel-mesh" onClick={() => setPropsTab('mesh')} className={propsTab === 'mesh' ? 'active' : ''}>Mesh</button>
                 <button role="tab" id="tab-optimize" aria-selected={propsTab === 'optimize'} aria-controls="tabpanel-optimize" onClick={() => setPropsTab('optimize')} className={propsTab === 'optimize' ? 'active' : ''}>Optimize</button>
                 <button role="tab" id="tab-procedural" aria-selected={propsTab === 'procedural'} aria-controls="tabpanel-procedural" onClick={() => setPropsTab('procedural')} className={propsTab === 'procedural' ? 'active' : ''}>Procedural</button>
@@ -2999,15 +2999,7 @@ export default function Studio() {
                   </Suspense>
                 )}
 
-                {propsTab === 'ai' && (
-                  <Suspense fallback={<div className="panel-empty">Loading AI assistant…</div>}>
-                    <AIAssistantPanel
-                      workspaceRef={workspaceRef}
-                      selected={selected}
-                      pushToast={pushToast}
-                    />
-                  </Suspense>
-                )}
+
 
                 {propsTab === 'mesh' && (
                   <Suspense fallback={<div className="panel-empty">Loading mesh tools…</div>}>
@@ -3059,6 +3051,10 @@ export default function Studio() {
             </div>
         </div>
       </div>
+      {/* Floating AI Chat Panel */}
+      <Suspense fallback={null}>
+        <AIChatPanel workspaceRef={workspaceRef} selected={selected} pushToast={pushToast} />
+      </Suspense>
     </DndProvider>
   );
 }
