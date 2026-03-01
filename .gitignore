@@ -7,3 +7,7 @@ public/videos/
 backend/uploads/
 tmp_test_thumb.png
 *.log
+/.venv/
+backend/ai_service/.venv/
+__pycache__/
+*.py[cod]
