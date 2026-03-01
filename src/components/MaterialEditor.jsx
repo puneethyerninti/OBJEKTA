@@ -26,7 +26,17 @@ export function createMaterialEditor({ container, getSelectedMesh }) {
   panel.style.fontFamily = "system-ui, sans-serif";
   panel.style.fontSize = "13px";
   panel.style.zIndex = 9999;
-  panel.innerHTML = `<strong style="display:block;margin-bottom:8px">Material Editor</strong><div id="material-body">No selection</div>`;
+  // create body separately so we can show/hide the whole panel
+  const title = document.createElement("strong");
+  title.style.display = "block";
+  title.style.marginBottom = "8px";
+  title.textContent = "Material Editor";
+  const body = document.createElement("div");
+  body.id = "material-body";
+  panel.appendChild(title);
+  panel.appendChild(body);
+  // hide panel by default when there's no selection
+  panel.style.display = "none";
 
   container.style.position = container.style.position || "relative";
   container.appendChild(panel);
@@ -74,9 +84,13 @@ export function createMaterialEditor({ container, getSelectedMesh }) {
 
     currentMesh = getSelectedMesh && getSelectedMesh();
     if (!currentMesh || !currentMesh.material) {
-      body.textContent = "No selection";
+      // hide the panel when nothing is selected
+      panel.style.display = "none";
       return;
     }
+
+    // show the panel when a selection exists
+    panel.style.display = "block";
 
     const mat = currentMesh.material;
     // If array, pick first for editing (simple version)
