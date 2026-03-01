@@ -1,6 +1,6 @@
 // src/components/Palette.jsx
 import React, { useMemo, useState, useCallback, useEffect, useRef } from "react";
-import { useDragLayer } from "react-dnd";
+import { useDragLayer, useDrag } from "react-dnd";
 import "../styles/Palette.css";
 
 const PALETTE_TYPE = "PALETTE_ITEM";
@@ -62,8 +62,6 @@ const DragPreview = () => {
 
 /* Single palette item (draggable + keyboard accessible) */
 const PaletteItem = React.memo(({ item, onAdd }) => {
-  // use native HTML5 drag for better cross-compatibility (react-dnd will still pick it up
-  // when used with the DnD backend). The workspace uses react-dnd drop, so ensure we call onAdd on click/keyboard.
   const handleAdd = useCallback(() => onAdd?.(item.name, null, item), [item, onAdd]);
 
   const handleKey = useCallback(
@@ -76,8 +74,20 @@ const PaletteItem = React.memo(({ item, onAdd }) => {
     [handleAdd]
   );
 
+  const [{ isDragging }, dragRef] = useDrag(() => ({
+    type: PALETTE_TYPE,
+    item: { name: item.name, color: item.color },
+    end: (_draggedItem, monitor) => {
+      if (!monitor.didDrop()) return;
+      // Item was dropped on a valid target — add it
+      handleAdd();
+    },
+    collect: (monitor) => ({ isDragging: monitor.isDragging() }),
+  }), [item, handleAdd]);
+
   return (
     <div
+      ref={dragRef}
       role="button"
       tabIndex={0}
       aria-label={`Add ${item.name}`}
@@ -85,6 +95,7 @@ const PaletteItem = React.memo(({ item, onAdd }) => {
       onKeyDown={handleKey}
       className="palette-item"
       title={item.name}
+      style={{ opacity: isDragging ? 0.4 : 1 }}
     >
       <div className="palette-item-inner">
         <div className="palette-item-icon">{shapeIcons[item.name] || shapeIcons.Default}</div>

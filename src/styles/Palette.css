@@ -4,13 +4,12 @@
 /* ── Container ─────────────────────────────────────────── */
 .palette-panel .palette-inner {
   background: rgba(10, 0, 30, 0.35);
-  border-radius: var(--radius, 10px);
+  border-radius: var(--radius, 8px);
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: var(--gap, 8px);
+  gap: 4px;
   padding: 0;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
@@ -21,25 +20,24 @@
 .palette-header {
   color: var(--text-light);
   font-family: 'Inter', sans-serif;
-  font-size: 15px;
+  font-size: 12px;
   font-weight: 700;
   text-align: center;
   margin-bottom: 4px;
-  text-shadow: 0 0 6px rgba(127,90,240,0.15);
   letter-spacing: 0.3px;
 }
 
 /* ── Search ────────────────────────────────────────────── */
 .palette-search {
   width: 100%;
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(127,90,240,0.18);
-  background: rgba(0,0,0,0.32);
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(127,90,240,0.15);
+  background: rgba(0,0,0,0.35);
   color: #fff;
-  font-size: 13px;
+  font-size: 11px;
   outline: none;
-  transition: box-shadow 0.18s ease, border-color 0.18s ease;
+  transition: border-color 0.1s ease;
 }
 .palette-search::placeholder {
   color: rgba(255,255,255,0.35);
@@ -53,38 +51,35 @@
 .palette-filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
 }
 
 .filter-btn {
-  padding: 6px 12px;
+  padding: 4px 8px;
   border-radius: 999px;
-  border: 1px solid rgba(127,90,240,0.15);
+  border: 1px solid rgba(127,90,240,0.12);
   background: rgba(255,255,255,0.03);
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 12px;
-  font-weight: 500;
-  transition: transform 0.14s ease, background 0.14s ease, border-color 0.14s ease;
+  font-size: 10px;
+  font-weight: 600;
+  transition: background 0.1s ease;
 }
 .filter-btn:hover,
 .filter-btn:focus-visible {
-  transform: translateY(-2px);
   background: rgba(127,90,240,0.12);
   color: var(--text-light);
-  border-color: rgba(127,90,240,0.35);
 }
 .filter-btn.active {
   background: linear-gradient(90deg, var(--brand-purple), var(--brand-pink));
   color: #fff;
   font-weight: 700;
-  border-color: rgba(255,255,255,0.15);
-  box-shadow: 0 0 0 1px rgba(255,255,255,0.2), 0 0 16px -4px rgba(127,90,240,0.55);
+  border-color: rgba(255,255,255,0.12);
 }
 
 /* ── Sections ──────────────────────────────────────────── */
 .palette-section {
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 
 .section-header {
@@ -92,26 +87,23 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: linear-gradient(110deg, rgba(12,10,20,0.55), rgba(18,14,28,0.55));
-  border: 1px solid rgba(127,90,240,0.14);
-  border-radius: 8px;
-  padding: 8px 10px;
+  background: rgba(12,10,20,0.5);
+  border: 1px solid rgba(127,90,240,0.1);
+  border-radius: 6px;
+  padding: 5px 7px;
   color: var(--text-light);
   font-weight: 700;
-  font-size: 13px;
+  font-size: 11px;
   cursor: pointer;
-  transition: background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+  transition: background 0.1s ease;
 }
-.section-header:hover,
-.section-header:focus-visible {
+.section-header:hover {
   background: rgba(127,90,240,0.08);
-  border-color: rgba(127,90,240,0.32);
-  box-shadow: 0 0 0 1px rgba(0,215,255,0.4);
 }
 .section-arrow {
   transform: rotate(0deg);
-  transition: transform 0.18s ease;
-  font-size: 11px;
+  transition: transform 0.12s ease;
+  font-size: 9px;
   opacity: 0.7;
 }
 .section-arrow.open {
@@ -120,44 +112,40 @@
 }
 
 .section-content {
-  margin-top: 8px;
+  margin-top: 4px;
   display: grid;
-  gap: 8px;
+  gap: 4px;
 }
 
 /* ── Items ─────────────────────────────────────────────── */
 .palette-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px;
-  border-radius: 8px;
-  background: linear-gradient(130deg, rgba(30,16,44,0.6), rgba(10,6,22,0.6));
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  background: rgba(20,12,32,0.5);
   color: var(--text-muted);
   cursor: grab;
   font-weight: 600;
-  font-size: 13px;
+  font-size: 11px;
   -webkit-user-select: none;
   user-select: none;
-  transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease, border-color 0.16s ease;
-  border: 1px solid rgba(127,90,240,0.18);
-  will-change: transform, box-shadow;
+  transition: background 0.1s ease;
+  border: 1px solid rgba(127,90,240,0.1);
   outline: none;
 }
 
 .palette-item:hover {
-  transform: translate3d(6px, 0, 0);
-  box-shadow: 0 0 0 1px rgba(127,90,240,0.5), 0 0 22px -4px rgba(0,215,255,0.5), 0 0 40px -8px rgba(127,90,240,0.6);
-  background: linear-gradient(130deg, rgba(50,26,74,0.7), rgba(20,12,42,0.7));
+  background: rgba(50,26,74,0.5);
   color: #fff;
-  border-color: rgba(127,90,240,0.4);
+  border-color: rgba(127,90,240,0.3);
 }
 .palette-item:active {
-  transform: translate3d(3px, 0, 0) scale(0.995);
+  transform: scale(0.98);
 }
 .palette-item.dragging {
   background: linear-gradient(90deg, var(--brand-purple), var(--brand-pink));
-  box-shadow: 0 0 0 2px rgba(0,215,255,0.7), 0 0 32px -4px rgba(127,90,240,0.85);
   color: #fff;
   cursor: grabbing;
 }
@@ -170,16 +158,16 @@
 
 /* ── Item icon ─────────────────────────────────────────── */
 .palette-item-icon {
-  width: 32px;
-  height: 32px;
-  background: rgba(0,0,0,0.32);
-  border-radius: 6px;
+  width: 24px;
+  height: 24px;
+  background: rgba(0,0,0,0.3);
+  border-radius: 5px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 18px;
+  font-size: 14px;
   flex-shrink: 0;
-  border: 1px solid rgba(127,90,240,0.12);
+  border: 1px solid rgba(127,90,240,0.08);
 }
 
 /* ── Item name ─────────────────────────────────────────── */
@@ -218,12 +206,12 @@
 }
 .palette-panel.collapsed .palette-item {
   justify-content: center;
-  padding: 6px;
+  padding: 4px;
 }
 
 /* ── Scrollbar ─────────────────────────────────────────── */
 .palette-panel .palette-inner::-webkit-scrollbar {
-  width: 8px;
+  width: 4px;
 }
 .palette-panel .palette-inner::-webkit-scrollbar-track {
   background: transparent;
@@ -247,13 +235,11 @@
 /* ── Cyberpunk grid overlay ────────────────────────────── */
 .palette-container {
   position: relative;
-  background:
-    linear-gradient(135deg, rgba(14,10,26,0.55), rgba(8,4,18,0.55)),
-    radial-gradient(circle at 20% 16%, rgba(127,90,240,0.15), transparent 60%);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
-  border: 1px solid rgba(127,90,240,0.22);
-  border-radius: 12px;
+  background: rgba(10,8,20,0.8);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(127,90,240,0.15);
+  border-radius: 8px;
 }
 .palette-container::before {
   content: "";
@@ -272,28 +258,23 @@
 
 /* ── Swatches & Handle ─────────────────────────────────── */
 .swatch {
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
-  border: 1px solid rgba(127,90,240,0.28);
-  background: linear-gradient(140deg, rgba(18,14,34,0.65), rgba(10,8,22,0.65));
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: 1px solid rgba(127,90,240,0.2);
+  background: rgba(18,14,34,0.6);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  transition: transform 0.1s ease;
   outline: none;
 }
 .swatch:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 10px 22px rgba(0,0,0,0.35);
+  transform: translateY(-1px);
 }
 .swatch.selected {
-  box-shadow: 0 0 0 2px rgba(0,215,255,0.6), 0 0 18px -4px rgba(127,90,240,0.6);
-  transform: translateY(-2px) scale(0.98);
-}
-.swatch:focus-visible {
-  box-shadow: 0 0 0 3px rgba(0,215,255,0.55);
+  box-shadow: 0 0 0 1.5px rgba(0,215,255,0.6);
 }
 
 .palette-handle {
@@ -322,6 +303,6 @@
 
 /* ── Small screens ─────────────────────────────────────── */
 @media (max-width: 720px) {
-  .palette-container { padding: 8px; gap: 8px; }
-  .palette-item { padding: 6px; font-size: 12px; }
+  .palette-container { padding: 4px; gap: 2px; }
+  .palette-item { padding: 4px; font-size: 10px; }
 }

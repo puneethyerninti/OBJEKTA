@@ -2,62 +2,16 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import ModelViewerWrapper from "../components/ModelViewerWrapper";
 
 const PROJECTS = [
-  {
-    name: "Neon Workspace Revamp",
-    status: "In Review",
-    owner: "Design Ops",
-    summary: "Final lighting pass and shader polish for the home studio layout. Stakeholder approvals pending.",
-    progress: 85,
-    team: 4,
-    deadline: "2 days",
-  },
-  {
-    name: "Aurora Product Launch",
-    status: "Client Preview",
-    owner: "Marketing",
-    summary: "Hero product renders and AR-ready GLB exports for the Q3 launch campaign.",
-    progress: 92,
-    team: 6,
-    deadline: "5 days",
-  },
-  {
-    name: "Concept Vehicle Sprint",
-    status: "Lighting QA",
-    owner: "Automotive",
-    summary: "Material variants, studio HDRIs, and presentation turntables for design review.",
-    progress: 67,
-    team: 5,
-    deadline: "1 week",
-  },
-  {
-    name: "Character Animation",
-    status: "In Progress",
-    owner: "Game Studio",
-    summary: "Rigging, skinning, and motion capture integration for the hero character asset.",
-    progress: 45,
-    team: 3,
-    deadline: "2 weeks",
-  },
-  {
-    name: "VR Environment",
-    status: "Planning",
-    owner: "XR Team",
-    summary: "Immersive 360-degree environment with interactive elements and spatial audio markers.",
-    progress: 20,
-    team: 7,
-    deadline: "3 weeks",
-  },
-  {
-    name: "Product Configurator",
-    status: "Testing",
-    owner: "E-commerce",
-    summary: "Real-time product customization with material swapping and live price calculation.",
-    progress: 78,
-    team: 4,
-    deadline: "4 days",
-  },
+  { name: "Black Dragon", status: "In Review", owner: "Art", summary: "High-poly dragon with idle animation.", progress: 88, team: 3, deadline: "3 days", glbUrl: "/models/black_dragon_with_idle_animation.glb" },
+  { name: "Cyberpunk Desk", status: "Lighting QA", owner: "Design Ops", summary: "Desk vignette with emissive details.", progress: 72, team: 2, deadline: "5 days", glbUrl: "/models/cyberpunk_desk.glb" },
+  { name: "Flynn's Arcade", status: "Client Preview", owner: "Marketing", summary: "Retro arcade diorama for campaign visuals.", progress: 94, team: 4, deadline: "2 days", glbUrl: "/models/flynns_arcade.glb" },
+  { name: "Gipsy Avenger", status: "In Progress", owner: "VFX", summary: "Mecha asset from Pacific Rim portfolio.", progress: 56, team: 5, deadline: "1 week", glbUrl: "/models/gipsy_avenger_-_pacific_rim.glb" },
+  { name: "iPhone 17 Pro", status: "Testing", owner: "E-commerce", summary: "Product model for configurator and AR.", progress: 81, team: 3, deadline: "4 days", glbUrl: "/models/iphone_17_pro.glb" },
+  { name: "Laptop Free", status: "Planning", owner: "Hardware", summary: "Lightweight laptop model for hero renders.", progress: 22, team: 2, deadline: "3 weeks", glbUrl: "/models/laptop_free.glb" },
+  { name: "Porsche", status: "In Review", owner: "Automotive", summary: "Vehicle exterior with metallic shaders.", progress: 90, team: 6, deadline: "5 days", glbUrl: "/models/porsche.glb" },
 ];
 
 const WORKFLOW_STEPS = [
@@ -265,6 +219,25 @@ export default function Projects() {
               className="projects-card panel-glass showcase-card"
               data-tilt="4"
             >
+              <div className="projects-card-preview" style={{ height: 220, position: 'relative', overflow: 'hidden', borderRadius: 8 }}>
+                {project.glbUrl ? (
+                  <ModelViewerWrapper
+                    src={project.glbUrl}
+                    poster={project.thumbnailUrl || undefined}
+                    autoRotate={true}
+                    cameraControls={true}
+                    className="projects-model-viewer"
+                    style={{ width: '100%', height: '100%' }}
+                  />
+                ) : (
+                  <div className="projects-card-graphic" style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {/* fallback graphic for non-GLB projects */}
+                    <svg width="120" height="80" viewBox="0 0 120 80" fill="none" aria-hidden>
+                      <rect x="2" y="2" width="116" height="76" rx="6" stroke="rgba(255,255,255,0.06)" fill="rgba(0,0,0,0.06)" />
+                    </svg>
+                  </div>
+                )}
+              </div>
               <div className="projects-card-header">
                 <span className="projects-card-status" style={{ color: statusColor(project.status), borderColor: statusColor(project.status) }}>
                   {project.status}
@@ -291,7 +264,7 @@ export default function Projects() {
                   <span>Team: {project.team}</span>
                   <span>Due: {project.deadline}</span>
                 </div>
-                <button className="cta-button projects-details-btn">View</button>
+                <button className="cta-button projects-details-btn" onClick={() => navigate('/studio', { state: { importUrl: project.glbUrl } })}>View</button>
               </div>
             </article>
           ))}

@@ -1,10 +1,7 @@
 import React from 'react';
 import useScrollRail from '../utils/useScrollRail';
 import PropTypes from 'prop-types';
-import {
-  FiRotateCcw, FiRotateCw, FiMove, FiRotateCcw as FiRotate, FiSearch,
-  FiSave, FiUpload, FiMaximize, FiMinimize, FiSidebar, FiLayers, FiZap
-} from 'react-icons/fi';
+import { FiMaximize, FiMinimize, FiSidebar, FiLayers } from 'react-icons/fi';
 
 export default function StudioToolbar({
   onUndo, onRedo, onSave, onExport, onToggleFull, isFull,
@@ -31,8 +28,8 @@ export default function StudioToolbar({
       </div>
 
       <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-        <button className="studio-btn icon-btn" onClick={togglePalette} aria-pressed={paletteCollapsed} aria-label="Toggle palette">{paletteCollapsed ? '☰' : '▤'}</button>
-        <button className="studio-btn icon-btn" onClick={toggleProps} aria-pressed={propsCollapsed} aria-label="Toggle inspector">{propsCollapsed ? '🔽' : '▣'}</button>
+        <button className="studio-btn icon-btn" onClick={togglePalette} aria-pressed={!paletteCollapsed} aria-label="Toggle palette"><FiSidebar /></button>
+        <button className="studio-btn icon-btn" onClick={toggleProps} aria-pressed={!propsCollapsed} aria-label="Toggle inspector"><FiLayers /></button>
         <button className="studio-btn icon-btn" onClick={onToggleFull} aria-label="Toggle fullscreen">{isFull ? <FiMinimize /> : <FiMaximize />}</button>
       </div>
     </div>

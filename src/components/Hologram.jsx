@@ -250,7 +250,16 @@ export default function Hologram({
     }, [scene, fitSize, fitAxis]);
 
     const groupRef = useRef();
-    const initialY = Array.isArray(groupProps?.position) ? groupProps.position[1] || 0 : 0;
+    const initialPosition = useMemo(() => {
+        if (!Array.isArray(groupProps?.position)) return [0, 0, 0];
+        const [x = 0, y = 0, z = 0] = groupProps.position;
+        return [x, y, z];
+    }, [groupProps?.position]);
+    const initialRotation = useMemo(() => {
+        if (!Array.isArray(groupProps?.rotation)) return [0, 0, 0];
+        const [x = 0, y = 0, z = 0] = groupProps.rotation;
+        return [x, y, z];
+    }, [groupProps?.rotation]);
 
     const createMaterial = useCallback((skinning = false) => {
         const material = new THREE.ShaderMaterial({
@@ -321,13 +330,21 @@ export default function Hologram({
 
         // Enhanced bobbing motion and subtle rotation for the whole group
         if (groupRef.current) {
-            // vertical bobbing stronger and slightly faster
-            groupRef.current.position.y = initialY + Math.sin(elapsed * 0.9) * (0.06 * animationIntensity);
-            // gentle yaw oscillation
-            groupRef.current.rotation.y = Math.sin(elapsed * 0.12) * (0.04 * animationIntensity);
-            // subtle lateral sway to add parallax
-            groupRef.current.position.x = Math.sin(elapsed * 0.2) * (0.02 * animationIntensity);
-            groupRef.current.position.z = Math.cos(elapsed * 0.15) * (0.02 * animationIntensity);
+            const bobY = Math.sin(elapsed * 0.9) * (0.06 * animationIntensity);
+            const swayX = Math.sin(elapsed * 0.2) * (0.02 * animationIntensity);
+            const swayZ = Math.cos(elapsed * 0.15) * (0.02 * animationIntensity);
+            const yaw = Math.sin(elapsed * 0.12) * (0.04 * animationIntensity);
+
+            groupRef.current.position.set(
+                initialPosition[0] + swayX,
+                initialPosition[1] + bobY,
+                initialPosition[2] + swayZ,
+            );
+            groupRef.current.rotation.set(
+                initialRotation[0],
+                initialRotation[1] + yaw,
+                initialRotation[2],
+            );
         }
 
         // Per-part micro animations (slightly stronger) to give life — only on selected small/detail parts
@@ -341,7 +358,7 @@ export default function Hologram({
                 }
             });
         }
-    });
+    }, [scene, hologramMaterial, hologramSkinnedMaterial, animationIntensity, initialPosition, initialRotation]);
     // Render placeholder while loading so model appears instantly (optional)
     const isBackgroundCity = typeof modelPath === 'string' && modelPath.toLowerCase().includes('cyberpunk_city');
     const placeholder = showPlaceholder ? (

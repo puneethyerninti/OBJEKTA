@@ -989,6 +989,27 @@ export default function ObjectPropertiesTexture({
   const [openTransform, setOpenTransform] = useState(true);
   const [openMaterial, setOpenMaterial] = useState(true);
   const [openTextures, setOpenTextures] = useState(true);
+  const rootScrollRef = useRef(null);
+  const envSectionRef = useRef(null);
+  const cameraSectionRef = useRef(null);
+  const transformSectionRef = useRef(null);
+  const materialSectionRef = useRef(null);
+  const lightingSectionRef = useRef(null);
+  const texturesSectionRef = useRef(null);
+
+  const scrollToSection = useCallback((ref, ensureOpen) => {
+    try {
+      if (typeof ensureOpen === "function") ensureOpen();
+      if (ref?.current) ref.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (e) {}
+  }, []);
+
+  useEffect(() => {
+    setOpenTransform(true);
+    setOpenMaterial(true);
+    setOpenTextures(true);
+    try { rootScrollRef.current?.scrollTo?.({ top: 0, behavior: "auto" }); } catch (e) {}
+  }, [selected?.uuid]);
   
 
   // header actions
@@ -1101,12 +1122,15 @@ export default function ObjectPropertiesTexture({
   // -- Render UI --
   if (!selected) {
       return (
-        <div className="op-container object-properties">
+      <div ref={rootScrollRef} className="op-container object-properties">
+        <div className="op-topbar" role="tablist" aria-label="Environment sections">
+          <button className="op-small-btn" type="button" onClick={() => scrollToSection(envSectionRef)}>Environment</button>
+        </div>
             <div className="op-header">
                 <strong>Environment</strong>
             </div>
             <div className="op-sections">
-                <div className="op-panel" data-depth="1">
+          <div ref={envSectionRef} className="op-panel" data-depth="1">
                     <div className="op-panel-header"><strong>World Settings</strong></div>
                     <div className="op-material-body">
                         <div className="op-texture-row">
@@ -1136,7 +1160,11 @@ export default function ObjectPropertiesTexture({
 
   if (selected.isCamera) {
       return (
-        <div className="op-container object-properties">
+        <div ref={rootScrollRef} className="op-container object-properties">
+             <div className="op-topbar" role="tablist" aria-label="Camera sections">
+               <button className="op-small-btn" type="button" onClick={() => scrollToSection(cameraSectionRef)}>Camera</button>
+               <button className="op-small-btn" type="button" onClick={() => scrollToSection(transformSectionRef, () => setOpenTransform(true))}>Transform</button>
+             </div>
              <div className="op-header">
                 <input
                   className="op-name-input prop-input"
@@ -1150,7 +1178,7 @@ export default function ObjectPropertiesTexture({
                 </div>
             </div>
             <div className="op-sections">
-                <div className="op-panel">
+              <div ref={cameraSectionRef} className="op-panel">
                     <div className="op-panel-header"><strong>Camera Settings</strong></div>
                     <div className="op-material-body">
                         <div className="op-texture-row">
@@ -1170,26 +1198,32 @@ export default function ObjectPropertiesTexture({
                         </div>
                     </div>
                 </div>
-                 {/* Transform Panel Reuse */}
-                 <div className="op-panel" data-depth="2">
+                 {/* Transform Panel Reuse (Camera) */}
+                 <div ref={transformSectionRef} className="op-panel" data-depth="2">
                     <div className="op-panel-header">
                         <button className="op-collapse" onClick={() => setOpenTransform(v => !v)}>{openTransform ? '▾' : '▸'}</button>
                         <strong>Transform</strong>
                     </div>
                     {openTransform && (
-                        <div className="op-transform-body">
-                             <div className="op-transform-row">
-                                <label className="op-transform-label">Pos</label>
-                                <Numeric value={position.x} onChange={handleInputChange('position','x')} onBlur={handleInputBlur('position','x')} />
-                                <Numeric value={position.y} onChange={handleInputChange('position','y')} onBlur={handleInputBlur('position','y')} />
-                                <Numeric value={position.z} onChange={handleInputChange('position','z')} onBlur={handleInputBlur('position','z')} />
-                              </div>
-                              <div className="op-transform-row">
-                                <label className="op-transform-label">Rot</label>
-                                <Numeric value={rotation.x} onChange={handleInputChange('rotation','x')} onBlur={handleInputBlur('rotation','x')} />
-                                <Numeric value={rotation.y} onChange={handleInputChange('rotation','y')} onBlur={handleInputBlur('rotation','y')} />
-                                <Numeric value={rotation.z} onChange={handleInputChange('rotation','z')} onBlur={handleInputBlur('rotation','z')} />
-                              </div>
+                        <div className="op-transform-grid">
+                          {/* Header row */}
+                          <div className="op-tg-header" />
+                          <span className="op-tg-axis op-tg-axis-x">X</span>
+                          <span className="op-tg-axis op-tg-axis-y">Y</span>
+                          <span className="op-tg-axis op-tg-axis-z">Z</span>
+                          <div />
+                          {/* Position */}
+                          <label className="op-tg-label">Position</label>
+                          <div className="op-tg-cell op-tg-cell-x"><Numeric value={position.x} onChange={handleInputChange('position','x')} onBlur={handleInputBlur('position','x')} /></div>
+                          <div className="op-tg-cell op-tg-cell-y"><Numeric value={position.y} onChange={handleInputChange('position','y')} onBlur={handleInputBlur('position','y')} /></div>
+                          <div className="op-tg-cell op-tg-cell-z"><Numeric value={position.z} onChange={handleInputChange('position','z')} onBlur={handleInputBlur('position','z')} /></div>
+                          <button className="op-tg-reset" title="Reset Position" onClick={() => { queueTransform('position','x',0); queueTransform('position','y',0); queueTransform('position','z',0); setPosition({x:0,y:0,z:0}); }}>↺</button>
+                          {/* Rotation */}
+                          <label className="op-tg-label">Rotation</label>
+                          <div className="op-tg-cell op-tg-cell-x"><Numeric value={rotation.x} onChange={handleInputChange('rotation','x')} onBlur={handleInputBlur('rotation','x')} /></div>
+                          <div className="op-tg-cell op-tg-cell-y"><Numeric value={rotation.y} onChange={handleInputChange('rotation','y')} onBlur={handleInputBlur('rotation','y')} /></div>
+                          <div className="op-tg-cell op-tg-cell-z"><Numeric value={rotation.z} onChange={handleInputChange('rotation','z')} onBlur={handleInputBlur('rotation','z')} /></div>
+                          <button className="op-tg-reset" title="Reset Rotation" onClick={() => { queueTransform('rotation','x',0); queueTransform('rotation','y',0); queueTransform('rotation','z',0); setRotation({x:0,y:0,z:0}); }}>↺</button>
                         </div>
                     )}
                  </div>
@@ -1199,7 +1233,7 @@ export default function ObjectPropertiesTexture({
   }
 
   return (
-    <div className={`op-container object-properties ${dragActive ? "drag-active" : ""}`} onDrop={onDrop} onDragOver={onDragOver} onDragEnter={onDragEnter} onDragLeave={onDragLeave}>
+    <div ref={rootScrollRef} className={`op-container object-properties ${dragActive ? "drag-active" : ""}`} onDrop={onDrop} onDragOver={onDragOver} onDragEnter={onDragEnter} onDragLeave={onDragLeave}>
       {/* Header */}
       <div className="op-header">
         <input
@@ -1220,10 +1254,17 @@ export default function ObjectPropertiesTexture({
         </div>
       </div>
 
+      <div className="op-topbar" role="tablist" aria-label="Object sections">
+        <button className="op-small-btn" type="button" onClick={() => scrollToSection(transformSectionRef, () => setOpenTransform(true))}>Transform</button>
+        <button className="op-small-btn" type="button" onClick={() => scrollToSection(materialSectionRef, () => setOpenMaterial(true))}>Material</button>
+        <button className="op-small-btn" type="button" onClick={() => scrollToSection(lightingSectionRef)}>Lighting</button>
+        <button className="op-small-btn" type="button" onClick={() => scrollToSection(texturesSectionRef, () => setOpenTextures(true))}>Textures</button>
+      </div>
+
       {/* SINGLE SCROLLABLE SECTIONS AREA */}
       <div className="op-sections">
         {/* Transform */}
-        <div className="op-panel" data-depth="2" aria-label="Transform panel">
+        <div ref={transformSectionRef} className="op-panel" data-depth="2" aria-label="Transform panel">
           <div className="op-panel-header">
             <button className="op-collapse" onClick={() => setOpenTransform(v => !v)}>{openTransform ? '▾' : '▸'}</button>
             <strong>Transform</strong>
@@ -1238,61 +1279,50 @@ export default function ObjectPropertiesTexture({
           </div>
 
           {openTransform && (
-            /* NEW: panel-scoped scroll wrapper for transform controls */
-            <div
-              className="op-transform-scroll"
-              tabIndex={0}
-              aria-label="Transform controls scroll area"
-            >
-              <div className="op-transform-body">
-                <div className="op-transform-left">
-                  <div className="op-transform-row">
-                    <label className="op-transform-label">Pos</label>
-                    <Numeric value={position.x} onChange={handleInputChange('position','x')} onBlur={handleInputBlur('position','x')} />
-                    <Numeric value={position.y} onChange={handleInputChange('position','y')} onBlur={handleInputBlur('position','y')} />
-                    <Numeric value={position.z} onChange={handleInputChange('position','z')} onBlur={handleInputBlur('position','z')} />
-                    <button className="op-small-btn" title="Reset Position" style={{padding:'2px 6px', fontSize:10, minWidth:20}} onClick={() => {
-                        queueTransform('position','x',0); queueTransform('position','y',0); queueTransform('position','z',0);
-                        setPosition({x:0,y:0,z:0});
-                    }}>↺</button>
-                  </div>
+            <div className="op-transform-scroll" tabIndex={0} aria-label="Transform controls scroll area">
+              {/* ── Professional grid layout ── */}
+              <div className="op-transform-grid">
+                {/* Header row: label + X + Y + Z + reset */}
+                <div className="op-tg-header" />
+                <span className="op-tg-axis op-tg-axis-x">X</span>
+                <span className="op-tg-axis op-tg-axis-y">Y</span>
+                <span className="op-tg-axis op-tg-axis-z">Z</span>
+                <div />
 
-                  <div className="op-transform-row">
-                    <label className="op-transform-label">Rot</label>
-                    <Numeric value={rotation.x} onChange={handleInputChange('rotation','x')} onBlur={handleInputBlur('rotation','x')} />
-                    <Numeric value={rotation.y} onChange={handleInputChange('rotation','y')} onBlur={handleInputBlur('rotation','y')} />
-                    <Numeric value={rotation.z} onChange={handleInputChange('rotation','z')} onBlur={handleInputBlur('rotation','z')} />
-                    <button className="op-small-btn" title="Reset Rotation" style={{padding:'2px 6px', fontSize:10, minWidth:20}} onClick={() => {
-                        queueTransform('rotation','x',0); queueTransform('rotation','y',0); queueTransform('rotation','z',0);
-                        setRotation({x:0,y:0,z:0});
-                    }}>↺</button>
-                    <label className="op-inline-checkbox"><input type="checkbox" checked={useDegrees} onChange={(e) => setUseDegrees(e.target.checked)} />deg</label>
-                  </div>
+                {/* Position */}
+                <label className="op-tg-label">Position</label>
+                <div className="op-tg-cell op-tg-cell-x"><Numeric value={position.x} onChange={handleInputChange('position','x')} onBlur={handleInputBlur('position','x')} /></div>
+                <div className="op-tg-cell op-tg-cell-y"><Numeric value={position.y} onChange={handleInputChange('position','y')} onBlur={handleInputBlur('position','y')} /></div>
+                <div className="op-tg-cell op-tg-cell-z"><Numeric value={position.z} onChange={handleInputChange('position','z')} onBlur={handleInputBlur('position','z')} /></div>
+                <button className="op-tg-reset" title="Reset Position" onClick={() => { queueTransform('position','x',0); queueTransform('position','y',0); queueTransform('position','z',0); setPosition({x:0,y:0,z:0}); }}>↺</button>
 
-                  <div className="op-transform-row">
-                    <label className="op-transform-label">Scl</label>
-                    <Numeric value={scale.x} onChange={handleInputChange('scale','x')} onBlur={handleInputBlur('scale','x')} />
-                    <Numeric value={scale.y} onChange={handleInputChange('scale','y')} onBlur={handleInputBlur('scale','y')} />
-                    <Numeric value={scale.z} onChange={handleInputChange('scale','z')} onBlur={handleInputBlur('scale','z')} />
-                    <button className="op-small-btn" title="Reset Scale" style={{padding:'2px 6px', fontSize:10, minWidth:20}} onClick={() => {
-                        queueTransform('scale','x',1); queueTransform('scale','y',1); queueTransform('scale','z',1);
-                        setScale({x:1,y:1,z:1});
-                    }}>↺</button>
-                    <label className="op-inline-checkbox"><input type="checkbox" checked={uniformScale} onChange={(e) => setUniformScale(e.target.checked)} />uniform</label>
-                  </div>
-                </div>
+                {/* Rotation */}
+                <label className="op-tg-label">Rotation</label>
+                <div className="op-tg-cell op-tg-cell-x"><Numeric value={rotation.x} onChange={handleInputChange('rotation','x')} onBlur={handleInputBlur('rotation','x')} /></div>
+                <div className="op-tg-cell op-tg-cell-y"><Numeric value={rotation.y} onChange={handleInputChange('rotation','y')} onBlur={handleInputBlur('rotation','y')} /></div>
+                <div className="op-tg-cell op-tg-cell-z"><Numeric value={rotation.z} onChange={handleInputChange('rotation','z')} onBlur={handleInputBlur('rotation','z')} /></div>
+                <button className="op-tg-reset" title="Reset Rotation" onClick={() => { queueTransform('rotation','x',0); queueTransform('rotation','y',0); queueTransform('rotation','z',0); setRotation({x:0,y:0,z:0}); }}>↺</button>
 
-                <div className="op-transform-right">
-                  <label className="op-small-label">Space</label>
-                  <label className="op-inline-checkbox"><input type="checkbox" checked={localSpace} onChange={(e) => setLocalSpace(e.target.checked)} />Local</label>
-                </div>
+                {/* Scale */}
+                <label className="op-tg-label">Scale</label>
+                <div className="op-tg-cell op-tg-cell-x"><Numeric value={scale.x} onChange={handleInputChange('scale','x')} onBlur={handleInputBlur('scale','x')} /></div>
+                <div className="op-tg-cell op-tg-cell-y"><Numeric value={scale.y} onChange={handleInputChange('scale','y')} onBlur={handleInputBlur('scale','y')} /></div>
+                <div className="op-tg-cell op-tg-cell-z"><Numeric value={scale.z} onChange={handleInputChange('scale','z')} onBlur={handleInputBlur('scale','z')} /></div>
+                <button className="op-tg-reset" title="Reset Scale" onClick={() => { queueTransform('scale','x',1); queueTransform('scale','y',1); queueTransform('scale','z',1); setScale({x:1,y:1,z:1}); }}>↺</button>
+              </div>
+
+              {/* ── Options bar ── */}
+              <div className="op-tg-options">
+                <label className="op-tg-option"><input type="checkbox" checked={useDegrees} onChange={(e) => setUseDegrees(e.target.checked)} /><span>Degrees</span></label>
+                <label className="op-tg-option"><input type="checkbox" checked={uniformScale} onChange={(e) => setUniformScale(e.target.checked)} /><span>Uniform</span></label>
+                <label className="op-tg-option"><input type="checkbox" checked={localSpace} onChange={(e) => setLocalSpace(e.target.checked)} /><span>Local</span></label>
               </div>
             </div>
           )}
         </div>
 
         {/* Material */}
-        <div className="op-panel" data-depth="3" aria-label="Material panel">
+        <div ref={materialSectionRef} className="op-panel" data-depth="3" aria-label="Material panel">
           <div className="op-panel-header">
             <button className="op-collapse" onClick={() => setOpenMaterial(v => !v)}>{openMaterial ? '▾' : '▸'}</button>
             <strong>Material</strong>
@@ -1360,7 +1390,7 @@ export default function ObjectPropertiesTexture({
         </div>
 
         {/* Lighting */}
-        <div className="op-panel" data-depth="1" aria-label="Lighting panel">
+        <div ref={lightingSectionRef} className="op-panel" data-depth="1" aria-label="Lighting panel">
           <div className="op-panel-header">
             <strong>Lighting</strong>
             <div className="op-panel-right note">Live update (if scene passed <code>onLightChange</code>)</div>
@@ -1397,7 +1427,7 @@ export default function ObjectPropertiesTexture({
         </div>
 
         {/* Textures */}
-        <div className={`op-panel ${dragActive ? "op-drag-active" : ""}`} data-depth="2" aria-label="Textures panel">
+        <div ref={texturesSectionRef} className={`op-panel ${dragActive ? "op-drag-active" : ""}`} data-depth="2" aria-label="Textures panel">
           <div className="op-panel-header">
             <button className="op-collapse" onClick={() => setOpenTextures(v => !v)}>{openTextures ? '▾' : '▸'}</button>
             <strong>Textures</strong>

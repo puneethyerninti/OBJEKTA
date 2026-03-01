@@ -28,15 +28,34 @@ import AnimationScrubber from "../components/AnimationScrubber";
 import BloomTagPanel from "../components/BloomTagPanel";
 import AnimationKeyframeEditor from "../components/AnimationKeyframeEditor";
 import ObjectProperties from "../components/ObjectProperties";
-import { persistAdaptiveScale, loadAdaptiveScale, loadPref, PREF_KEYS } from "../utils/preferences";
+import { persistAdaptiveScale, loadAdaptiveScale } from "../utils/preferences";
 import AnimationEngine from "../engine/AnimationEngine";
 
 import { apiUrl } from "../utils/api";
 
-const HISTORY_LIMIT = 200;
-const HISTORY_DEBOUNCE_MS = 600;
-const AUTOSAVE_KEY = "objekta_autosave_v1";
-const CAMERA_BOOKMARKS_KEY = "objekta_cam_bookmarks_v1";
+// Extracted workspace sub-modules
+import {
+  HISTORY_LIMIT,
+  HISTORY_DEBOUNCE_MS,
+  AUTOSAVE_KEY,
+  CAMERA_BOOKMARKS_KEY,
+  TRANSFORM_FLUSH_MS,
+} from "./workspace/constants";
+import {
+  computeLookAtQuat,
+  presetCameraPosition,
+  computeFramingDistance,
+  serializeBookmark,
+  deserializeBookmark,
+  easeInOutCubic,
+} from "./workspace/cameraUtils";
+import {
+  summarizeObject,
+  collectLights,
+  collectCameras,
+  computeSceneSummary,
+} from "./workspace/sceneSerializer";
+import { Cmd, HistoryManager } from "./workspace/HistoryManager";
 
 try { THREE.Cache.enabled = true; } catch (e) {}
 try {
@@ -82,8 +101,6 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
   const composerRef = useRef(null);
   const animationEngineRef = useRef(new AnimationEngine());
   // performance & adaptive resolution refs
-  const perfPanelRef = useRef(null);
-  const perfPanelVisibleRef = useRef(true);
   const fpsRef = useRef({ lastTime: performance.now(), frames: 0, fps: 60, accumTime: 0 });
   const dynResRef = useRef({ scale: 1, downCooldown: 0, upCooldown: 0 });
   const fallbackLightsRef = useRef({ amb: null, dir: null });
@@ -170,7 +187,7 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
   const miniCameraRef = useRef(null);
   const miniOrbitRef = useRef(null);
   const miniCanvasRef = useRef(null);
-  const miniDisabledRef = useRef(true);
+  const miniDisabledRef = useRef(false);
   const cameraBookmarksRef = useRef(new Map());
   const cameraAnimRef = useRef(null);
   // camera view toggle (Blender-like 'Look Through') state
@@ -190,6 +207,7 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
   const [toolbarPos, setToolbarPos] = useState({ x: -999, y: -999 });
   const [transformMode, setTransformModeState] = useState("translate"); // translate | rotate | scale
   const [loading, setLoading] = useState(false);
+  const [bookmarkUiVersion, setBookmarkUiVersion] = useState(0);
   const [hover, setHover] = useState({ name: "", x: -999, y: -999 });
 
   // render/scene tracking
@@ -210,13 +228,7 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
   const snapshotHistoryIndexRef = useRef(-1);
   const captureBusyRef = useRef(false);
 
-  class Cmd {
-    constructor(redoFn, undoFn, label = "") {
-      this.redo = redoFn;
-      this.undo = undoFn;
-      this.label = label;
-    }
-  }
+  // Cmd and HistoryManager are now imported from ./workspace/HistoryManager
 
   // ---------- Global resize helper (exposed & used by effect) ----------
   const doResize = (w = null, h = null) => {
@@ -348,47 +360,8 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
       captureBusyRef.current = false;
     }
   }
-    class HistoryManager {
-    constructor(limit = HISTORY_LIMIT) {
-      this.limit = limit;
-      this.stack = [];
-      this.index = -1;
-    }
-    push(cmd) {
-      this.stack.splice(this.index + 1);
-      this.stack.push(cmd);
-      if (this.stack.length > this.limit) this.stack.shift();
-      this.index = this.stack.length - 1;
-    }
-    undo() {
-      if (this.index < 0) return;
-      try {
-        this.stack[this.index].undo();
-      } catch (e) {
-        console.warn("Undo failed", e);
-      }
-      this.index--;
-      bumpSceneVersion("undo");
-    }
-    redo() {
-      if (this.index >= this.stack.length - 1) return;
-      this.index++;
-      try {
-        this.stack[this.index].redo();
-      } catch (e) {
-        console.warn("Redo failed", e);
-      }
-      bumpSceneVersion("redo");
-    }
-    clear() {
-      this.stack = [];
-      this.index = -1;
-    }
-    get length() {
-      return this.stack.length;
-    }
-  }
-  const cmdHistoryRef = useRef(new HistoryManager(HISTORY_LIMIT));
+  // HistoryManager imported from ./workspace/HistoryManager — pass bumpSceneVersion as onMutate callback
+  const cmdHistoryRef = useRef(new HistoryManager(HISTORY_LIMIT, (action) => bumpSceneVersion(action)));
 
   // BVH wiring (safe)
   try {
@@ -1544,9 +1517,6 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
       }
       autoResolutionRef.current = false;
       syncResolutionState({ scale: dynResRef.current.scale, auto: false });
-      const perfVis = loadPref(PREF_KEYS.perfPanelVisible, true);
-      perfPanelVisibleRef.current = !!perfVis;
-      if (perfPanelRef.current) perfPanelRef.current.style.display = perfPanelVisibleRef.current ? 'block' : 'none';
     } catch (e) {}
 
     const tick = () => {
@@ -2109,23 +2079,19 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
     };
     cameraBookmarksRef.current.set(String(slot), snap);
     persistCameraBookmarks();
+    setBookmarkUiVersion((v) => v + 1);
     return snap;
   }, []);
 
   const loadCameraBookmark = useCallback((slot = "1") => {
     const snap = cameraBookmarksRef.current.get(String(slot));
     if (!snap) return false;
-    return applyCameraState(snap);
+    const ok = applyCameraState(snap);
+    if (ok) setBookmarkUiVersion((v) => v + 1);
+    return ok;
   }, []);
 
   const listCameraBookmarks = () => Array.from(cameraBookmarksRef.current.keys());
-
-  const serializeBookmark = (snap) => ({
-    p: snap.position ? [snap.position.x, snap.position.y, snap.position.z] : null,
-    q: snap.quaternion ? [snap.quaternion.x, snap.quaternion.y, snap.quaternion.z, snap.quaternion.w] : null,
-    z: typeof snap.zoom === "number" ? snap.zoom : 1,
-    t: snap.target ? [snap.target.x, snap.target.y, snap.target.z] : null,
-  });
 
   const persistCameraBookmarks = () => {
     try {
@@ -2133,20 +2099,6 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
       for (const [k, v] of cameraBookmarksRef.current.entries()) obj[k] = serializeBookmark(v);
       localStorage.setItem(CAMERA_BOOKMARKS_KEY, JSON.stringify(obj));
     } catch (e) {}
-  };
-
-  const deserializeBookmark = (b) => {
-    if (!b) return null;
-    try {
-      return {
-        position: Array.isArray(b.p) ? new THREE.Vector3(b.p[0], b.p[1], b.p[2]) : null,
-        quaternion: Array.isArray(b.q) ? new THREE.Quaternion(b.q[0], b.q[1], b.q[2], b.q[3]) : null,
-        zoom: typeof b.z === "number" ? b.z : 1,
-        target: Array.isArray(b.t) ? new THREE.Vector3(b.t[0], b.t[1], b.t[2]) : null,
-      };
-    } catch (e) {
-      return null;
-    }
   };
 
   const loadCameraBookmarksFromStorage = () => {
@@ -2159,6 +2111,7 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
         const snap = deserializeBookmark(v);
         if (snap) cameraBookmarksRef.current.set(String(k), snap);
       });
+      setBookmarkUiVersion((v) => v + 1);
     } catch (e) {}
   };
 
@@ -2196,14 +2149,6 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
 
     requestAnimationFrame(step);
     return true;
-  };
-
-  const computeLookAtQuat = (pos, target) => {
-    const m = new THREE.Matrix4();
-    m.lookAt(pos, target, new THREE.Vector3(0, 1, 0));
-    const q = new THREE.Quaternion();
-    q.setFromRotationMatrix(m);
-    return q;
   };
 
   const frameAll = useCallback((opts = {}) => {
@@ -3367,7 +3312,7 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
   };
 
   // ---------- Scene serialization API ----------
-  // NEW: richer, backend-friendly serialization while keeping old `snaps` for compatibility.
+  // Uses extracted helpers from workspace/sceneSerializer for compact summaries.
   const serializeScene = () => {
     if (!sceneRef.current) return null;
     const userGroup = getUserGroup();
@@ -3376,86 +3321,12 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
     // full snap array (backwards compatible)
     const snaps = objs.map((c) => c.toJSON());
 
-    // compact object summaries for server listing / thumbnails
-    const objects = objs.map((c) => {
-      const summary = {
-        uuid: c.uuid,
-        name: c.name || "",
-        type: c.type || (c.isMesh ? "Mesh" : "Object3D"),
-        position: { x: c.position.x, y: c.position.y, z: c.position.z },
-        rotation: { x: c.rotation.x, y: c.rotation.y, z: c.rotation.z },
-        scale: { x: c.scale.x, y: c.scale.y, z: c.scale.z },
-        geometry: { type: null, tris: 0 },
-        material: { color: null, roughness: null, metalness: null, map: null },
-        userData: c.userData || {},
-      };
+    // compact object summaries via extracted helper
+    const objects = objs.map(summarizeObject);
 
-      // gather geometry & tri-count from first mesh found
-      let foundMesh = null;
-      c.traverse((n) => {
-        if (!foundMesh && n.isMesh && n.geometry) {
-          foundMesh = n;
-        }
-      });
-      if (foundMesh) {
-        const geom = foundMesh.geometry;
-        try {
-          summary.geometry.type = geom.type || null;
-          if (geom.index) summary.geometry.tris = Math.round(geom.index.count / 3);
-          else if (geom.attributes && geom.attributes.position) summary.geometry.tris = Math.round(geom.attributes.position.count / 3);
-          else summary.geometry.tris = 0;
-        } catch (e) {}
-        const mat = Array.isArray(foundMesh.material) ? foundMesh.material[0] : foundMesh.material;
-        if (mat) {
-          try {
-            if (mat.color) summary.material.color = "#" + mat.color.getHexString();
-            if (typeof mat.roughness === "number") summary.material.roughness = mat.roughness;
-            if (typeof mat.metalness === "number") summary.material.metalness = mat.metalness;
-            // avoid embedding blob urls (they expire). server should receive a GLB via prepareSavePayload instead.
-            summary.material.map = null;
-          } catch (e) {}
-        }
-      }
-
-      return summary;
-    });
-
-    // lights
-    const lights = [];
-    sceneRef.current.traverse((n) => {
-      if (n.isLight) {
-        try {
-          const lightSummary = {
-            uuid: n.uuid,
-            name: n.name || "",
-            type: n.type || "Light",
-            color: "#" + (new THREE.Color(n.color || 0xffffff).getHexString()),
-            intensity: typeof n.intensity === "number" ? n.intensity : null,
-            position: n.position ? { x: n.position.x, y: n.position.y, z: n.position.z } : null,
-            target: n.target ? { x: n.target.position.x, y: n.target.position.y, z: n.target.position.z } : null,
-            distance: n.distance || null,
-            angle: n.angle || null,
-          };
-          lights.push(lightSummary);
-        } catch (e) {}
-      }
-    });
-
-    // cameras
-    const cameras = [];
-    sceneRef.current.traverse((n) => {
-      if (n.isCamera) {
-        try {
-          cameras.push({
-            uuid: n.uuid,
-            name: n.name || "",
-            type: n.type || "Camera",
-            fov: n.fov || null,
-            position: n.position ? { x: n.position.x, y: n.position.y, z: n.position.z } : null,
-          });
-        } catch (e) {}
-      }
-    });
+    // lights & cameras via extracted helpers
+    const lights  = collectLights(sceneRef.current);
+    const cameras = collectCameras(sceneRef.current);
 
     const meta = {
       exportedAt: new Date().toISOString(),
@@ -3465,16 +3336,7 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
 
     const animations = animationEngineRef.current?.snapshot ? animationEngineRef.current.snapshot() : [];
 
-    return {
-      // backward compatible field used elsewhere in code
-      snaps,
-      // new compact summaries for server / listing
-      objects,
-      lights,
-      cameras,
-      animations,
-      meta,
-    };
+    return { snaps, objects, lights, cameras, animations, meta };
   };
 
   const loadFromData = (data) => {
@@ -3604,7 +3466,6 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
   // ---------- Transform batching ----------
   const pendingTransformRef = useRef({ position: false, rotation: false, scale: false });
   const transformFlushTimerRef = useRef(null);
-  const TRANSFORM_FLUSH_MS = 100;
 
   const handleTransformChange = (prop, axis, val) => {
     if (!selectedInternal) return;
@@ -3664,21 +3525,7 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
     if (!scene) return { totalTris: 0, objects: 0, objectsList: [] };
     const userGroup = getUserGroup();
     const objs = userGroup ? Array.from(userGroup.children) : [];
-    let totalTris = 0;
-    const objectsList = objs.map((o) => {
-      let tris = 0;
-      o.traverse((n) => {
-        if (n.isMesh && n.geometry) {
-          try {
-            if (n.geometry.index) tris += n.geometry.index.count / 3;
-            else if (n.geometry.attributes && n.geometry.attributes.position) tris += n.geometry.attributes.position.count / 3;
-          } catch (e) {}
-        }
-      });
-      totalTris += tris;
-      return { uuid: o.uuid, name: o.name, tris: Math.round(tris) };
-    });
-    return { totalTris: Math.round(totalTris), objects: objectsList.length, objectsList };
+    return computeSceneSummary(objs);
   };
 
   const validateSceneAPI = async () => {
@@ -4579,10 +4426,6 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
     );
   };
 
-  const fullResLocked = false;
-  const sliderValue = fullResLocked ? 100 : Math.round(Math.max(0.5, Math.min(1, resolutionUi.scale || 1)) * 100);
-  const fpsDisplay = resolutionUi.fps ? `${resolutionUi.fps} fps` : '— fps';
-
   // ---------- Render ----------
   return (
     <div ref={setContainerNode} className="relative flex-1 w-full h-full overflow-hidden" data-objekta-root>
@@ -4628,7 +4471,7 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
           top: 160,
           width: 240,
           display: "grid",
-          gridTemplateColumns: "repeat(3, 1fr)",
+          gridTemplateColumns: "repeat(4, 1fr)",
           gap: 4,
           background: "rgba(0,0,0,0.7)",
           padding: "4px 6px",
@@ -4660,12 +4503,36 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
         <button className="studio-btn" style={{ fontSize: 10, padding: "3px 6px", minHeight: 24 }} title="Isometric view (Alt+4)" onClick={() => applyViewPreset("iso")}>
           Iso
         </button>
-        <button className="studio-btn" style={{ fontSize: 10, padding: "3px 6px", minHeight: 24 }} title="Save bookmark 1 (Ctrl/Cmd+Shift+1)" onClick={() => saveCameraBookmark("1")}>
-          S1
-        </button>
-        <button className="studio-btn" style={{ fontSize: 10, padding: "3px 6px", minHeight: 24 }} title="Load bookmark 1 (Ctrl/Cmd+1)" onClick={() => loadCameraBookmark("1")}>
-          L1
-        </button>
+        {["1", "2", "3", "4"].map((slot) => {
+          const hasBookmark = cameraBookmarksRef.current.has(slot);
+          return (
+            <React.Fragment key={`bookmark-${slot}-${bookmarkUiVersion}`}>
+              <button
+                className="studio-btn"
+                style={{ fontSize: 10, padding: "3px 6px", minHeight: 24 }}
+                title={`Save bookmark ${slot} (Ctrl/Cmd+Shift+${slot})`}
+                onClick={() => saveCameraBookmark(slot)}
+              >
+                S{slot}
+              </button>
+              <button
+                className="studio-btn"
+                style={{
+                  fontSize: 10,
+                  padding: "3px 6px",
+                  minHeight: 24,
+                  borderColor: hasBookmark ? "rgba(34,197,94,0.8)" : undefined,
+                  boxShadow: hasBookmark ? "inset 0 0 0 1px rgba(34,197,94,0.45)" : undefined,
+                }}
+                title={`Load bookmark ${slot} (Ctrl/Cmd+${slot})`}
+                onClick={() => loadCameraBookmark(slot)}
+                disabled={!hasBookmark}
+              >
+                L{slot}
+              </button>
+            </React.Fragment>
+          );
+        })}
       </div>
 
       {loading && (

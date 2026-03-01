@@ -8,8 +8,7 @@ export default function AnimationKeyframeEditor() {
   const [tracks, setTracks] = useState([]);
   const [property, setProperty] = useState('position');
   const [time, setTime] = useState(0);
-  const [pendingTimes, setPendingTimes] = useState([]);
-  const [pendingValues, setPendingValues] = useState([]);
+  const [pendingKeys, setPendingKeys] = useState([]);
   const [size, setSize] = useState(3); // default vector3
   const refreshRef = useRef(null);
 
@@ -34,29 +33,57 @@ export default function AnimationKeyframeEditor() {
 
   if (!engine) return null;
 
+  const sampleCurrentValue = () => {
+    if (!selectedObj) return [0];
+    if (property === 'position') return [selectedObj.position.x, selectedObj.position.y, selectedObj.position.z];
+    if (property === 'scale') return [selectedObj.scale.x, selectedObj.scale.y, selectedObj.scale.z];
+    if (property === 'quaternion') return [selectedObj.quaternion.x, selectedObj.quaternion.y, selectedObj.quaternion.z, selectedObj.quaternion.w];
+    return [Number(selectedObj[property]) || 0];
+  };
+
+  const normalizePending = (items = []) => {
+    const sorted = [...items].sort((a, b) => a.time - b.time);
+    const dedup = [];
+    sorted.forEach((item) => {
+      if (dedup.length && Math.abs(dedup[dedup.length - 1].time - item.time) < 1e-4) {
+        dedup[dedup.length - 1] = item;
+      } else {
+        dedup.push(item);
+      }
+    });
+    return dedup;
+  };
+
   const addKeyframe = () => {
     if (!selectedObj) return;
-    const uuid = selectedObj.uuid;
-    const times = [...pendingTimes, parseFloat(time)].sort((a,b)=>a-b);
-    // sample current value
-    let values = [...pendingValues];
-    const pushValue = (arr) => { arr.forEach(v => values.push(v)); };
-    if (property === 'position') pushValue([selectedObj.position.x, selectedObj.position.y, selectedObj.position.z]);
-    else if (property === 'scale') pushValue([selectedObj.scale.x, selectedObj.scale.y, selectedObj.scale.z]);
-    else if (property === 'quaternion') pushValue([selectedObj.quaternion.x, selectedObj.quaternion.y, selectedObj.quaternion.z, selectedObj.quaternion.w]);
-    else { pushValue([selectedObj[property] || 0]); }
-    setPendingTimes(times);
-    setPendingValues(values);
+    const nextTime = Number(time);
+    if (!Number.isFinite(nextTime)) return;
+    const value = sampleCurrentValue();
+    setPendingKeys((prev) => normalizePending([...prev, { time: nextTime, value }]));
   };
 
   const commitTrack = () => {
-    if (!selectedObj || pendingTimes.length === 0) return;
-    engine.addTrack({ uuid: selectedObj.uuid, property, times: pendingTimes, values: pendingValues, size });
-    setPendingTimes([]); setPendingValues([]);
+    if (!selectedObj || pendingKeys.length === 0) return;
+    const ordered = normalizePending(pendingKeys);
+    const times = ordered.map((k) => k.time);
+    const values = ordered.flatMap((k) => k.value);
+    engine.addTrack({ uuid: selectedObj.uuid, property, times, values, size });
+    setPendingKeys([]);
     refreshRef.current && refreshRef.current();
   };
 
-  const clearPending = () => { setPendingTimes([]); setPendingValues([]); };
+  const clearPending = () => { setPendingKeys([]); };
+  const removePendingKey = (index) => {
+    setPendingKeys((prev) => prev.filter((_, i) => i !== index));
+  };
+  const updatePendingTime = (index, nextTime) => {
+    const numeric = Number(nextTime);
+    if (!Number.isFinite(numeric)) return;
+    setPendingKeys((prev) => {
+      const next = prev.map((k, i) => (i === index ? { ...k, time: numeric } : k));
+      return normalizePending(next);
+    });
+  };
   const removeTrack = (id) => { engine.removeTrack(id); refreshRef.current && refreshRef.current(); };
 
   return (
@@ -77,15 +104,23 @@ export default function AnimationKeyframeEditor() {
             <button className='studio-btn' onClick={addKeyframe}>Add</button>
           </div>
           <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
-            <button className='studio-btn' onClick={commitTrack} disabled={pendingTimes.length === 0}>Commit Track</button>
-            <button className='studio-btn' onClick={clearPending} disabled={pendingTimes.length === 0}>Clear</button>
+            <button className='studio-btn' onClick={commitTrack} disabled={pendingKeys.length === 0}>Commit Track</button>
+            <button className='studio-btn' onClick={clearPending} disabled={pendingKeys.length === 0}>Clear</button>
           </div>
           <div style={{ maxHeight: 90, overflowY: 'auto', fontSize: 11, marginBottom: 6 }}>
-            {pendingTimes.length === 0 && <div style={{ opacity: 0.5 }}>No pending keyframes</div>}
-            {pendingTimes.map((t,i)=>(
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>t={t.toFixed(2)}</span>
-                <span>v{ i }</span>
+            {pendingKeys.length === 0 && <div style={{ opacity: 0.5 }}>No pending keyframes</div>}
+            {pendingKeys.map((k, i)=>(
+              <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 6, alignItems: 'center', marginBottom: 4 }}>
+                <input
+                  type='number'
+                  step='0.01'
+                  value={Number.isFinite(k.time) ? k.time : 0}
+                  onChange={(e) => updatePendingTime(i, e.target.value)}
+                  style={{ width: '100%' }}
+                  aria-label={`Pending keyframe ${i + 1} time`}
+                />
+                <span title={k.value.join(', ')} style={{ opacity: 0.7 }}>v{i + 1}</span>
+                <button className='studio-btn' style={{ padding: '1px 6px' }} onClick={() => removePendingKey(i)} aria-label={`Remove pending keyframe ${i + 1}`}>×</button>
               </div>
             ))}
           </div>

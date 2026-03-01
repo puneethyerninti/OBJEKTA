@@ -1,5 +1,6 @@
 // src/pages/Studio.jsx
 import React, { useRef, useState, useEffect, useCallback, lazy, Suspense } from "react";
+import { createPortal } from "react-dom";
 // Static pako import keeps compression available even if dynamic import fails
 import { deflate } from "pako";
 import * as THREE from "three";
@@ -8,8 +9,10 @@ import { DndProvider } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
 import {
   FiSave, FiUpload, FiRefreshCcw, FiMaximize, FiMinimize, FiRotateCcw,
-  FiRotateCw, FiPlusSquare, FiCopy, FiWifi, FiWifiOff, FiSearch,
-  FiZap, FiGrid, FiCamera, FiMove, FiImage
+  FiRotateCw, FiPlusSquare, FiCopy, FiWifi, FiWifiOff,
+  FiZap, FiGrid, FiCamera, FiMove, FiImage,
+  FiDroplet, FiCloudRain, FiSun, FiVideo, FiEdit3, FiLayout,
+  FiMenu, FiPlus, FiTrash2, FiEye, FiArrowLeft, FiDownloadCloud, FiUploadCloud
 } from "react-icons/fi";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
@@ -17,6 +20,7 @@ import { useAuth } from "../contexts/AuthContext";
 import Palette from "../components/Palette";
 import Workspace from "../components/Workspace";
 import ObjectProperties from "../components/ObjectProperties";
+import Outliner from "../components/Outliner";
 const SculptToolbar = lazy(() => import("../components/SculptToolbar"));
 import { loadInitialPanels, persistPanelStates } from "../utils/preferences";
 import { ensurePersistentStorage, logQuotaIfAny } from "../utils/storage";
@@ -37,150 +41,17 @@ import createMaterialEditor from "../components/MaterialEditor";
 import setupPostProcessing from "../components/PostProcessing";
 import { API_BASE, apiUrl } from "../utils/api";
 
-/* ---------------------------
-   Small UI helpers + Outliner
-   --------------------------- */
-
-const PALETTE_ITEMS = [
-  { id: 1, name: "Cube" }, { id: 2, name: "Sphere" }, { id: 3, name: "Cone" },
-  { id: 4, name: "Plane" }, { id: 5, name: "Cylinder" }, { id: 6, name: "Torus" },
-  { id: 7, name: "Empty" }, { id: 8, name: "Axis Helper" }, { id: 9, name: "Point Light" },
-  { id: 10, name: "Spot Light" }, { id: 11, name: "Directional Light" }, { id: 12, name: "Camera" },
-];
-
-// Use the shared `Loader` imported from `../components/Loader` above.
-
-const ConfirmModal = ({ open, title, message, onCancel, onConfirm }) => {
-  if (!open) return null;
-  return (
-    <div className="modal-container" onClick={onCancel} role="dialog" aria-modal="true">
-      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-        <div className="confirm-modal__title">{title}</div>
-        <p className="confirm-modal__message">{message}</p>
-        <div className="confirm-modal__actions">
-          <button onClick={onCancel} className="studio-btn">Cancel</button>
-          <button onClick={onConfirm} className="launch-btn confirm-modal__confirm">Confirm</button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const OutlinerView = ({ onSelect, sceneVersion, outlinerSearch: parentSearch, setOutlinerSearch: setParentSearch, pushToast, workspaceRef, disposeObjectResources }) => {
-  const [items, setItems] = useState([]);
-  const lastVerRef = useRef(-1);
-  const mountedRef = useRef(true);
-  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
-
-  useEffect(() => {
-    let mounted = true;
-    let timer = null;
-
-    const scanIfNeeded = async () => {
-      try {
-        const ws = workspaceRef.current ?? workspaceRef;
-        if (!ws) return;
-        const ver = typeof ws.getSceneVersion === 'function' ? ws.getSceneVersion() : null;
-        if (typeof sceneVersion === 'number' && sceneVersion === lastVerRef.current) return;
-        let list = [];
-        if (typeof ws.getSceneObjects === 'function') {
-          list = ws.getSceneObjects();
-        } else {
-          const scene = ws.getScene?.() ?? ws.scene;
-          list = scene && (scene._userGroup || scene._user_group) ? Array.from((scene._userGroup || scene._user_group).children) : [];
-        }
-        if (!mounted || !mountedRef.current) return;
-        lastVerRef.current = ver;
-        const filtered = parentSearch ? list.filter(i => (i.name || '').toLowerCase().includes(parentSearch.toLowerCase())) : list;
-        setItems(filtered);
-      } catch (e) { /* ignore */ }
-    };
-
-    scanIfNeeded();
-    const onSceneUpdated = () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => scanIfNeeded(), 120);
-    };
-    EventBus.on?.('scene:updated', onSceneUpdated);
-
-    const poll = setInterval(() => scanIfNeeded(), 4000);
-
-    return () => {
-      mounted = false;
-      if (timer) clearTimeout(timer);
-      clearInterval(poll);
-      EventBus.off?.('scene:updated', onSceneUpdated);
-    };
-  }, [parentSearch, sceneVersion, workspaceRef]);
-
-  const toggleVisibility = (obj) => { obj.visible = !obj.visible; pushToast?.({ type: "info", message: `${obj.name} ${obj.visible ? "shown" : "hidden"}` }); };
-  const renameObject = (obj) => {
-    const nv = prompt('Rename object', obj.name || '');
-    if (nv && nv !== obj.name) {
-      try {
-        if (workspaceRef.current?.selectObject) {
-          workspaceRef.current?.selectObject(obj);
-          workspaceRef.current?.renameSelected?.(nv);
-        } else obj.name = nv;
-        pushToast?.({ type: "info", message: "Renamed" });
-      } catch (e) { obj.name = nv; pushToast?.({ type: "error", message: "Rename failed" }); }
-    }
-  };
-
-  const deleteObject = (obj) => {
-    setConfirmState({
-      open: true,
-      title: 'Delete Object',
-      message: `Delete "${obj.name || obj.type || 'this object'}"?`,
-      onConfirm: () => {
-        try {
-          if (workspaceRef.current?.selectObject) {
-            workspaceRef.current.selectObject(obj);
-            disposeObjectResources(obj);
-            workspaceRef.current.deleteSelected?.();
-          } else {
-            const scene = workspaceRef.current?.scene;
-            const found = scene?.getObjectByProperty('uuid', obj.uuid);
-            if (found && found.parent) {
-              disposeObjectResources(found);
-              found.parent.remove(found);
-            }
-          }
-          pushToast?.({ type: "info", message: "Deleted" });
-        } catch (e) { pushToast?.({ type: "error", message: "Delete failed" }); }
-      },
-    });
-  };
-
-  return (
-    <div
-      // Use flex rather than height:100% so parent flex layouts can resolve
-      // the inner container's size and allow overflow to work reliably.
-      className="outliner-scroll">
-      <div className="outliner-filter-row">
-        <input aria-label="Filter outliner" placeholder="Filter..." value={parentSearch} onChange={e => setParentSearch(e.target.value)} className="outliner-filter-input" />
-        <button aria-label="Clear filter" onClick={() => { setParentSearch(''); }} className="studio-btn icon-btn"><FiSearch /></button>
-      </div>
-      {items.map((it) => (
-        <div key={it.uuid} className={`outliner-item${it.userData?.__selected ? ' outliner-item--selected' : ''}`}>
-          <div className="outliner-item__name" onClick={() => {
-            if (workspaceRef.current?.selectObject) {
-              workspaceRef.current.selectObject(it);
-              onSelect?.(it);
-            } else {
-              onSelect?.(it);
-            }
-          }}>
-            {it.name || it.type || it.uuid}
-          </div>
-          <button aria-label={`Rename ${it.name || it.type}`} title="Rename" onClick={() => renameObject(it)}>✎</button>
-          <button aria-label={`${it.visible ? "Hide" : "Show"} ${it.name || it.type}`} title="Toggle visibility" onClick={() => toggleVisibility(it)}>{it.visible ? '👁' : '🚫'}</button>
-          <button aria-label={`Delete ${it.name || it.type}`} title="Delete" onClick={() => deleteObject(it)}>🗑</button>
-        </div>
-      ))}
-    </div>
-  );
-};
+// Extracted studio sub-modules
+import { PALETTE_ITEMS } from "./studio/constants";
+import ConfirmModal from "./studio/ConfirmModal";
+import CenterWelcomeCard from "./studio/CenterWelcomeCard";
+import { saveBackupToIndexedDB } from "./studio/backupDB";
+const AIAssistantPanel = lazy(() => import("../components/AIAssistantPanel"));
+const MeshToolsPanel = lazy(() => import("../components/MeshToolsPanel"));
+const OptimizationPanel = lazy(() => import("../components/OptimizationPanel"));
+const ProceduralPanel = lazy(() => import("../components/ProceduralPanel"));
+const MaterialLibraryPanel = lazy(() => import("../components/MaterialLibraryPanel"));
+const PostFXPanel = lazy(() => import("../components/PostFXPanel"));
 
 /* ---------------------------
    Main Studio component
@@ -279,7 +150,7 @@ export default function Studio() {
   const [propsWidth, setPropsWidth] = useState(() => {
     const raw = localStorage.getItem("objekta_props_width");
     const n = parseInt(raw, 10);
-    return Number.isFinite(n) ? Math.max(260, Math.min(520, n)) : 320;
+    return Number.isFinite(n) ? Math.max(240, Math.min(460, n)) : 300;
   });
   const propsWidthRef = useRef(propsWidth);
   useEffect(() => { propsWidthRef.current = propsWidth; }, [propsWidth]);
@@ -379,6 +250,36 @@ export default function Studio() {
   const [loadProgress, setLoadProgress] = useState(null);
 
   const [confirmState, setConfirmState] = useState({ open: false, title: "", message: "", onConfirm: null });
+  // Helper: show a confirm dialog and await user's choice (resolve true = confirm, false = cancel)
+  const askConfirm = useCallback(({ title = "Confirm", message = "Are you sure?", confirmLabel = "Confirm", cancelLabel = "Cancel" }) => {
+    return new Promise((resolve) => {
+      setConfirmState({
+        open: true,
+        title,
+        message,
+        confirmLabel,
+        cancelLabel,
+        onConfirm: () => { setConfirmState((s) => ({ ...s, open: false })); resolve(true); },
+        onCancel: () => { setConfirmState((s) => ({ ...s, open: false })); resolve(false); },
+      });
+    });
+  }, []);
+
+  // Helper: ask for text input using the ConfirmModal and get the entered value
+  const promptInput = useCallback(({ title = "Input", message = "", placeholder = "", defaultValue = "" }) => {
+    return new Promise((resolve) => {
+      setConfirmState({
+        open: true,
+        title,
+        message,
+        showInput: true,
+        inputDefault: defaultValue,
+        inputPlaceholder: placeholder,
+        onConfirm: (val) => { setConfirmState((s) => ({ ...s, open: false })); resolve({ confirmed: true, value: val }); },
+        onCancel: () => { setConfirmState((s) => ({ ...s, open: false })); resolve({ confirmed: false }); },
+      });
+    });
+  }, []);
   const resizingRef = useRef(false);
   const draggingRef = useRef(false);
   const offsetRef = useRef({ x: 0, y: 0 });
@@ -427,8 +328,39 @@ export default function Studio() {
   const [sceneVersion, setSceneVersion] = useState(0);
   const [propsTab, setPropsTab] = useState("props");
   const [envColor, setEnvColor] = useState("#111122");
+  const [showFileMenu, setShowFileMenu] = useState(false);
+  const [fileMenuPos, setFileMenuPos] = useState({ top: 44, left: 12 });
+  const fileMenuRef = useRef(null);
+  const fileMenuButtonRef = useRef(null);
+  const fileMenuDropdownRef = useRef(null);
     // track last environment file for persistence during save
     const envFileRef = useRef(null);
+  // Close file menu on outside click
+  useEffect(() => {
+    if (!showFileMenu) return;
+    const handler = (e) => {
+      const target = e.target;
+      const clickedInsideToolbar = fileMenuRef.current && fileMenuRef.current.contains(target);
+      const clickedInsideDropdown = fileMenuDropdownRef.current && fileMenuDropdownRef.current.contains(target);
+      if (!clickedInsideToolbar && !clickedInsideDropdown) setShowFileMenu(false);
+    };
+    const updateMenuPosition = () => {
+      const rect = fileMenuButtonRef.current?.getBoundingClientRect?.();
+      if (!rect) return;
+      const width = 250;
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+      setFileMenuPos({ top: Math.round(rect.bottom + 6), left: Math.round(left) });
+    };
+    updateMenuPosition();
+    document.addEventListener('mousedown', handler);
+    window.addEventListener('resize', updateMenuPosition);
+    window.addEventListener('scroll', updateMenuPosition, true);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      window.removeEventListener('resize', updateMenuPosition);
+      window.removeEventListener('scroll', updateMenuPosition, true);
+    };
+  }, [showFileMenu]);
   const [bloomEnabled, setBloomEnabled] = useState(false);
   const [oceanEnabled, setOceanEnabled] = useState(false);
   const [rainEnabled, setRainEnabled] = useState(false);
@@ -470,49 +402,6 @@ export default function Studio() {
     const text = await res.text();
     try { return JSON.parse(text); } catch { return text; }
   };
-
-  /* ---------- IndexedDB helpers for backup storage on upload failure ---------- */
-  const BACKUP_DB_NAME = 'objekta_backups_db_v1';
-  const BACKUP_STORE_NAME = 'backups';
-
-  const initBackupDB = useCallback(async () => {
-    return new Promise((resolve, reject) => {
-      const req = indexedDB.open(BACKUP_DB_NAME, 1);
-      req.onerror = () => reject(req.error);
-      req.onsuccess = () => resolve(req.result);
-      req.onupgradeneeded = (e) => {
-        const db = e.target.result;
-        if (!db.objectStoreNames.contains(BACKUP_STORE_NAME)) {
-          db.createObjectStore(BACKUP_STORE_NAME, { keyPath: 'id' });
-        }
-      };
-    });
-  }, []);
-
-  const saveBackupToIndexedDB = useCallback(async (projectId, projectData) => {
-    try {
-      const db = await initBackupDB();
-      const tx = db.transaction(BACKUP_STORE_NAME, 'readwrite');
-      const store = tx.objectStore(BACKUP_STORE_NAME);
-      const backup = {
-        id: `${projectId}_${Date.now()}`,
-        projectId,
-        data: projectData,
-        createdAt: new Date().toISOString(),
-      };
-      return new Promise((resolve, reject) => {
-        const req = store.add(backup);
-        req.onerror = () => reject(req.error);
-        req.onsuccess = () => {
-          console.info(`[OBJEKTA] Backup saved to IndexedDB: ${backup.id}`);
-          resolve(backup.id);
-        };
-      });
-    } catch (err) {
-      console.warn('[OBJEKTA] IndexedDB backup failed:', err);
-      return null;
-    }
-  }, [initBackupDB]);
 
   /* ---------- probe workspace helper ---------- */
   const probeWorkspace = useCallback(() => {
@@ -1044,6 +933,53 @@ export default function Studio() {
     }
   }, [selected, pushToast]);
 
+  const applyTextureToSelectionSlot = useCallback((file, slotKey = "map") => {
+    const sel = workspaceRef.current?.getSelectedMesh?.() ?? selected;
+    if (!sel || !file) {
+      pushToast({ type: "error", message: "No selection or file for texture apply" });
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const loader = new THREE.TextureLoader();
+    loader.load(url, (tex) => {
+      try { tex.colorSpace = THREE.SRGBColorSpace; } catch (e) { try { tex.encoding = THREE.sRGBEncoding; } catch (e2) {} }
+      sel.traverse((n) => {
+        if (!n.isMesh || !n.material) return;
+        const mats = Array.isArray(n.material) ? n.material : [n.material];
+        mats.forEach((m) => {
+          m[slotKey] = tex;
+          if (slotKey === "normalMap" && m.normalScale) {
+            m.normalScale.set(1, 1);
+          }
+          m.needsUpdate = true;
+        });
+      });
+      pushToast({ type: "info", message: `${slotKey} texture applied` });
+      setIsDirty(true);
+    }, undefined, () => {
+      pushToast({ type: "error", message: `Failed to apply ${slotKey} texture` });
+      try { URL.revokeObjectURL(url); } catch (e) {}
+    });
+  }, [selected, pushToast]);
+
+  const removeTextureFromSelectionSlot = useCallback((slotKey = "map") => {
+    const sel = workspaceRef.current?.getSelectedMesh?.() ?? selected;
+    if (!sel) return;
+    sel.traverse((n) => {
+      if (!n.isMesh || !n.material) return;
+      const mats = Array.isArray(n.material) ? n.material : [n.material];
+      mats.forEach((m) => {
+        if (m[slotKey]) {
+          try { m[slotKey].dispose?.(); } catch (e) {}
+        }
+        m[slotKey] = null;
+        m.needsUpdate = true;
+      });
+    });
+    setIsDirty(true);
+    pushToast({ type: "info", message: `${slotKey} texture removed` });
+  }, [selected, pushToast]);
+
   /* saveJSON & exportGLTF (unchanged) */
   const saveJSON = useCallback(() => {
     const data = workspaceRef.current?.serializeScene?.();
@@ -1136,6 +1072,29 @@ export default function Studio() {
     });
   }, []);
 
+  const requestDeleteObject = useCallback((obj) => {
+    if (!obj) return;
+    setConfirmState({
+      open: true,
+      title: "Delete Object",
+      message: `Delete '${obj.name || obj.type || "this object"}'?`,
+      onConfirm: () => {
+        try {
+          if (workspaceRef.current?.selectObject) {
+            workspaceRef.current.selectObject(obj);
+          }
+          disposeObjectResources(obj);
+          workspaceRef.current?.deleteSelected?.();
+          setSelected((prev) => (prev?.uuid === obj.uuid ? null : prev));
+          setIsDirty(true);
+          pushToast({ type: "info", message: "Deleted" });
+        } catch (e) {
+          pushToast({ type: "error", message: "Delete failed" });
+        }
+      },
+    });
+  }, [disposeObjectResources, pushToast]);
+
   /* delete / reset (unchanged) */
   const requestDeleteSelected = useCallback(() => {
     const sel = workspaceRef.current?.getSelectedMesh?.() ?? selected;
@@ -1207,8 +1166,9 @@ export default function Studio() {
         try {
           if (!payload || !payload.scene) return;
           const remote = payload.scene;
-          const ok = window.confirm("Remote collaborator pushed a scene. Load it now (will replace current scene)?");
-          if (ok) { workspaceRef.current?.loadFromData?.(remote); pushToast({ type: "info", message: "Loaded remote scene" }); }
+          askConfirm({ title: "Remote update", message: "Remote collaborator pushed a scene. Load it now (will replace current scene)?", confirmLabel: "Load", cancelLabel: "Ignore" }).then((ok) => {
+            if (ok) { try { workspaceRef.current?.loadFromData?.(remote); pushToast({ type: "info", message: "Loaded remote scene" }); } catch (e) { console.warn(e); } }
+          });
         } catch (e) { console.warn(e); }
       });
       socket.on("disconnect", () => { setCollabConnected(false); pushToast({ type: "info", message: "Collab disconnected" }); });
@@ -1241,6 +1201,33 @@ export default function Studio() {
     }
   }, []);
 
+  const resolveSelectedObject = useCallback((payload) => {
+    if (!payload) return null;
+    if (payload?.isObject3D) return payload;
+    if (payload?.object?.isObject3D) return payload.object;
+
+    const ids = Array.isArray(payload)
+      ? payload
+      : Array.isArray(payload?.ids)
+        ? payload.ids
+        : [];
+
+    const rawId = ids[0] ?? payload?.id ?? payload?.uuid ?? (typeof payload === "string" ? payload : null);
+    if (!rawId) return null;
+
+    const scene = workspaceRef.current?.scene;
+    const byUuid = scene?.getObjectByProperty?.("uuid", rawId);
+    if (byUuid) return byUuid;
+
+    if (typeof rawId === "number") {
+      const byNumericId = scene?.getObjectById?.(rawId);
+      if (byNumericId) return byNumericId;
+    }
+
+    const fromStore = SceneGraphStore.objects?.[rawId]?.object || null;
+    return fromStore;
+  }, []);
+
   /* EventBus integration */
   useEffect(() => {
     const onSceneUpdated = () => {
@@ -1251,17 +1238,15 @@ export default function Studio() {
 
     const onObjectsSelected = (payload) => {
       try {
-        const ids = Array.isArray(payload) ? payload : payload?.ids || [];
-        const obj = ids.length ? SceneGraphStore.objects[ids[0]]?.object : null;
-        setSelected(obj || null);
+        const obj = resolveSelectedObject(payload);
+        handleWorkspaceSelect(obj || null);
       } catch (e) {}
     };
 
     const onObjectSelected = (p) => {
       try {
-        const id = p?.id ?? p;
-        const obj = id ? SceneGraphStore.objects?.[id]?.object || null : null;
-        setSelected(obj);
+        const obj = resolveSelectedObject(p);
+        handleWorkspaceSelect(obj || null);
       } catch (e) {}
     };
 
@@ -1276,7 +1261,7 @@ export default function Studio() {
         EventBus.off?.("object:selected", onObjectSelected);
       } catch (e) {}
     };
-  }, [refreshLightListFromScene]);
+  }, [refreshLightListFromScene, resolveSelectedObject, handleWorkspaceSelect]);
 
   useEffect(() => {
     refreshLightListFromScene();
@@ -1287,13 +1272,14 @@ export default function Studio() {
       if (!obj) return;
       if (workspaceRef.current?.selectObject) {
         workspaceRef.current.selectObject(obj);
+        handleWorkspaceSelect(obj);
         workspaceRef.current.frameObject?.(obj);
       } else {
-        setSelected(obj);
+        handleWorkspaceSelect(obj);
         cameraControlsApiRef.current?.frameObject?.(obj, { padding: 1 });
       }
     } catch (e) { console.warn("handleOutlinerSelect failed", e); }
-  }, []);
+  }, [handleWorkspaceSelect]);
 
   /* Sculpt toggle (unchanged) */
   const toggleSculpt = useCallback(() => {
@@ -1437,11 +1423,24 @@ export default function Studio() {
       const tag = e.target?.tagName?.toLowerCase();
       if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target?.isContentEditable) return;
 
+      if (e.key === "Escape") {
+        workspaceRef.current?.clearSelection?.();
+        setSelected(null);
+        return;
+      }
+
       if (e.key === "Delete") { requestDeleteSelected(); return; }
       if (!meta && e.key.toLowerCase() === "p") { setPaletteCollapsed((v) => !v); return; }
       // inspector collapse shortcut removed
       if (!meta && e.key.toLowerCase() === "b") { toggleBloom(!bloomEnabled); return; }
-      if (!meta && e.key.toLowerCase() === "f") { cameraControlsApiRef.current?.frameObject?.(selected, { padding: 1 }); return; }
+      if (!meta && e.key.toLowerCase() === "f" && e.shiftKey) {
+        workspaceRef.current?.frameAll?.();
+        return;
+      }
+      if (!meta && e.key.toLowerCase() === "f") {
+        if (selected) workspaceRef.current?.frameSelection?.();
+        return;
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -2001,11 +2000,17 @@ export default function Studio() {
         snapshot = { ...snapshot, meta: { ...(snapshot.meta || {}), effects: { bloomEnabled, oceanEnabled, rainEnabled }, cameraState: camState, environmentColor: envColor, animationTracks: tracks, bloomTagged } };
       } catch (e) {}
 
-      nameToUse = opts.saveAs ? (opts.name || prompt("Save as project name:", projectName || "Untitled Project")) : projectName;
-      if (!nameToUse) {
-        pushToast({ type: "error", message: "Save cancelled (no name)" });
-        return null;
+      if (opts.saveAs) {
+        if (opts.name) nameToUse = opts.name;
+        else {
+          const res = await promptInput({ title: "Save project as", message: "Enter a name for the project:", placeholder: "Project name", defaultValue: projectName || "Untitled Project" });
+          if (!res || !res.confirmed) { pushToast({ type: "error", message: "Save cancelled (no name)" }); return null; }
+          nameToUse = (res.value || "").trim();
+        }
+      } else {
+        nameToUse = projectName;
       }
+      if (!nameToUse) { pushToast({ type: "error", message: "Save cancelled (no name)" }); return null; }
 
       // capture thumbnail: prefer workspaceRef.captureThumbnail (async) then robust async helper
       let thumbnail = null;
@@ -2157,15 +2162,19 @@ export default function Studio() {
   }, [projectId, projectName, createProjectOnServer, updateProjectOnServer, fetchProjects, saveLocalBackup, captureThumbnail, navigate, setPropsTab]);
 
   const saveAsProject = useCallback(async () => {
-    const name = prompt("Save as project name:", projectName || "Untitled Project");
-    if (!name) return null;
-    return saveProject({ saveAs: true, name });
+    try {
+      const res = await promptInput({ title: "Save project as", message: "Enter a name for the project:", placeholder: "Project name", defaultValue: projectName || "Untitled Project" });
+      if (!res || !res.confirmed) return null;
+      const name = (res.value || "").trim();
+      if (!name) return null;
+      return saveProject({ saveAs: true, name });
+    } catch (e) { return null; }
   }, [projectName, saveProject]);
 
   const newProject = useCallback(async (opts = { promptSaveIfDirty: true }) => {
     try {
       if (isDirty && opts.promptSaveIfDirty) {
-        const ok = confirm("You have unsaved changes. Save before creating a new project?");
+        const ok = await askConfirm({ title: "Unsaved changes", message: "You have unsaved changes. Save before creating a new project?", confirmLabel: "Save", cancelLabel: "Don't save" });
         if (ok) await saveProject();
       }
       setProjectId(null);
@@ -2184,7 +2193,7 @@ export default function Studio() {
     if (!id) return;
     try {
       if (isDirty) {
-        const ok = confirm("You have unsaved changes. Save before loading another project?");
+        const ok = await askConfirm({ title: "Unsaved changes", message: "You have unsaved changes. Save before loading another project?", confirmLabel: "Save", cancelLabel: "Don't save" });
         if (ok) await saveProject();
       }
       setLoading(true);
@@ -2365,61 +2374,30 @@ export default function Studio() {
         })();
       }, 120);
     }
+    else if (st.importUrl || st.modelUrl) {
+      const url = st.importUrl || st.modelUrl;
+      // wait for importerApiRef to be ready then call loadFromURL
+      let attempts = 0;
+      const tryImport = () => {
+        attempts++;
+        try {
+          if (importerApiRef.current && typeof importerApiRef.current.loadFromURL === 'function') {
+            importerApiRef.current.loadFromURL(url);
+            pushToast({ type: 'info', message: 'Importing model…' });
+            return;
+          }
+        } catch (e) { console.warn('auto import failed', e); }
+        if (attempts < 40) setTimeout(tryImport, 150);
+        else pushToast({ type: 'error', message: 'Import failed: importer unavailable' });
+      };
+      setTimeout(tryImport, 120);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location?.state]);
 
   /* --------------------- UI render --------------------- */
 
   const panelTopOffset = (toolbarRef.current?.getBoundingClientRect?.()?.height ?? 64) + 12;
-
-  const CenterWelcomeCard = () => {
-    const sceneSummary = workspaceRef.current?.getSceneSummary?.();
-    return (
-      <div className="welcome-card reveal welcome-card--positioned" style={{
-        top: panelTopOffset + 12
-      }}>
-        <div className="welcome-card__header">
-          <div className="welcome-card__title">Welcome to Objekta</div>
-          <div className="welcome-card__icon-group">
-            <button className="studio-btn icon-btn" onClick={() => { workspaceRef.current?.resetScene?.(); pushToast({ type: "info", message: "Reset scene" }); }} title="Reset scene" aria-label="Reset scene"><FiRefreshCcw /></button>
-            <button className="studio-btn icon-btn" onClick={() => {
-              (async () => {
-                const url = await captureThumbnailAsync();
-                if (url) {
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = 'thumbnail.jpg';
-                  document.body.appendChild(a);
-                  a.click();
-                  a.remove();
-                } else {
-                  pushToast({ type: "error", message: "Screenshot failed — no canvas available" });
-                }
-              })();
-            }} title="Screenshot" aria-label="Screenshot"><FiCamera /></button>
-          </div>
-        </div>
-
-        <div className="welcome-card__desc">
-          Use the palette (left) to add primitives and lights, or drag-and-drop a GLB into the viewport.
-        </div>
-
-        <div className="welcome-card__quick-actions">
-          <button className="launch-btn" onClick={() => { workspaceRef.current?.addItem?.('Cube'); pushToast({ type: "info", message: "Cube added" }); }}>Add Cube</button>
-          <button className="studio-btn" onClick={() => { workspaceRef.current?.addItem?.('Sphere'); pushToast({ type: "info", message: "Sphere added" }); }}>Add Sphere</button>
-          <label className="welcome-card__import-label">
-            <input aria-label="Import GLB" type="file" accept=".glb,.gltf" className="sr-only" onChange={(e) => importGLTF(e.target.files?.[0])} />
-            <button className="studio-btn">Import GLB</button>
-          </label>
-        </div>
-
-        <div className="welcome-card__scene-info">
-          <div className="panel-title">Scene</div>
-          <div className="panel-empty">{sceneSummary ? `${sceneSummary.objects} objects · ${sceneSummary.totalTris} tris` : 'No objects yet'}</div>
-        </div>
-      </div>
-    );
-  };
 
   // Resize workspace when panels change
   useEffect(() => {
@@ -2440,8 +2418,11 @@ export default function Studio() {
           open={confirmState.open}
           title={confirmState.title}
           message={confirmState.message}
-          onCancel={() => setConfirmState((s) => ({ ...s, open: false }))}
-          onConfirm={() => { confirmState.onConfirm?.(); setConfirmState((s) => ({ ...s, open: false })); }}
+          showInput={confirmState.showInput}
+          inputDefault={confirmState.inputDefault}
+          inputPlaceholder={confirmState.inputPlaceholder}
+          onCancel={() => { confirmState.onCancel?.(); setConfirmState((s) => ({ ...s, open: false })); }}
+          onConfirm={(val) => { confirmState.onConfirm?.(val); setConfirmState((s) => ({ ...s, open: false })); }}
         />
 
         {/* Palette panel */}
@@ -2480,22 +2461,18 @@ export default function Studio() {
         {/* Workspace area */}
         <div className="workspace-area studio-canvas-wrap card-3d">
           <div ref={toolbarRef} className="studio-toolbar reveal studio-hud" role="toolbar" aria-label="Studio toolbar">
+            {/* History group */}
+            <div className="toolbar-group" role="group" aria-label="History">
             <button className="studio-btn icon-btn" onClick={() => workspaceRef.current?.undo?.()} title="Undo (Ctrl/Cmd+Z)" aria-label="Undo"><FiRotateCcw /></button>
             <button className="studio-btn icon-btn" onClick={() => workspaceRef.current?.redo?.()} title="Redo (Ctrl/Cmd+Y)" aria-label="Redo"><FiRotateCw /></button>
+            </div>
 
+            {/* Transform group */}
+            <div className="toolbar-group" role="group" aria-label="Transform">
             <div className="segmented-control" role="group" aria-label="Transform modes">
               {[["translate", "Move"], ["rotate", "Rotate"], ["scale", "Scale"]].map(([m, label]) => (
                 <button key={m} onClick={() => setActiveMode(m)} className={activeMode === m ? 'active' : ''} title={`${label} mode`} aria-pressed={activeMode === m}>{label}</button>
               ))}
-            </div>
-
-            <div className="toolbar-shading-group">
-              <span className="toolbar-shading-label">Shading</span>
-              <div className="segmented-control" role="group" aria-label="Viewport shading">
-                {[ ['rendered', 'Rendered'], ['material', 'Material'], ['wireframe', 'Wireframe'] ].map(([mode, label]) => (
-                  <button key={mode} onClick={() => setViewMode(mode)} className={viewMode === mode ? 'active' : ''} title={`${label} view`} aria-pressed={viewMode === mode}>{label}</button>
-                ))}
-              </div>
             </div>
 
             <div className="studio-btn snap-control" role="group" aria-label="Snap controls">
@@ -2505,7 +2482,21 @@ export default function Studio() {
               </label>
               <input aria-label="Snap size" type="number" value={snapSize} step={0.1} min={0} onChange={(e) => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) setSnapSize(v); }} title="Snap size" />
             </div>
+            </div>
 
+            {/* Shading group */}
+            <div className="toolbar-group" role="group" aria-label="Shading">
+            <div className="toolbar-shading-group">
+              <div className="segmented-control" role="group" aria-label="Viewport shading">
+                {[ ['rendered', 'Rendered'], ['material', 'Material'], ['wireframe', 'Wireframe'] ].map(([mode, label]) => (
+                  <button key={mode} onClick={() => setViewMode(mode)} className={viewMode === mode ? 'active' : ''} title={`${label} view`} aria-pressed={viewMode === mode}>{label}</button>
+                ))}
+              </div>
+            </div>
+            </div>
+
+            {/* Actions group */}
+            <div className="toolbar-group" role="group" aria-label="Actions">
             <button className="studio-btn icon-btn" onClick={() => duplicateWrapper()} title="Duplicate (Ctrl/Cmd+D)" aria-label="Duplicate"><FiCopy /></button>
 
             <label className="studio-btn icon-btn" title="Import GLB/GLTF" aria-label="Import">
@@ -2517,7 +2508,10 @@ export default function Studio() {
 
             <button className="studio-btn icon-btn" onClick={() => saveJSON()} title="Save JSON (Ctrl/Cmd+S)" aria-label="Save JSON"><FiPlusSquare /></button>
             <button className="studio-btn icon-btn" onClick={() => requestResetScene()} title="Reset Scene" aria-label="Reset Scene"><FiRefreshCcw /></button>
+            </div>
 
+            {/* View group */}
+            <div className="toolbar-group" role="group" aria-label="View">
             <button className="studio-btn icon-btn" onClick={() => {
               const el = containerRef.current; if (!el) return;
               if (!document.fullscreenElement) el.requestFullscreen(); else document.exitFullscreen();
@@ -2531,10 +2525,11 @@ export default function Studio() {
               {collabConnected ? <FiWifi /> : <FiWifiOff />}
             </button>
 
-            <button className="studio-btn icon-btn" onClick={() => toggleSculpt()} title="Toggle sculpt" aria-label="Toggle sculpt">🪵</button>
+            <button className="studio-btn icon-btn" onClick={() => toggleSculpt()} title="Toggle sculpt" aria-label="Toggle sculpt"><FiEdit3 /></button>
+            </div>
 
-            {/* new helpers to fill empty space */}
-            <div className="toolbar-helpers">
+            {/* Viewport helpers */}
+            <div className="toolbar-group toolbar-helpers" role="group" aria-label="Viewport helpers">
               <button className="studio-btn icon-btn" onClick={() => { try { workspaceRef.current?.frameAll?.(); cameraControlsApiRef.current?.resetView?.(); } catch (e) { workspaceRef.current?.onFullScreenChange?.(true); } }} title="Fit to view" aria-label="Fit to view"><FiMove /></button>
               <button className="studio-btn icon-btn" onClick={() => {
                 (async () => {
@@ -2550,7 +2545,7 @@ export default function Studio() {
                 })();
               }} title="Capture" aria-label="Capture"><FiCamera /></button>
               <label className={`studio-btn icon-btn ${environmentActive ? 'active' : ''}`} title="Load Environment" aria-label="Load environment">
-                {environmentActive ? '🌌*' : '🌌'}
+                <FiSun />
                 <input type="file" accept=".hdr,.exr,.jpg,.jpeg,.png" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; if (f) { applyEnvironmentFromFile(f); e.target.value=''; } }} />
               </label>
               <button className="studio-btn icon-btn" title="View Selected Camera" aria-label="View camera POV" onClick={() => {
@@ -2560,11 +2555,11 @@ export default function Studio() {
                 } else {
                   pushToast({ type: 'error', message: 'Select a camera object first' });
                 }
-              }}>🎥</button>
-              <button className="studio-btn icon-btn" onClick={() => { setPaletteCollapsed(false); }} title="Reset UI" aria-label="Reset UI">UI</button>
+              }}><FiVideo /></button>
+              <button className="studio-btn icon-btn" onClick={() => { setPaletteCollapsed(false); }} title="Reset UI" aria-label="Reset UI"><FiLayout /></button>
               <button className="studio-btn icon-btn" onClick={() => toggleBloom(!bloomEnabled)} title="Toggle Bloom" aria-label="Toggle bloom"><FiZap /></button>
-              <button className={`studio-btn ${oceanEnabled? 'active':''}`} onClick={()=>toggleOcean(!oceanEnabled)} title="Toggle Ocean" aria-label="Toggle ocean">🌊</button>
-              <button className={`studio-btn ${rainEnabled? 'active':''}`} onClick={()=>toggleRain(!rainEnabled)} title="Toggle Rain" aria-label="Toggle rain">🌧</button>
+              <button className={`studio-btn ${oceanEnabled? 'active':''}`} onClick={()=>toggleOcean(!oceanEnabled)} title="Toggle Ocean" aria-label="Toggle ocean"><FiDroplet /></button>
+              <button className={`studio-btn ${rainEnabled? 'active':''}`} onClick={()=>toggleRain(!rainEnabled)} title="Toggle Rain" aria-label="Toggle rain"><FiCloudRain /></button>
               <button className="studio-btn icon-btn" onClick={() => {
                 try {
                   const scene = workspaceRef.current?.scene;
@@ -2574,49 +2569,126 @@ export default function Studio() {
               }} title="Toggle Grid" aria-label="Toggle grid"><FiGrid /></button>
             </div>
 
-            {/* Project cloud controls */}
-            <div className="toolbar-project-controls">
-              <select
-                aria-label="Open project"
-                value={projectId || ""}
-                onChange={(e) => {
-                  const id = e.target.value || null;
-                  if (id) loadProject(id);
+            {/* File menu dropdown */}
+            <div className="toolbar-group toolbar-file-menu" ref={fileMenuRef} role="group" aria-label="File">
+              <button
+                ref={fileMenuButtonRef}
+                className="studio-btn icon-btn"
+                onClick={() => {
+                  setShowFileMenu((prev) => {
+                    const next = !prev;
+                    if (next) {
+                      const rect = fileMenuButtonRef.current?.getBoundingClientRect?.();
+                      if (rect) {
+                        const width = 250;
+                        const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+                        setFileMenuPos({ top: Math.round(rect.bottom + 6), left: Math.round(left) });
+                      }
+                    }
+                    return next;
+                  });
                 }}
-                className="toolbar-project-select"
+                title="File menu"
+                aria-label="File menu"
+                aria-expanded={showFileMenu}
               >
-                <option value="">-- Open Project --</option>
-                {projects.map((p) => {
-                  const displayName = p.name || p.title || `Project ${p._id || ""}`;
-                  const hover = displayName + (p.lastSavedAt ? ` — ${new Date(p.lastSavedAt).toLocaleString()}` : "");
-                  return <option key={p._id || (p.raw && (p.raw._id || p.raw.id))} value={p._id || (p.raw && (p.raw._id || p.raw.id))} title={hover}>{displayName}</option>;
-                })}
-              </select>
-
-              <button className="studio-btn" onClick={() => saveProject({ saveAs: false })} disabled={isSaving}>{isSaving ? "Saving…" : "Save to Cloud"}</button>
-              <button className="studio-btn" onClick={saveAsProject}>Save As</button>
-
-              {/* NEW: Save & Return, Back to Dashboard, Preview */}
-              <button className="studio-btn" onClick={() => saveProject({ saveAs: false, returnToDashboard: true })} disabled={isSaving}>Save & Return</button>
-              <button className="studio-btn" onClick={() => navigate("/dashboard")}>Back to Dashboard</button>
-              <button className="studio-btn" onClick={() => {
-                const thumb = captureThumbnail?.();
-                if (thumb) {
-                  const w = window.open("", "_blank");
-                  if (w) {
-                    w.document.write(`<title>Preview</title><img src="${thumb}" style="max-width:100%;height:auto;display:block;margin:20px auto;background:#111;padding:18px;border-radius:12px" />`);
-                    w.document.close();
-                  } else pushToast({ type: "error", message: "Could not open preview window (popup blocked?)" });
-                } else pushToast({ type: "error", message: "No preview available" });
-              }}>Preview</button>
-
-              <button className="studio-btn" onClick={() => { setConfirmState({ open: true, title: 'New Project', message: 'Create new blank project? Unsaved changes will be lost.', onConfirm: () => newProject() }); }}>New</button>
-              <button className="studio-btn" onClick={() => deleteProject(projectId)} disabled={!projectId}>Delete</button>
+                <FiMenu />
+              </button>
+              {showFileMenu && (typeof document !== 'undefined' ? createPortal(
+                <div
+                  ref={fileMenuDropdownRef}
+                  className="file-menu-dropdown"
+                  style={{ top: fileMenuPos.top, left: fileMenuPos.left }}
+                  role="menu"
+                  tabIndex={-1}
+                  onKeyDown={(e) => {
+                    try {
+                      const root = fileMenuDropdownRef.current;
+                      if (!root) return;
+                      const items = Array.from(root.querySelectorAll('button.file-menu-item, a.file-menu-item, select.file-menu-select'));
+                      if (!items || items.length === 0) return;
+                      const active = document.activeElement;
+                      let idx = items.indexOf(active);
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        idx = (idx + 1) % items.length;
+                        (items[idx]).focus();
+                      } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        idx = (idx - 1 + items.length) % items.length;
+                        (items[idx]).focus();
+                      } else if (e.key === 'Home') {
+                        e.preventDefault(); items[0].focus();
+                      } else if (e.key === 'End') {
+                        e.preventDefault(); items[items.length - 1].focus();
+                      } else if (e.key === 'Escape') {
+                        setShowFileMenu(false);
+                        fileMenuButtonRef.current?.focus?.();
+                      } else if (e.key === 'Enter') {
+                        if (active && (active.tagName === 'BUTTON' || active.tagName === 'A')) {
+                          (active).click();
+                        }
+                      }
+                    } catch (err) { /* ignore */ }
+                  }}
+                >
+                  <div className="file-menu-section">
+                    <select
+                      aria-label="Open project"
+                      value={projectId || ""}
+                      onChange={(e) => {
+                        const id = e.target.value || null;
+                        if (id) { loadProject(id); setShowFileMenu(false); }
+                      }}
+                      role="menuitem"
+                      className="file-menu-select"
+                    >
+                      <option value="">-- Open Project --</option>
+                      {projects.map((p) => {
+                        const displayName = p.name || p.title || `Project ${p._id || ""}`;
+                        return <option key={p._id || (p.raw && (p.raw._id || p.raw.id))} value={p._id || (p.raw && (p.raw._id || p.raw.id))}>{displayName}</option>;
+                      })}
+                    </select>
+                  </div>
+                  <button role="menuitem" tabIndex={0} className="file-menu-item" onClick={() => { saveProject({ saveAs: false }); setShowFileMenu(false); }} disabled={isSaving}>
+                    <FiUploadCloud /> {isSaving ? "Saving…" : "Save to Cloud"}
+                  </button>
+                  <button role="menuitem" tabIndex={0} className="file-menu-item" onClick={() => { saveAsProject(); setShowFileMenu(false); }}>
+                    <FiSave /> Save As
+                  </button>
+                  <button role="menuitem" tabIndex={0} className="file-menu-item" onClick={() => { saveProject({ saveAs: false, returnToDashboard: true }); setShowFileMenu(false); }} disabled={isSaving}>
+                    <FiDownloadCloud /> Save & Return
+                  </button>
+                  <div className="file-menu-divider" />
+                  <button className="file-menu-item" onClick={() => { setConfirmState({ open: true, title: 'New Project', message: 'Create new blank project? Unsaved changes will be lost.', onConfirm: () => newProject() }); setShowFileMenu(false); }}>
+                    <FiPlus /> New Project
+                  </button>
+                  <button className="file-menu-item" onClick={() => {
+                    const thumb = captureThumbnail?.();
+                    if (thumb) {
+                      const w = window.open("", "_blank");
+                      if (w) {
+                        w.document.write(`<title>Preview</title><img src="${thumb}" style="max-width:100%;height:auto;display:block;margin:20px auto;background:#111;padding:18px;border-radius:12px" />`);
+                        w.document.close();
+                      } else pushToast({ type: "error", message: "Popup blocked" });
+                    } else pushToast({ type: "error", message: "No preview available" });
+                    setShowFileMenu(false);
+                  }}>
+                    <FiEye /> Preview
+                  </button>
+                  <div className="file-menu-divider" />
+                  <button className="file-menu-item" onClick={() => { navigate("/dashboard"); setShowFileMenu(false); }}>
+                    <FiArrowLeft /> Dashboard
+                  </button>
+                  <button className="file-menu-item file-menu-item--danger" onClick={() => { deleteProject(projectId); setShowFileMenu(false); }} disabled={!projectId}>
+                    <FiTrash2 /> Delete Project
+                  </button>
+                </div>, document.body) : null)}
             </div>
 
             <div className="toolbar-status">
               <div className="toolbar-status__text">
-                {lastSavedAt ? `Last saved: ${new Date(lastSavedAt).toLocaleString()}` : (isDirty ? "Unsaved changes" : "No saves yet")}
+                {lastSavedAt ? `${new Date(lastSavedAt).toLocaleTimeString()}` : (isDirty ? "Unsaved" : "")}
               </div>
               {(isSaving || saveProgress > 0) && (
                 <div
@@ -2646,10 +2718,11 @@ export default function Studio() {
             selected={selected}
             onSelect={handleWorkspaceSelect}
             panelTopOffset={panelTopOffset}
+            showInternalPanels={false}
             onSceneChange={(_v) => { setSceneVersion((s) => s + 1); refreshLightListFromScene(); setIsDirty(true); }}
           />
 
-          {!selected && <CenterWelcomeCard />}
+          {/* Welcome card removed — inspector empty state provides same actions */}
           <Timeline workspaceRef={workspaceRef} selected={selected} />
 
           {/* Floating action button: Fit to view */}
@@ -2658,14 +2731,14 @@ export default function Studio() {
           </button>
 
           {/* render properties panel always; use collapsed class and narrow width when collapsed */}
-          <div ref={panelRef} className={`studio-panel properties-panel reveal`} style={{ width: propsWidth, top: panelPos.top, right: panelPos.right }} role="region" aria-label="Inspector">
+          <div ref={panelRef} className={`studio-panel properties-panel reveal`} style={{ width: propsWidth }} role="region" aria-label="Inspector">
               <div className="properties-resizer" onMouseDown={(e) => {
                 e.preventDefault();
                 const startX = e.clientX;
                 const startW = propsWidthRef.current ?? propsWidth;
                 let lastW = startW;
                 const onMove = (ev) => {
-                  const newW = Math.max(260, Math.min(520, startW - (ev.clientX - startX)));
+                  const newW = Math.max(240, Math.min(460, startW - (ev.clientX - startX)));
                   lastW = newW;
                   setPropsWidth(newW);
                   propsWidthRef.current = newW;
@@ -2694,6 +2767,43 @@ export default function Studio() {
                 <button role="tab" id="tab-validate" aria-selected={propsTab === 'validate'} aria-controls="tabpanel-validate" onClick={() => setPropsTab('validate')} className={propsTab === 'validate' ? 'active' : ''}>Validate</button>
                 <button role="tab" id="tab-environment" aria-selected={propsTab === 'environment'} aria-controls="tabpanel-environment" onClick={() => setPropsTab('environment')} className={propsTab === 'environment' ? 'active' : ''}>Environment</button>
                 <button role="tab" id="tab-backups" aria-selected={propsTab === 'backups'} aria-controls="tabpanel-backups" onClick={() => setPropsTab('backups')} className={propsTab === 'backups' ? 'active' : ''}>Backups</button>
+                <button role="tab" id="tab-ai" aria-selected={propsTab === 'ai'} aria-controls="tabpanel-ai" onClick={() => setPropsTab('ai')} className={propsTab === 'ai' ? 'active' : ''}>AI</button>
+                <button role="tab" id="tab-mesh" aria-selected={propsTab === 'mesh'} aria-controls="tabpanel-mesh" onClick={() => setPropsTab('mesh')} className={propsTab === 'mesh' ? 'active' : ''}>Mesh</button>
+                <button role="tab" id="tab-optimize" aria-selected={propsTab === 'optimize'} aria-controls="tabpanel-optimize" onClick={() => setPropsTab('optimize')} className={propsTab === 'optimize' ? 'active' : ''}>Optimize</button>
+                <button role="tab" id="tab-procedural" aria-selected={propsTab === 'procedural'} aria-controls="tabpanel-procedural" onClick={() => setPropsTab('procedural')} className={propsTab === 'procedural' ? 'active' : ''}>Procedural</button>
+                <button role="tab" id="tab-library" aria-selected={propsTab === 'library'} aria-controls="tabpanel-library" onClick={() => setPropsTab('library')} className={propsTab === 'library' ? 'active' : ''}>Library</button>
+                <button role="tab" id="tab-postfx" aria-selected={propsTab === 'postfx'} aria-controls="tabpanel-postfx" onClick={() => setPropsTab('postfx')} className={propsTab === 'postfx' ? 'active' : ''}>PostFX</button>
+              </div>
+
+              <div className="inspector-selection-bar" aria-live="polite">
+                <div className="inspector-selection-main">
+                  <span className={`selection-dot ${selected ? 'is-active' : ''}`} aria-hidden="true" />
+                  <span className="selection-name">{selected ? (selected.name || selected.type || 'Selected Object') : 'No selection'}</span>
+                  {selected?.type && <span className="selection-type">{selected.type}</span>}
+                </div>
+                <div className="inspector-selection-actions">
+                  <button
+                    className="studio-btn"
+                    onClick={() => selected && workspaceRef.current?.frameSelection?.()}
+                    disabled={!selected}
+                  >
+                    Frame
+                  </button>
+                  <button
+                    className="studio-btn"
+                    onClick={() => { workspaceRef.current?.clearSelection?.(); setSelected(null); }}
+                    disabled={!selected}
+                  >
+                    Deselect
+                  </button>
+                  <button
+                    className="studio-btn"
+                    onClick={requestDeleteSelected}
+                    disabled={!selected}
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
 
               <div className="object-properties inspector-content" id={`tabpanel-${propsTab}`} role="tabpanel" aria-labelledby={`tab-${propsTab}`}>
@@ -2703,10 +2813,17 @@ export default function Studio() {
                     <ObjectProperties
                       selected={selected}
                       onTransformChange={(prop, axis, val) => workspaceRef.current?.handleTransformChange?.(prop, axis, val)}
-                      onMaterialChange={(patch) => { applyMaterialToSelection(patch); }}
-                      onApplyTexture={(file, _slot) => { applyMaterialToSelection({ mapFile: file }); }}
+                      onMaterialChange={(patch) => {
+                        const normalized = {
+                          color: patch?.color || patch?.hex,
+                          roughness: patch?.roughness,
+                          metalness: patch?.metalness,
+                        };
+                        applyMaterialToSelection(normalized);
+                      }}
+                      onApplyTexture={(file, slot) => { applyTextureToSelectionSlot(file, slot || "map"); }}
                       onApplyGLB={(file) => importGLTF(file)}
-                      onRemoveTexture={(_slot) => { applyMaterialToSelection({ mapFile: null }); }}
+                      onRemoveTexture={(slot) => { removeTextureFromSelectionSlot(slot || "map"); }}
                       onVisibilityToggle={(vis) => { if (selected) selected.visible = vis; }}
                       onDelete={requestDeleteSelected}
                       onRename={(name) => {
@@ -2729,7 +2846,17 @@ export default function Studio() {
                       </div>
                     )}
                   </>
-                ) : <div className="panel-empty">No object selected.</div>)}
+                ) : (
+                  <div className="panel-empty-card">
+                    <div className="panel-title">No object selected</div>
+                    <p className="panel-empty">Select an item in the viewport or outliner to edit transforms and properties.</p>
+                    <div className="panel-empty-actions">
+                      <button className="studio-btn" onClick={() => setPropsTab('outliner')}>Open Outliner</button>
+                      <button className="studio-btn" onClick={() => workspaceRef.current?.addItem?.('Cube')}>Add Cube</button>
+                      <button className="studio-btn" onClick={() => setPropsTab('environment')}>Scene Environment</button>
+                    </div>
+                  </div>
+                ))}
 
                 {/* Material */}
                 {propsTab === 'material' && (
@@ -2817,14 +2944,13 @@ export default function Studio() {
                 {propsTab === 'outliner' && (
                   <div>
                     <div className="panel-title">Scene Outliner</div>
-                    <OutlinerView
-                      onSelect={(o) => { handleOutlinerSelect(o); }}
-                      sceneVersion={sceneVersion}
+                    <Outliner
+                      workspaceRef={workspaceRef}
+                      onSelect={handleOutlinerSelect}
+                      className="outliner-scroll"
                       outlinerSearch={outlinerSearch}
                       setOutlinerSearch={setOutlinerSearch}
-                      pushToast={pushToast}
-                      workspaceRef={workspaceRef}
-                      disposeObjectResources={disposeObjectResources}
+                      onDeleteRequest={requestDeleteObject}
                     />
                   </div>
                 )}
@@ -2869,6 +2995,63 @@ export default function Studio() {
                     <BackupsPanel
                       onRestore={handleRestoreBackup}
                       onNotify={(type, message) => pushToast({ type, message })}
+                    />
+                  </Suspense>
+                )}
+
+                {propsTab === 'ai' && (
+                  <Suspense fallback={<div className="panel-empty">Loading AI assistant…</div>}>
+                    <AIAssistantPanel
+                      workspaceRef={workspaceRef}
+                      selected={selected}
+                      pushToast={pushToast}
+                    />
+                  </Suspense>
+                )}
+
+                {propsTab === 'mesh' && (
+                  <Suspense fallback={<div className="panel-empty">Loading mesh tools…</div>}>
+                    <MeshToolsPanel
+                      workspaceRef={workspaceRef}
+                      selected={selected}
+                      pushToast={pushToast}
+                    />
+                  </Suspense>
+                )}
+
+                {propsTab === 'optimize' && (
+                  <Suspense fallback={<div className="panel-empty">Loading optimizer…</div>}>
+                    <OptimizationPanel
+                      workspaceRef={workspaceRef}
+                      selected={selected}
+                      pushToast={pushToast}
+                    />
+                  </Suspense>
+                )}
+
+                {propsTab === 'procedural' && (
+                  <Suspense fallback={<div className="panel-empty">Loading procedural tools…</div>}>
+                    <ProceduralPanel
+                      workspaceRef={workspaceRef}
+                      pushToast={pushToast}
+                    />
+                  </Suspense>
+                )}
+
+                {propsTab === 'library' && (
+                  <Suspense fallback={<div className="panel-empty">Loading material library…</div>}>
+                    <MaterialLibraryPanel
+                      workspaceRef={workspaceRef}
+                      selected={selected}
+                      pushToast={pushToast}
+                    />
+                  </Suspense>
+                )}
+
+                {propsTab === 'postfx' && (
+                  <Suspense fallback={<div className="panel-empty">Loading post-FX controls…</div>}>
+                    <PostFXPanel
+                      pushToast={pushToast}
                     />
                   </Suspense>
                 )}

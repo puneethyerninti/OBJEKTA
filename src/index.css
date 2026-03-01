@@ -1399,6 +1399,8 @@ html, body, #root {
   padding: 0.5rem;
   border-radius: 6px;
   transition: background 0.2s, transform 0.2s;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .mobile-menu-toggle:hover {
   background: rgba(255,255,255,0.1);
@@ -2991,6 +2993,7 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
   justify-content: space-between;
   padding: 1rem 1.4rem;
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
   background: transparent;
   border: none;
@@ -4608,7 +4611,7 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
    the Studio can work correctly. If you need to hide scrollbars on other
    pages, scope those rules to the specific page container instead. */
 
-/* 3D Background Scene - Fixed Position */
+/* 3D Background Scene - Seamless Fixed Position */
 .scene-background {
   position: fixed;
   top: 0;
@@ -4620,6 +4623,8 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
   min-height: 100vh;
   z-index: 0;
   pointer-events: none;
+  /* Smooth background during canvas boot */
+  background: radial-gradient(ellipse 80% 60% at 50% 40%, #0a1228 0%, #030610 100%);
 }
 
 .scene-background canvas {
@@ -4627,7 +4632,7 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
   height: 100% !important;
 }
 
-/* Scene Loading Fallback */
+/* Scene Loading Fallback — invisible when canvas fades in */
 .scene-loader {
   position: absolute;
   top: 50%;
@@ -4639,6 +4644,8 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
   text-transform: uppercase;
   letter-spacing: 0.2em;
   animation: pulse-neon 2s ease-in-out infinite;
+  opacity: 0.6;
+  transition: opacity 0.8s ease;
 }
 
 /* Overlay UI */

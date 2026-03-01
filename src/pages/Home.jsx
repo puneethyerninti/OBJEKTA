@@ -1,5 +1,5 @@
 // src/pages/Home.jsx
-// REFACTORED: Production-ready homepage with single Canvas architecture
+// PREMIUM: Figma-grade landing page with glassmorphism, micro-interactions, 3D showcase
 import React, { useCallback, useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import HologramModal from "../components/HologramModal";
@@ -13,22 +13,40 @@ import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.j
 import { useAuth } from "../contexts/AuthContext";
 import { assetUrl } from "../utils/assets";
 import "../index.css";
+import "../styles/home.css";
 
 const FEATURE_ITEMS = [
   {
     title: "Collaborative Editing",
     desc: "Real-time presence, live cursors and shared scene state — teams can review and edit the same scene together.",
     badge: "01",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M20 7L12 3L4 7M20 7L12 11M20 7V17L12 21M12 11L4 7M12 11V21M4 7V17L12 21" />
+      </svg>
+    ),
   },
   {
-    title: "Resumable Uploads & Asset Management",
+    title: "Resumable Uploads",
     desc: "Large-file resumable uploads (tus), automatic thumbnails and versioning to keep pipelines moving.",
     badge: "02",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+        <polyline points="17 8 12 3 7 8" />
+        <line x1="12" y1="3" x2="12" y2="15" />
+      </svg>
+    ),
   },
   {
-    title: "Production-Grade Rendering",
+    title: "Production Rendering",
     desc: "Physically-based materials, calibrated lighting and post-processing for accurate look-dev previews.",
     badge: "03",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+      </svg>
+    ),
   },
 ];
 
@@ -94,6 +112,12 @@ const SHOWCASE_MODELS = [
     poster: "assets/thumbnail-placeholder.svg",
     fullscreenTarget: [0, 1.0, 0],
   },
+];
+
+const TICKER_ITEMS = [
+  "Three.js", "React Three Fiber", "WebGL 2.0", "glTF 2.0", "PBR Materials",
+  "Real-time GI", "Mesh Optimization", "LOD System", "Post-Processing",
+  "Collaborative", "Resumable Uploads", "Scene Presets",
 ];
 
 const createPreviewLoader = () => {
@@ -454,27 +478,37 @@ export default function Home() {
         <Scene />
       </div>
       <main className="home-shell">
-        <section className="hero-grid" style={{ position: "relative", overflow: "hidden" }}>
-          <div className="hero-copy" style={{ position: "relative", zIndex: "var(--z-content)" }}>
-            <span className="hero-badge-top">Web-based 3D Studio</span>
-            <h1 className="hero-title">
-              Design immersive <span className="title-gradient">3D workspaces</span>
+
+        {/* ──── HERO ──── */}
+        <section className="hp-hero" style={{ position: "relative", overflow: "hidden" }}>
+          <div className="hp-hero-content">
+            <span className="hp-badge">
+              <span className="hp-badge-dot" aria-hidden />
+              Web-Based 3D Studio
+            </span>
+
+            <h1 className="hp-title">
+              Design immersive{" "}
+              <span className="hp-title-gradient">3D workspaces</span>
             </h1>
-            <p className="hero-subtitle">
-              Objekta is a web-based collaborative 3D scene editor and studio — review meshes, iterate on materials, and approve lighting shots together in real time without leaving the browser.
+
+            <p className="hp-subtitle">
+              Objekta is a collaborative 3D scene editor — review meshes, iterate on <strong>materials</strong>,
+              and approve lighting shots together in <strong>real time</strong> without leaving the browser.
             </p>
-            <div className="hero-actions">
-              <button 
-                type="button" 
-                className="cta-button cta-primary" 
-                onClick={handleLaunch} 
+
+            <div className="hp-actions">
+              <button
+                type="button"
+                className="hp-cta hp-cta-primary"
+                onClick={handleLaunch}
                 data-magnetic="0.18"
               >
                 {user ? "Enter Studio" : "Start Free"}
               </button>
               <button
                 type="button"
-                className="cta-button cta-secondary"
+                className="hp-cta hp-cta-secondary"
                 data-magnetic="0.1"
                 aria-controls="showcase"
                 onClick={() => document.querySelector("#showcase")?.scrollIntoView({ behavior: "smooth" })}
@@ -482,68 +516,86 @@ export default function Home() {
                 Explore Gallery
               </button>
             </div>
-          </div>
-        </section>
 
-        <section id="features" className="features-section neo-section">
-          <div className="features-header">
-            <h2 className="section-title">Built for production teams</h2>
-            <p className="section-subtitle">
-              Focused tools and UI patterns for team reviews, asset handoff and material look-development — designed to scale
-              across projects and distributed studios.
-            </p>
-          </div>
-          <div className="features-scroll-wrapper">
-            <div className="features-scroll-track">
-              {FEATURE_ITEMS.map((item, idx) => (
-                <article
-                  key={`${item.title}-${idx}`}
-                  className="feature-card-premium"
-                  data-tilt="6"
-                >
-                  <div className="feature-card-glow" aria-hidden="true"></div>
-                  <div className="feature-icon-container">
-                    <svg className="feature-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      {idx % 3 === 0 && (
-                        <>
-                          <path d="M20 7L12 3L4 7M20 7L12 11M20 7V17L12 21M12 11L4 7M12 11V21M4 7V17L12 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                          <circle cx="12" cy="12" r="2" fill="currentColor" opacity="0.6" />
-                        </>
-                      )}
-                      {idx % 3 === 1 && (
-                        <>
-                          <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2" />
-                          <path d="M3 9H21M9 21V9" stroke="currentColor" strokeWidth="2" />
-                          <circle cx="15" cy="15" r="3" stroke="currentColor" strokeWidth="2" />
-                        </>
-                      )}
-                      {idx % 3 === 2 && (
-                        <>
-                          <path d="M13 2L3 14H12L11 22L21 10H12L13 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                          <circle cx="12" cy="12" r="1.5" fill="currentColor" opacity="0.8" />
-                        </>
-                      )}
-                    </svg>
-                  </div>
-                  <h3 className="feature-title-premium">{item.title}</h3>
-                  <p className="feature-desc-premium">{item.desc}</p>
-                </article>
-              ))}
+            <div className="hp-trust" aria-label="Platform highlights">
+              <div className="hp-trust-item">
+                <span className="hp-trust-value">7+</span>
+                <span className="hp-trust-label">3D Models</span>
+              </div>
+              <span className="hp-trust-divider" aria-hidden />
+              <div className="hp-trust-item">
+                <span className="hp-trust-value">PBR</span>
+                <span className="hp-trust-label">Materials</span>
+              </div>
+              <span className="hp-trust-divider" aria-hidden />
+              <div className="hp-trust-item">
+                <span className="hp-trust-value">Real-time</span>
+                <span className="hp-trust-label">Collaboration</span>
+              </div>
+              <span className="hp-trust-divider" aria-hidden />
+              <div className="hp-trust-item">
+                <span className="hp-trust-value">WebGL 2</span>
+                <span className="hp-trust-label">Rendering</span>
+              </div>
             </div>
           </div>
         </section>
 
-        <section id="showcase" className="showcase-section-v2">
-          <div className="showcase-header">
-            <span className="showcase-badge">Live Viewport Gallery</span>
-            <h2 className="showcase-title">Project gallery & previews</h2>
-            <p className="showcase-subtitle">
-              Open any project to inspect materials, lighting and animations in a live viewport. Previews are interactive and
-              optimized for quick iteration.
+        {/* ──── TECH TICKER ──── */}
+        <div className="hp-ticker" aria-hidden="true">
+          <div className="hp-ticker-track">
+            {[...TICKER_ITEMS, ...TICKER_ITEMS].map((item, i) => (
+              <span key={i} className="hp-ticker-item">
+                <span className="hp-ticker-dot" />
+                {item}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* ──── FEATURES ──── */}
+        <section id="features" className="hp-features">
+          <div className="hp-section-header">
+            <span className="hp-section-badge">Core Capabilities</span>
+            <h2 className="hp-section-title">
+              Built for <span className="hp-gradient">production teams</span>
+            </h2>
+            <p className="hp-section-desc">
+              Focused tools and UI patterns for team reviews, asset handoff and material
+              look-development — designed to scale across projects and distributed studios.
             </p>
           </div>
 
-          <div className="showcase-grid-v2">
+          <div className="hp-features-grid">
+            {FEATURE_ITEMS.map((item, idx) => (
+              <article
+                key={item.title}
+                className="hp-feature-card"
+                data-tilt="6"
+              >
+                <span className="hp-feature-number">{item.badge}</span>
+                <div className="hp-feature-icon">{item.icon}</div>
+                <h3 className="hp-feature-title">{item.title}</h3>
+                <p className="hp-feature-desc">{item.desc}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        {/* ──── SHOWCASE ──── */}
+        <section id="showcase" className="hp-showcase">
+          <div className="hp-section-header">
+            <span className="hp-section-badge">Live Viewport Gallery</span>
+            <h2 className="hp-section-title">
+              Project gallery &amp; <span className="hp-gradient">previews</span>
+            </h2>
+            <p className="hp-section-desc">
+              Open any project to inspect materials, lighting and animations in a live viewport.
+              Previews are interactive and optimized for quick iteration.
+            </p>
+          </div>
+
+          <div className="hp-showcase-grid">
             {SHOWCASE_MODELS.map((model, index) => {
               const modelSrc = assetUrl(model.src);
               const posterSrc = assetUrl(model.poster);
@@ -557,40 +609,41 @@ export default function Home() {
               const devicePixelRatio = typeof window !== "undefined" ? (window.devicePixelRatio || 1) : 1;
               const ambientIntensity = deviceTier === "full" ? 1.1 : deviceTier === "medium" ? 0.95 : 0.75;
               const dirIntensity = deviceTier === "full" ? 0.9 : deviceTier === "medium" ? 0.75 : 0.6;
+
               return (
-              <article
-                key={model.title}
-                className="showcase-card-v2"
-                data-key={cardKey}
-                onClick={() => handleShowcaseOpen(resolvedModel)}
-                style={{ animationDelay: `${index * 0.15}s` }}
-              >
-                <div className="showcase-preview">
-                    <div className={`showcase-poster showcase-poster-${model.accent}`} style={{ backgroundColor: 'rgba(16, 18, 27, 0.95)' }}>
-                      <div className="preview-canvas" style={{ width: '100%', height: '100%', position: 'relative' }}>
+                <article
+                  key={model.title}
+                  className="hp-showcase-card showcase-card-v2"
+                  data-key={cardKey}
+                  onClick={() => handleShowcaseOpen(resolvedModel)}
+                  style={{ animationDelay: `${index * 0.12}s` }}
+                >
+                  <div className="hp-preview">
+                    <div className={`hp-preview-poster hp-preview-${model.accent}`}>
+                      <div className="hp-preview-canvas">
                         {!previewReady && (
-                          <div className="preview-loader-premium">
-                            <svg className="preview-loader-ring" viewBox="0 0 80 80" fill="none">
+                          <div className="hp-loader">
+                            <svg className="hp-loader-ring" viewBox="0 0 80 80" fill="none">
                               <circle cx="40" cy="40" r="35" stroke="rgba(127,90,240,0.1)" strokeWidth="2" />
-                              <circle cx="40" cy="40" r="35" stroke="url(#prevGrad)" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="55 165" className="preview-ring-spin" />
+                              <circle cx="40" cy="40" r="35" stroke="url(#hpGrad1)" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="55 165" className="hp-ring-spin" />
                               <circle cx="40" cy="40" r="26" stroke="rgba(0,215,255,0.08)" strokeWidth="1.5" />
-                              <circle cx="40" cy="40" r="26" stroke="url(#prevGrad2)" strokeWidth="2" strokeLinecap="round" strokeDasharray="35 128" className="preview-ring-spin-reverse" />
+                              <circle cx="40" cy="40" r="26" stroke="url(#hpGrad2)" strokeWidth="2" strokeLinecap="round" strokeDasharray="35 128" className="hp-ring-spin-reverse" />
                               <defs>
-                                <linearGradient id="prevGrad" x1="0" y1="0" x2="80" y2="80">
+                                <linearGradient id="hpGrad1" x1="0" y1="0" x2="80" y2="80">
                                   <stop offset="0%" stopColor="#7f5af0" />
                                   <stop offset="100%" stopColor="#00d7ff" />
                                 </linearGradient>
-                                <linearGradient id="prevGrad2" x1="80" y1="0" x2="0" y2="80">
+                                <linearGradient id="hpGrad2" x1="80" y1="0" x2="0" y2="80">
                                   <stop offset="0%" stopColor="#00d7ff" />
                                   <stop offset="100%" stopColor="#ff47a3" />
                                 </linearGradient>
                               </defs>
                             </svg>
-                            <div className="preview-loader-info">
-                              <span className="preview-loader-pct">{Math.max(5, progress)}%</span>
-                            </div>
-                            <div className="preview-loader-bar">
-                              <div className="preview-loader-bar-fill" style={{ width: `${Math.max(5, progress)}%` }} />
+                            <div className="hp-loader-meta">
+                              <span className="hp-loader-pct">{Math.max(5, progress)}%</span>
+                              <div className="hp-loader-bar">
+                                <div className="hp-loader-bar-fill" style={{ width: `${Math.max(5, progress)}%` }} />
+                              </div>
                             </div>
                           </div>
                         )}
@@ -604,9 +657,7 @@ export default function Home() {
                               gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
                               onCreated={({ gl }) => {
                                 try {
-                                  if ('outputColorSpace' in gl) {
-                                    gl.outputColorSpace = THREE.SRGBColorSpace;
-                                  }
+                                  if ('outputColorSpace' in gl) gl.outputColorSpace = THREE.SRGBColorSpace;
                                   gl.toneMappingExposure = 1.05;
                                   if (typeof gl.useLegacyLights !== 'undefined') gl.useLegacyLights = false;
                                 } catch (e) {}
@@ -628,41 +679,56 @@ export default function Home() {
                           </div>
                         )}
                       </div>
+                      <div className="hp-preview-scan" aria-hidden="true" />
                     </div>
-                </div>
+                  </div>
 
-                <div className="showcase-content">
-                  <div className="showcase-meta">
-                    <span className="showcase-tag">Real-time Render</span>
+                  <div className="hp-card-body">
+                    <span className="hp-card-tag">Real-time Render</span>
+                    <h3 className="hp-card-title">{model.title}</h3>
+                    <p className="hp-card-desc">{model.desc}</p>
+                    <div className="hp-card-actions">
+                      <button
+                        type="button"
+                        className="hp-btn hp-btn-primary"
+                        onClick={(e) => { e.stopPropagation(); handleShowcaseOpen(resolvedModel); }}
+                        aria-label={`View ${model.title} in fullscreen`}
+                      >
+                        Fullscreen
+                      </button>
+                      <a
+                        href={modelSrc}
+                        download
+                        className="hp-btn hp-btn-ghost"
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={`Download ${model.title}`}
+                      >
+                        Download
+                      </a>
+                    </div>
                   </div>
-                  <h3 className="showcase-card-title">{model.title}</h3>
-                  <p className="showcase-card-desc">{model.desc}</p>
-                  <div className="showcase-actions">
-                    <button
-                      type="button"
-                      className="showcase-btn showcase-btn-primary"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleShowcaseOpen(resolvedModel);
-                      }}
-                      aria-label={`View ${model.title} in fullscreen`}
-                    >
-                      Fullscreen
-                    </button>
-                    <a
-                      href={modelSrc}
-                      download
-                      className="showcase-btn showcase-btn-secondary"
-                      onClick={(e) => e.stopPropagation()}
-                      aria-label={`Download ${model.title}`}
-                    >
-                      Download
-                    </a>
-                  </div>
-                </div>
-              </article>
-            );
+                </article>
+              );
             })}
+          </div>
+        </section>
+
+        {/* ──── CTA BANNER ──── */}
+        <section className="hp-cta-banner">
+          <h2 className="hp-cta-banner-title">
+            Ready to build your next 3D project?
+          </h2>
+          <p className="hp-cta-banner-desc">
+            Start collaborating on production-quality 3D scenes today — no install, no plugins, just your browser.
+          </p>
+          <div className="hp-actions">
+            <button
+              type="button"
+              className="hp-cta hp-cta-primary"
+              onClick={handleLaunch}
+            >
+              {user ? "Open Dashboard" : "Get Started Free"}
+            </button>
           </div>
         </section>
 
@@ -670,8 +736,8 @@ export default function Home() {
 
       {/* Fullscreen Modal (only renders ONE Canvas when active) */}
       {activeModel && (
-        <HologramModal 
-          model={activeModel} 
+        <HologramModal
+          model={activeModel}
           onClose={handleModalClose}
         />
       )}

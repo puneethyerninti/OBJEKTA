@@ -2,14 +2,11 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { Home, Info, Palette, Folder, Mail } from 'lucide-react';
+import { Home, Info, Palette, Folder, Mail, Menu, X } from 'lucide-react';
 
 /**
- * Minimal, auth-aware Navbar:
- * - Hidden on /studio and /dashboard (no duplicates)
- * - Shows Log In / Sign Up only when user is not logged in AND not in studio/dashboard
- * - When logged in, shows Hi <name> + Dashboard + Logout (no "Open Studio")
- * - Keeps controlled/uncontrolled open state API for compatibility
+ * Premium floating glass navbar with auth-awareness.
+ * Hidden on /studio and /dashboard routes.
  */
 export default function Navbar(props) {
   const { user, logout } = useAuth();
@@ -28,9 +25,7 @@ export default function Navbar(props) {
     else setInternalOpen(v);
   };
 
-  // Measure navbar height at runtime and publish to CSS variable so
-  // page content can reliably offset itself. This avoids hard-coded
-  // assumptions and fixes clipping across DPI/zoom/browser differences.
+  // Measure navbar height and publish to CSS variable
   const navRef = useRef(null);
   useEffect(() => {
     if (!navRef.current || typeof window === "undefined") return;
@@ -39,13 +34,10 @@ export default function Navbar(props) {
       try {
         const h = Math.ceil(navRef.current.getBoundingClientRect().height || 0);
         document.documentElement.style.setProperty("--navbar-height", `${h}px`);
-      } catch (e) {
-        // ignore
-      }
+      } catch (e) { /* ignore */ }
     };
 
     setVar();
-
     const ro = new ResizeObserver(() => setVar());
     ro.observe(navRef.current);
     window.addEventListener("resize", setVar);
@@ -56,7 +48,7 @@ export default function Navbar(props) {
     };
   }, []);
 
-  // hide navbar entirely on these routes (studio is fullscreen, dashboard you wanted no navbar)
+  // Hide navbar on studio/dashboard routes
   const pathname = location.pathname || "";
   if (pathname.startsWith("/studio") || pathname.startsWith("/dashboard")) {
     return null;
@@ -66,30 +58,21 @@ export default function Navbar(props) {
   const closeMenu = () => setOpen(false);
 
   const links = [
-    { to: "/", label: "Home", icon: <Home size={16} />, end: true },
-    { to: "/about", label: "About", icon: <Info size={16} /> },
-    { to: "/gallery", label: "Gallery", icon: <Palette size={16} /> },
-    { to: "/projects", label: "Projects", icon: <Folder size={16} /> },
-    { to: "/contact", label: "Contact", icon: <Mail size={16} /> },
+    { to: "/", label: "Home", icon: <Home size={15} />, end: true },
+    { to: "/about", label: "About", icon: <Info size={15} /> },
+    { to: "/gallery", label: "Gallery", icon: <Palette size={15} /> },
+    { to: "/projects", label: "Projects", icon: <Folder size={15} /> },
+    { to: "/contact", label: "Contact", icon: <Mail size={15} /> },
   ];
 
-  // We intentionally do not show login/signup links in the navbar.
-  // Authentication flows are surfaced inside the app (hero / studio) to avoid duplication.
-
   const handleLogout = () => {
-    try {
-      logout();
-    } catch (e) {
-      // ignore
-    }
+    try { logout(); } catch (e) { /* ignore */ }
     closeMenu();
     navigate("/");
   };
 
   return (
-    <nav ref={navRef} className="navbar neon-nav" aria-label="Main navigation">
-      <span className="nav-glow" aria-hidden />
-      <span className="nav-scan" aria-hidden />
+    <nav ref={navRef} className="navbar hp-nav" aria-label="Main navigation">
       <div className="nav-left">
         <h1 className="nav-logo" style={{ margin: 0 }}>
           <Link to="/" onClick={closeMenu} aria-label="OBJEKTA home" style={{ textDecoration: "none" }}>
@@ -105,7 +88,7 @@ export default function Navbar(props) {
           onClick={toggle}
           title={isOpen ? "Close menu" : "Open menu"}
         >
-          <span aria-hidden="true">{isOpen ? "✕" : "☰"}</span>
+          {isOpen ? <X size={20} /> : <Menu size={20} />}
         </button>
       </div>
 
@@ -146,7 +129,7 @@ export default function Navbar(props) {
         ) : (
           <div className="nav-guest" role="group" aria-label="Guest actions">
             <Link to="/gallery" className="nav-link-muted" onClick={closeMenu} aria-label="Open gallery">
-              Explore Gallery
+              Explore
             </Link>
             <Link to="/login" className="nav-link-muted" onClick={closeMenu} aria-label="Start in studio">
               Start Studio

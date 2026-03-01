@@ -60,6 +60,18 @@
   box-sizing: border-box;
 }
 
+.op-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: linear-gradient(180deg, rgba(16, 12, 30, 0.9), rgba(16, 12, 30, 0.72));
+  border: 1px solid rgba(127,90,240,0.2);
+  border-radius: 10px;
+  margin-bottom: 4px;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
 /* drag active */
 .op-container.drag-active,
 .op-panel.op-drag-active {
@@ -168,7 +180,124 @@
 .op-panel-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .op-panel-right .note { color: rgba(255,255,255,0.6); font-size: 12px; }
 
-/* ── Transform layout ─────────────────────────────────── */
+/* ── Transform layout — Professional CSS Grid ─────────── */
+.op-transform-grid {
+  display: grid;
+  grid-template-columns: 64px 1fr 1fr 1fr 28px;
+  gap: 4px 6px;
+  align-items: center;
+  margin-top: 8px;
+  padding: 6px 4px;
+  min-width: 0;
+}
+
+/* Header row axis labels */
+.op-tg-header { /* empty cell above label column */ }
+.op-tg-axis {
+  font-family: var(--font-mono, 'Space Mono', monospace);
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 2px 0 4px;
+  border-radius: 4px 4px 0 0;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.op-tg-axis-x { color: #ff6b6b; background: rgba(255, 107, 107, 0.08); }
+.op-tg-axis-y { color: #51cf66; background: rgba(81, 207, 102, 0.08); }
+.op-tg-axis-z { color: #339af0; background: rgba(51, 154, 240, 0.08); }
+
+/* Row label */
+.op-tg-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.72);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 4px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Input cells with subtle axis-colored left border */
+.op-tg-cell {
+  position: relative;
+  min-width: 0;
+}
+.op-tg-cell .op-numeric {
+  width: 100%;
+  flex: none;
+  padding: 5px 6px;
+  font-size: 12px;
+  border-radius: 6px;
+  border-left-width: 2px;
+  border-left-style: solid;
+}
+.op-tg-cell-x .op-numeric { border-left-color: rgba(255, 107, 107, 0.5); }
+.op-tg-cell-y .op-numeric { border-left-color: rgba(81, 207, 102, 0.5); }
+.op-tg-cell-z .op-numeric { border-left-color: rgba(51, 154, 240, 0.5); }
+
+.op-tg-cell-x .op-numeric:focus { box-shadow: 0 0 0 2px rgba(255, 107, 107, 0.35), 0 0 10px -4px rgba(255, 107, 107, 0.25); }
+.op-tg-cell-y .op-numeric:focus { box-shadow: 0 0 0 2px rgba(81, 207, 102, 0.35), 0 0 10px -4px rgba(81, 207, 102, 0.25); }
+.op-tg-cell-z .op-numeric:focus { box-shadow: 0 0 0 2px rgba(51, 154, 240, 0.35), 0 0 10px -4px rgba(51, 154, 240, 0.25); }
+
+/* Reset button */
+.op-tg-reset {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(127, 90, 240, 0.18);
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  transition: background 0.12s, color 0.12s, transform 0.1s;
+}
+.op-tg-reset:hover {
+  background: rgba(127, 90, 240, 0.15);
+  color: #fff;
+  transform: rotate(-45deg);
+}
+.op-tg-reset:active {
+  transform: rotate(-90deg) scale(0.92);
+}
+
+/* Options row */
+.op-tg-options {
+  display: flex;
+  gap: 12px;
+  padding: 6px 4px 2px;
+  margin-top: 4px;
+  border-top: 1px solid rgba(127, 90, 240, 0.1);
+}
+.op-tg-option {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  transition: color 0.12s;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.op-tg-option:hover { color: rgba(255, 255, 255, 0.85); }
+.op-tg-option input[type="checkbox"] {
+  width: 13px;
+  height: 13px;
+  accent-color: var(--accent, #7f5af0);
+  cursor: pointer;
+}
+
+/* Legacy flex classes kept for non-transform panels */
 .op-transform-body {
   display: flex;
   gap: 12px;
@@ -192,7 +321,7 @@
   gap: 8px;
   align-items: center;
   min-width: 0;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-start;
 }
 .op-transform-row > * { min-width: 0; }
@@ -415,6 +544,11 @@
   .op-material-body { flex-direction: column; }
   .op-transform-body { flex-direction: column; gap: 10px; }
   .op-transform-right { align-items: flex-start; }
+  .op-transform-grid {
+    grid-template-columns: 48px 1fr 1fr 1fr 24px;
+    gap: 3px 3px;
+  }
+  .op-tg-label { font-size: 10px; }
   .op-texture-row { flex-direction: column; align-items: flex-start; }
   .op-numeric { width: 100%; flex: 1 1 auto; }
   .op-range { width: 100%; }
@@ -430,8 +564,8 @@
   transition: all 90ms ease;
 }
 
-/* ── Horizontal tablist ────────────────────────────────── */
-[role="tablist"] {
+/* ── Horizontal tablist (ObjectProperties only) ────────── */
+.op-container [role="tablist"] {
   display: flex;
   gap: 6px;
   padding: 8px;
@@ -440,9 +574,9 @@
   white-space: nowrap;
   scroll-behavior: smooth;
 }
-[role="tablist"] > button { flex: 0 0 auto; white-space: nowrap; }
-[role="tablist"]::-webkit-scrollbar { height: 6px; }
-[role="tablist"]::-webkit-scrollbar-thumb {
+.op-container [role="tablist"] > button { flex: 0 0 auto; white-space: nowrap; }
+.op-container [role="tablist"]::-webkit-scrollbar { height: 6px; }
+.op-container [role="tablist"]::-webkit-scrollbar-thumb {
   background: rgba(127,90,240,0.25);
   border-radius: 6px;
 }
@@ -580,4 +714,106 @@
   .op-collapse::after {
     animation: none !important;
   }
+}
+
+/* ── Compact density mode (global for ObjectProperties) ─────────── */
+.op-container.object-properties {
+  padding: 8px;
+  gap: 8px;
+  font-size: 12px;
+  border-radius: 10px;
+}
+
+.op-container.object-properties .op-header {
+  gap: 6px;
+}
+
+.op-container.object-properties .op-name-input,
+.op-container.object-properties .op-text,
+.op-container.object-properties .op-select {
+  padding: 6px 8px;
+}
+
+.op-container.object-properties .op-btn,
+.op-container.object-properties .op-small-btn,
+.op-container.object-properties .op-collapse {
+  padding: 4px 6px;
+  font-size: 11px;
+}
+
+.op-container.object-properties .op-panel {
+  padding: 6px;
+  border-radius: 7px;
+}
+
+.op-container.object-properties .op-panel-header {
+  gap: 6px;
+}
+
+.op-container.object-properties .op-transform-body,
+.op-container.object-properties .op-material-body,
+.op-container.object-properties .op-textures-body {
+  margin-top: 6px;
+  gap: 6px;
+}
+
+.op-container.object-properties .op-transform-grid {
+  grid-template-columns: 56px 1fr 1fr 1fr 24px;
+  gap: 3px 4px;
+  margin-top: 6px;
+  padding: 4px 2px;
+}
+
+.op-container.object-properties .op-tg-label {
+  font-size: 10px;
+}
+
+.op-container.object-properties .op-tg-cell .op-numeric {
+  padding: 4px 5px;
+  font-size: 11px;
+}
+
+.op-container.object-properties .op-tg-reset {
+  width: 22px;
+  height: 22px;
+  font-size: 12px;
+}
+
+.op-container.object-properties .op-tg-options {
+  gap: 10px;
+  padding: 4px 2px 0;
+}
+
+.op-container.object-properties .op-transform-label {
+  width: 48px;
+  flex: 0 0 48px;
+}
+
+.op-container.object-properties .op-transform-row {
+  gap: 6px;
+}
+
+.op-container.object-properties .op-numeric {
+  flex: 0 1 72px;
+  padding: 4px 6px;
+}
+
+.op-container.object-properties .op-color-swatch {
+  width: 36px;
+  height: 36px;
+}
+
+.op-container.object-properties .op-color-swatch.small {
+  width: 24px;
+  height: 24px;
+}
+
+.op-container.object-properties .op-range {
+  width: 130px;
+}
+
+.op-container.object-properties .op-thumb,
+.op-container.object-properties .op-thumb-empty {
+  width: 40px;
+  height: 40px;
 }

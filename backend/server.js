@@ -23,6 +23,7 @@ const uploadRoutes = require("./routes/uploads");
 const scenesRoutes = require("./routes/scenes");
 const activityRoutes = require("./routes/activity");
 const collaboratorsRoutes = require("./routes/collaborators");
+const aiRoutes = require("./routes/ai");
 const app = express();
 app.disable("x-powered-by");
 
@@ -141,6 +142,7 @@ app.use("/api/uploads", uploadLimiter, uploadRoutes);
 app.use("/api/scenes", scenesRoutes);
 app.use("/api/activity", activityRoutes);
 app.use("/api/collaborators", collaboratorsRoutes);
+app.use("/api/ai", aiRoutes);
 
 // ---------- tus resumable uploads (fallback) ----------
 try {

@@ -8,7 +8,13 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import "../styles/dashboard.css";
 import { API_BASE, apiUrl } from "../utils/api";
-import { FiArrowLeft } from "react-icons/fi";
+import {
+  FiArrowLeft, FiPlus, FiSearch, FiGrid, FiList, FiLayout,
+  FiClock, FiFolder, FiUploadCloud, FiHardDrive, FiStar,
+  FiMoreHorizontal, FiTrendingUp, FiZap, FiUsers, FiGlobe,
+  FiDownload, FiExternalLink, FiCopy, FiEdit3, FiTrash2,
+  FiShare2, FiFile, FiCommand, FiChevronRight
+} from "react-icons/fi";
 
 // Global socket guard
 if (typeof window !== 'undefined') {
@@ -724,13 +730,41 @@ export default function Dashboard() {
     const onDocClick = (ev) => {
       if (contextRef.current && !contextRef.current.contains(ev.target)) setContext(null);
     };
+    const onWindowScroll = () => setContext(null);
+    const onWindowResize = () => setContext(null);
+    const onEscape = (ev) => {
+      if (ev.key === "Escape") setContext(null);
+    };
+    const onDocContextMenu = (ev) => {
+      if (contextRef.current && !contextRef.current.contains(ev.target)) {
+        setContext(null);
+      }
+    };
+
     window.addEventListener("click", onDocClick);
-    return () => window.removeEventListener("click", onDocClick);
+    window.addEventListener("scroll", onWindowScroll, true);
+    window.addEventListener("resize", onWindowResize);
+    window.addEventListener("keydown", onEscape);
+    window.addEventListener("contextmenu", onDocContextMenu);
+    return () => {
+      window.removeEventListener("click", onDocClick);
+      window.removeEventListener("scroll", onWindowScroll, true);
+      window.removeEventListener("resize", onWindowResize);
+      window.removeEventListener("keydown", onEscape);
+      window.removeEventListener("contextmenu", onDocContextMenu);
+    };
   }, []);
 
   const openContext = (e, p) => {
     e.preventDefault();
-    setContext({ project: p, x: e.clientX, y: e.clientY });
+    const menuWidth = 220;
+    const menuHeight = 280;
+    const margin = 10;
+    const maxX = Math.max(margin, window.innerWidth - menuWidth - margin);
+    const maxY = Math.max(margin, window.innerHeight - menuHeight - margin);
+    const x = Math.max(margin, Math.min(e.clientX, maxX));
+    const y = Math.max(margin, Math.min(e.clientY, maxY));
+    setContext({ project: p, x, y });
   };
 
   const handleContextAction = (action, p) => {
@@ -786,10 +820,41 @@ export default function Dashboard() {
     }
   }
 
+  // View mode
+  const [viewMode, setViewMode] = useState("grid"); // grid | list
+
+  // Time-ago helper
+  const timeAgo = useCallback((dateStr) => {
+    if (!dateStr) return "";
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return "";
+      const diff = Date.now() - d.getTime();
+      const mins = Math.floor(diff / 60000);
+      if (mins < 1) return "Just now";
+      if (mins < 60) return `${mins}m ago`;
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24) return `${hrs}h ago`;
+      const days = Math.floor(hrs / 24);
+      if (days < 7) return `${days}d ago`;
+      if (days < 30) return `${Math.floor(days / 7)}w ago`;
+      return d.toLocaleDateString();
+    } catch { return ""; }
+  }, []);
+
+  // Greeting
+  const greeting = React.useMemo(() => {
+    const hr = new Date().getHours();
+    if (hr < 12) return "Good morning";
+    if (hr < 17) return "Good afternoon";
+    return "Good evening";
+  }, []);
+
   // Render UI
   return (
     <div className="dashboard-root">
-      <div className="dash-container">
+      <div className="dash-layout">
+        {/* ── Premium Sidebar ──────────────────────────────── */}
         <Sidebar
           user={user}
           stats={stats}
@@ -800,91 +865,139 @@ export default function Dashboard() {
             navigate('/');
           }}
           onImport={handleImport}
+          onMarketplace={handleMarketplace}
+          onNavigateHome={() => navigate('/')}
         />
 
+        {/* ── Main Content ─────────────────────────────────── */}
         <main className="dash-main">
-          <header className="dash-header">
-            <div>
-              <button 
-                onClick={() => navigate('/')} 
-                className="back-to-home-btn"
-                aria-label="Back to home"
-              >
-                <FiArrowLeft size={20} />
-                <span>Back to Home</span>
-              </button>
-              <h1 className="dash-title">Workspace</h1>
-              <p className="dash-sub">Your recent projects, activity, and quick actions.</p>
-            </div>
 
-            <div className="dash-controls">
-              <div className="dash-controls-inner">
-                <input
-                  aria-label="Search projects"
-                  placeholder="Search projects..."
-                  value={qInput}
-                  onChange={(e) => setQInput(e.target.value)}
-                  className="input-search"
-                />
+          {/* ── Welcome Banner ───────────────────────────── */}
+          <section className="dash-welcome">
+            <div className="welcome-content">
+              <div className="welcome-text">
+                <h1 className="welcome-title">
+                  {greeting}, <span className="welcome-name">{user?.name?.split(' ')[0] || 'Creator'}</span>
+                </h1>
+                <p className="welcome-sub">
+                  Your creative workspace is ready. You have <strong>{filteredProjects.length}</strong> project{filteredProjects.length !== 1 ? 's' : ''} in progress.
+                </p>
+              </div>
+              <div className="welcome-search">
+                <div className="search-box">
+                  <FiSearch className="search-icon" />
+                  <input
+                    type="text"
+                    placeholder="Search projects, scenes..."
+                    value={qInput}
+                    onChange={(e) => setQInput(e.target.value)}
+                    className="search-input"
+                    aria-label="Search projects"
+                  />
+                  <kbd className="search-kbd">⌘K</kbd>
+                </div>
+              </div>
+            </div>
+            <div className="welcome-glow" aria-hidden="true" />
+          </section>
+
+          {/* ── Stats Metrics ────────────────────────────── */}
+          <section className="dash-metrics">
+            <div className="metric-card">
+              <div className="metric-icon metric-icon--purple"><FiFolder size={20} /></div>
+              <div className="metric-body">
+                <div className="metric-value">{stats.projects ?? 0}</div>
+                <div className="metric-label">Projects</div>
+              </div>
+              <div className="metric-trend metric-trend--up"><FiTrendingUp size={14} /></div>
+            </div>
+            <div className="metric-card">
+              <div className="metric-icon metric-icon--teal"><FiFile size={20} /></div>
+              <div className="metric-body">
+                <div className="metric-value">{Array.isArray(scenes) ? scenes.length : 0}</div>
+                <div className="metric-label">Scenes</div>
+              </div>
+            </div>
+            <div className="metric-card">
+              <div className="metric-icon metric-icon--pink"><FiUploadCloud size={20} /></div>
+              <div className="metric-body">
+                <div className="metric-value">{stats.uploads ?? 0}</div>
+                <div className="metric-label">Uploads</div>
+              </div>
+            </div>
+            <div className="metric-card">
+              <div className="metric-icon metric-icon--amber"><FiHardDrive size={20} /></div>
+              <div className="metric-body">
+                <div className="metric-value">{stats.storageMB ?? 0}<span className="metric-unit">MB</span></div>
+                <div className="metric-label">Storage</div>
+              </div>
+            </div>
+          </section>
+
+          {/* ── Quick Actions ────────────────────────────── */}
+          <section className="dash-quick-actions">
+            <button className="qa-btn qa-btn--primary" onClick={createProject}>
+              <FiPlus size={18} />
+              <span>New Project</span>
+            </button>
+            <button className="qa-btn qa-btn--accent" onClick={handleImport}>
+              <FiDownload size={18} />
+              <span>Import</span>
+            </button>
+            <button className="qa-btn qa-btn--glass" onClick={() => navToStudio()}>
+              <FiLayout size={18} />
+              <span>Open Studio</span>
+            </button>
+            <button className="qa-btn qa-btn--glass" onClick={handleMarketplace}>
+              <FiGlobe size={18} />
+              <span>Marketplace</span>
+            </button>
+            <button className="qa-btn qa-btn--glass" onClick={handleExportAction}>
+              <FiExternalLink size={18} />
+              <span>Export</span>
+            </button>
+          </section>
+
+          {/* ── Projects Section ─────────────────────────── */}
+          <section className="dash-projects-section">
+            <div className="section-header">
+              <div className="section-header-left">
+                <h2 className="section-title"><FiStar className="section-icon" /> Recent Projects</h2>
+                <span className="section-count">{filteredProjects.length}</span>
+              </div>
+              <div className="section-header-right">
                 <select
                   aria-label="Sort projects"
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value)}
-                  className="select-sort"
+                  className="sort-select"
                 >
-                  <option value="recent">Sort: Recent</option>
-                  <option value="name">Sort: Name</option>
-                  <option value="progress">Sort: Progress</option>
+                  <option value="recent">Recent</option>
+                  <option value="name">Name</option>
+                  <option value="progress">Progress</option>
                 </select>
+                <div className="view-toggle">
+                  <button
+                    className={`view-btn ${viewMode === 'grid' ? 'view-btn--active' : ''}`}
+                    onClick={() => setViewMode('grid')}
+                    aria-label="Grid view"
+                  ><FiGrid size={16} /></button>
+                  <button
+                    className={`view-btn ${viewMode === 'list' ? 'view-btn--active' : ''}`}
+                    onClick={() => setViewMode('list')}
+                    aria-label="List view"
+                  ><FiList size={16} /></button>
+                </div>
               </div>
             </div>
-          </header>
-
-          <section className="dash-grid-row">
-            <div className="dash-activity">
-              <h3>Recent Activity</h3>
-              <ul className="activity-list">
-                {activity.map((a) => (
-                  <li key={a.id}>
-                    <span className="activity-text">{a.text}</span>
-                    <span className="activity-when">{a.when}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            <aside className="dash-collabs">
-              <h3>Collaborators</h3>
-              <div className="collab-list">
-                {collabs.map((c) => (
-                  <div key={c.id} className="collab-item">
-                    <div className="collab-avatar">{c.name?.[0] ?? "U"}</div>
-                    <div className="collab-body">
-                      <div className="collab-name">{c.name}</div>
-                      <div className="collab-role text-muted">{c.role || "Member"}</div>
-                    </div>
-                    <button className="btn-ghost" onClick={() => pushToast(`Invite sent to ${c.name}`, "info")}>
-                      Invite
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </aside>
-          </section>
-
-          <section className="projects-section">
-            <h2 className="section-title">Recent Projects</h2>
-            <p className="text-muted">Open a project to continue editing in the Studio.</p>
 
             {projectsError && (
-              <div
-                className="mini-card projects-error"
-                role="alert"
-              >
-                <span>{projectsError}</span>
-                <button className="btn-ghost" onClick={handleRetryProjects}>
-                  Retry
-                </button>
+              <div className="error-banner" role="alert">
+                <div className="error-content">
+                  <span className="error-dot" />
+                  <span>{projectsError}</span>
+                </div>
+                <button className="error-retry" onClick={handleRetryProjects}>Retry</button>
               </div>
             )}
 
@@ -899,71 +1012,126 @@ export default function Dashboard() {
               onDuplicate={(p) => duplicateProject(p)}
               onContext={(e, p) => openContext(e, p)}
               onOpenStudio={(p) => navToStudio(p)}
+              viewMode={viewMode}
+              timeAgo={timeAgo}
             />
           </section>
 
-          {/* Saved scenes */}
-          <section className="projects-section saved-scenes-section">
-            <h2 className="section-title">Saved Scenes</h2>
-            <p className="text-muted">Scenes you've saved — load them directly into the Studio.</p>
+          {/* ── Activity & Team Row ──────────────────────── */}
+          <section className="dash-panels-row">
+            <div className="panel-card panel-activity">
+              <div className="panel-header">
+                <h3 className="panel-title"><FiClock size={16} /> Activity</h3>
+              </div>
+              <div className="activity-timeline">
+                {activity.length === 0 ? (
+                  <div className="panel-empty-state">No recent activity</div>
+                ) : activity.map((a) => (
+                  <div key={a.id} className="timeline-item">
+                    <div className="timeline-dot" />
+                    <div className="timeline-content">
+                      <span className="timeline-text">{a.text}</span>
+                      <span className="timeline-when">{a.when}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="panel-card panel-team">
+              <div className="panel-header">
+                <h3 className="panel-title"><FiUsers size={16} /> Team</h3>
+                <button className="panel-action-btn" onClick={() => pushToast("Invites coming soon", "info")}>
+                  <FiPlus size={14} /> Invite
+                </button>
+              </div>
+              <div className="team-list">
+                {collabs.length === 0 ? (
+                  <div className="panel-empty-state">No collaborators yet</div>
+                ) : collabs.map((c) => (
+                  <div key={c.id} className="team-member">
+                    <div className="team-avatar">
+                      {c.name?.[0]?.toUpperCase() ?? "U"}
+                      <span className="online-dot" />
+                    </div>
+                    <div className="team-info">
+                      <div className="team-name">{c.name}</div>
+                      <div className="team-role">{c.role || "Member"}</div>
+                    </div>
+                    <button className="team-action" onClick={() => pushToast(`Invite sent to ${c.name}`, "success")}>
+                      <FiShare2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          {/* ── Saved Scenes ─────────────────────────────── */}
+          <section className="dash-projects-section dash-scenes-section">
+            <div className="section-header">
+              <div className="section-header-left">
+                <h2 className="section-title"><FiZap className="section-icon" /> Saved Scenes</h2>
+                <span className="section-count">{Array.isArray(scenes) ? scenes.length : 0}</span>
+              </div>
+            </div>
 
             {scenesLoading ? (
-              <div className="mini-card">Loading saved scenes…</div>
+              <div className="scenes-loading">
+                {[1,2,3].map(i => (
+                  <div key={i} className="scene-skeleton">
+                    <div className="skeleton-thumb" />
+                    <div className="skeleton-body">
+                      <div className="skeleton-line w-60" />
+                      <div className="skeleton-line w-40" />
+                    </div>
+                  </div>
+                ))}
+              </div>
             ) : !Array.isArray(scenes) || scenes.length === 0 ? (
-              <div className="mini-card">No saved scenes yet. Save a scene from the Studio to see it here.</div>
+              <div className="empty-state-card">
+                <div className="empty-icon-wrap">
+                  <FiFile size={32} />
+                </div>
+                <h4 className="empty-title">No saved scenes yet</h4>
+                <p className="empty-desc">Save a scene from the Studio to see it here.</p>
+                <button className="qa-btn qa-btn--glass" onClick={() => navToStudio()}>
+                  <FiLayout size={16} /> Open Studio
+                </button>
+              </div>
             ) : (
-              <div className="saved-scenes-grid">
+              <div className="scenes-grid">
                 {scenes.map((s, i) => (
-                  <div key={s._id || `scene-${i}`} className="project-card scene-card">
-                    <div className="thumb">
+                  <div key={s._id || `scene-${i}`} className="scene-card" onClick={() => loadSceneInStudio(s._id)}>
+                    <div className="scene-thumb">
                       {s.thumbnailUrl ? (
-                        <img src={s.thumbnailUrl} alt={s.name} />
+                        <img src={s.thumbnailUrl} alt={s.name} loading="lazy" />
                       ) : (
-                        <div className="thumb-placeholder" aria-hidden>
-                          <svg width="48" height="48" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true">
-                            <defs>
-                              <linearGradient id="gThumbSmall" x1="0" x2="1">
-                                <stop offset="0" stopColor="#7f5af0" />
-                                <stop offset="1" stopColor="#00d7ff" />
-                              </linearGradient>
-                            </defs>
-                            <rect width="64" height="64" rx="6" fill="url(#gThumbSmall)" opacity="0.14" />
-                            <g transform="translate(10,14)" fill="#ffffff">
-                              <rect x="4" y="6" width="36" height="24" rx="3" opacity="0.12" />
-                              <circle cx="22" cy="18" r="7" fill="#ffffff" opacity="0.98" />
-                            </g>
-                          </svg>
+                        <div className="scene-placeholder">
+                          <FiFile size={28} />
                         </div>
                       )}
+                      <div className="scene-overlay">
+                        <button className="scene-play-btn" aria-label="Load scene">
+                          <FiChevronRight size={20} />
+                        </button>
+                      </div>
                     </div>
-                    <div className="card-body">
-                      <div className="card-header-row">
-                        <div className="card-title" title={s.name}>
-                          {s.name}
-                        </div>
-                        <div className="card-actions-inline">
-                          <button className="btn-ghost small" onClick={() => loadSceneInStudio(s._id)}>
-                            Load in Studio
-                          </button>
-                        </div>
-                      </div>
-                      <div className="card-meta">
-                        <div className="date text-muted">{new Date(s.updatedAt || s.createdAt).toLocaleDateString()}</div>
-                        <div className="card-actions">
-                          <button className="btn-ghost small" onClick={() => navigate("/studio", { state: { sceneId: s._id } })}>
-                            Open
-                          </button>
-                          <button
-                            className="btn-ghost small"
-                            onClick={() => {
-                              navigator.clipboard?.writeText(`${window.location.origin}/studio?scene=${encodeURIComponent(s._id)}`);
-                              pushToast("Link copied", "info");
-                            }}
-                          >
-                            Copy link
-                          </button>
-                        </div>
-                      </div>
+                    <div className="scene-body">
+                      <div className="scene-name" title={s.name}>{s.name}</div>
+                      <div className="scene-meta">{timeAgo(s.updatedAt || s.createdAt)}</div>
+                    </div>
+                    <div className="scene-actions">
+                      <button className="scene-action-btn" onClick={(e) => { e.stopPropagation(); loadSceneInStudio(s._id); }} title="Open">
+                        <FiExternalLink size={14} />
+                      </button>
+                      <button className="scene-action-btn" onClick={(e) => {
+                        e.stopPropagation();
+                        navigator.clipboard?.writeText(`${window.location.origin}/studio?scene=${encodeURIComponent(s._id)}`);
+                        pushToast("Link copied", "info");
+                      }} title="Copy link">
+                        <FiCopy size={14} />
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -971,96 +1139,102 @@ export default function Dashboard() {
             )}
           </section>
 
-          <section className="settings-section">
-            <div className="settings-card">
-              <h3>Shortcuts & Account</h3>
-              <div className="shortcuts">
-                <button className="btn-primary" onClick={() => navToStudio()}>
-                  Open Studio
-                </button>
-                <button className="btn-accent" onClick={handleMarketplace}>
-                  Marketplace
-                </button>
-                <button className="btn-ghost" onClick={handleExportAction}>
-                  Export
-                </button>
-              </div>
-            </div>
-
-            <div className="settings-card">
-              <h3>Account</h3>
-              <div className="account-rows">
-                <div>
-                  <strong>Email</strong>
-                  <div className="text-muted">{user?.email}</div>
+          {/* ── Account Section ──────────────────────────── */}
+          <section className="dash-account-section">
+            <div className="account-card">
+              <div className="account-header">
+                <div className="account-avatar-lg">
+                  {user?.name ? user.name.split(' ').map(n => n[0]).slice(0, 2).join('') : user?.email?.[0]?.toUpperCase() || 'U'}
                 </div>
-                <div>
-                  <strong>Name</strong>
-                  <div className="text-muted">{user?.name}</div>
+                <div className="account-info">
+                  <div className="account-name">{user?.name || 'Creator'}</div>
+                  <div className="account-email">{user?.email}</div>
+                </div>
+              </div>
+              <div className="account-meta">
+                <div className="account-meta-item">
+                  <span className="account-meta-label">Member since</span>
+                  <span className="account-meta-value">{new Date(user?.createdAt || Date.now()).toLocaleDateString()}</span>
+                </div>
+                <div className="account-meta-item">
+                  <span className="account-meta-label">Projects</span>
+                  <span className="account-meta-value">{stats.projects ?? 0}</span>
                 </div>
               </div>
             </div>
           </section>
 
+          {/* ── Footer ───────────────────────────────────── */}
           <footer className="dash-footer">
-            © {new Date().getFullYear()} Objekta. All rights reserved.
+            <div className="footer-brand">Objekta</div>
+            <div className="footer-copy">© {new Date().getFullYear()} All rights reserved.</div>
           </footer>
         </main>
       </div>
 
-      {/* Context menu */}
+      {/* ── Context Menu ──────────────────────────────── */}
       {context && (
         <div
           ref={contextRef}
-          className="context-menu"
-          style={{ left: context.x, top: context.y, position: 'fixed', zIndex: 80 }}
+          className="ctx-menu"
+          style={{ left: context.x, top: context.y, position: 'fixed', zIndex: 200 }}
           role="menu"
           aria-label="Project actions"
         >
-          <ul className="context-list" role="menu">
-            <li role="none"><button role="menuitem" className="btn btn-ghost btn-small" onClick={() => handleContextAction('open', context.project)}>Open</button></li>
-            <li role="none"><button role="menuitem" className="btn btn-ghost btn-small" onClick={() => handleContextAction('rename', context.project)}>Rename</button></li>
-            <li role="none"><button role="menuitem" className="btn btn-ghost btn-small" onClick={() => handleContextAction('duplicate', context.project)}>Duplicate</button></li>
-            <li role="none"><button role="menuitem" className="btn btn-ghost btn-small" onClick={() => handleContextAction('export', context.project)}>Export</button></li>
-            <li role="none"><button role="menuitem" className="btn btn-ghost btn-small" onClick={() => handleContextAction('share', context.project)}>Share</button></li>
-            <li role="none"><button role="menuitem" className="btn btn-danger btn-small" onClick={() => handleContextAction('delete', context.project)}>Delete</button></li>
-          </ul>
+          <button className="ctx-item" role="menuitem" onClick={() => handleContextAction('open', context.project)}>
+            <FiExternalLink size={14} /> Open in Studio
+          </button>
+          <button className="ctx-item" role="menuitem" onClick={() => handleContextAction('rename', context.project)}>
+            <FiEdit3 size={14} /> Rename
+          </button>
+          <button className="ctx-item" role="menuitem" onClick={() => handleContextAction('duplicate', context.project)}>
+            <FiCopy size={14} /> Duplicate
+          </button>
+          <button className="ctx-item" role="menuitem" onClick={() => handleContextAction('export', context.project)}>
+            <FiDownload size={14} /> Export
+          </button>
+          <button className="ctx-item" role="menuitem" onClick={() => handleContextAction('share', context.project)}>
+            <FiShare2 size={14} /> Copy Share Link
+          </button>
+          <div className="ctx-divider" />
+          <button className="ctx-item ctx-item--danger" role="menuitem" onClick={() => handleContextAction('delete', context.project)}>
+            <FiTrash2 size={14} /> Delete
+          </button>
         </div>
       )}
 
-      {/* Project detail modal */}
+      {/* ── Project Detail Modal ─────────────────────── */}
       {isModalOpen && selectedProject && (
-        <Modal title="Project details" onClose={closeModal}>
-          <label className="label">Title</label>
-          <input className="auth-input" value={renameValue} onChange={(e) => setRenameValue(e.target.value)} />
-
-          <label className="label label--spaced">Progress</label>
-          <div className="progress-row">
-            <div className="progress-track">
-              <div className="progress-fill" style={{ width: `${selectedProject.progress ?? 0}%` }} />
+        <Modal title="Project Details" onClose={closeModal}>
+          <div className="modal-project-header">
+            <div className="modal-project-icon"><FiFolder size={20} /></div>
+            <div>
+              <label className="modal-label">Title</label>
+              <input className="modal-input" value={renameValue} onChange={(e) => setRenameValue(e.target.value)} />
             </div>
-            <div className="progress-num">{selectedProject.progress ?? 0}%</div>
+          </div>
+
+          <label className="modal-label modal-label--spaced">Progress</label>
+          <div className="modal-progress">
+            <div className="modal-progress-track">
+              <div className="modal-progress-fill" style={{ width: `${selectedProject.progress ?? 0}%` }} />
+            </div>
+            <div className="modal-progress-num">{selectedProject.progress ?? 0}%</div>
           </div>
 
           <div className="modal-actions">
-            <button className="btn btn-primary" onClick={saveRename} disabled={modalLoading}>
-              {modalLoading ? 'Saving…' : 'Save'}
+            <button className="modal-btn modal-btn--primary" onClick={saveRename} disabled={modalLoading}>
+              {modalLoading ? 'Saving…' : 'Save Changes'}
             </button>
-            <button className="btn btn-ghost" onClick={closeModal}>Close</button>
-            <button
-              className="btn btn-danger"
-              onClick={() => {
-                deleteProject();
-              }}
-              disabled={modalLoading}
-            >
+            <button className="modal-btn modal-btn--ghost" onClick={closeModal}>Cancel</button>
+            <button className="modal-btn modal-btn--danger" onClick={() => deleteProject()} disabled={modalLoading}>
               Delete
             </button>
           </div>
         </Modal>
       )}
 
-      {/* Preview modal */}
+      {/* ── Preview Modal ────────────────────────────── */}
       {preview && (
         <Modal title={`Preview: ${preview.title}`} onClose={closePreview} width={820}>
           <div className="preview-layout">
@@ -1075,19 +1249,25 @@ export default function Dashboard() {
                     loading="lazy"
                   />
                 ) : (
-                  <div className="text-muted">No preview available</div>
+                  <div className="preview-empty">
+                    <FiFile size={48} />
+                    <span>No preview available</span>
+                  </div>
                 )}
               </div>
             </div>
             <div className="preview-info">
               <div className="preview-info__title">{preview.title}</div>
-              <div className="text-muted preview-info__meta">Last saved: {safeDate(preview.updatedAt || preview.createdAt)}</div>
+              <div className="preview-info__meta">Last saved: {safeDate(preview.updatedAt || preview.createdAt)}</div>
               <div className="preview-info__actions">
-                <button className="btn btn-primary" onClick={() => { navToStudio(preview); closePreview(); }}>
+                <button className="modal-btn modal-btn--primary" onClick={() => { navToStudio(preview); closePreview(); }}>
                   Open in Studio
                 </button>
-                <button className="btn btn-ghost" onClick={() => { navigator.clipboard?.writeText(`${window.location.origin}/studio?project=${encodeURIComponent(preview._id)}`); pushToast('Link copied', 'info'); }}>
-                  Copy link
+                <button className="modal-btn modal-btn--ghost" onClick={() => {
+                  navigator.clipboard?.writeText(`${window.location.origin}/studio?project=${encodeURIComponent(preview._id)}`);
+                  pushToast('Link copied', 'info');
+                }}>
+                  Copy Link
                 </button>
               </div>
             </div>
@@ -1095,7 +1275,7 @@ export default function Dashboard() {
         </Modal>
       )}
 
-      {/* Toasts */}
+      {/* ── Toasts ───────────────────────────────────── */}
       <Toasts toasts={toasts} onDismiss={dismissToast} />
     </div>
   );

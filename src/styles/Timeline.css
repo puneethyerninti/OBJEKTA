@@ -1,0 +1,68 @@
+/* src/styles/Timeline.css — Timeline panel styles */
+
+.timeline-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(12, 12, 20, 0.85);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  padding: 6px 10px;
+  font-size: 12px;
+  z-index: 60;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.timeline-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.timeline-play-btn {
+  min-width: 60px;
+}
+
+.timeline-kf-group {
+  display: flex;
+  gap: 4px;
+}
+
+.timeline-scrubber {
+  flex: 1;
+  min-width: 80px;
+  accent-color: var(--brand-purple, #7f5af0);
+}
+
+.timeline-time-display {
+  width: 100px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted, rgba(255, 255, 255, 0.72));
+  white-space: nowrap;
+}
+
+.timeline-track-chips {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.timeline-track-chip {
+  padding: 2px 6px;
+  background: rgba(80, 120, 255, 0.15);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-muted, rgba(255, 255, 255, 0.72));
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .timeline-controls {
+    flex-wrap: wrap;
+  }
+  .timeline-track-chips {
+    display: none;
+  }
+}

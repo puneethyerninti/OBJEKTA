@@ -65,7 +65,7 @@ void main() {
 
 // PreviewGLTF: shows a static, non-animated preview of a GLTF model.
 // Accepts either a preloaded `gltf` prop or a `src` URL to load immediately.
-export default function PreviewGLTF({ src, gltf, fitSize = 3, fitAxis = 'max', position = [0,0,0] }) {
+export default function PreviewGLTF({ src, gltf, fitSize = 3, fitAxis = 'max', position = [0,0,0], rotation = [0,0,0] }) {
   const [local, setLocal] = useState(gltf || null);
   const mixerRef = useRef(null);
 
@@ -292,7 +292,7 @@ export default function PreviewGLTF({ src, gltf, fitSize = 3, fitAxis = 'max', p
   if (!scene) return null;
   return (
     <>
-      <group position={position}>
+      <group position={position} rotation={rotation}>
         <primitive object={scene} dispose={null} />
       </group>
     </>

@@ -12,14 +12,16 @@ export default function Loader({ active, message, progress }) {
   const indeterminate = normalized == null;
   const targetPct = indeterminate ? 0 : Math.round(normalized * 100);
 
-  // Smoothly animate percentage counter
+  // Smoothly animate percentage counter (use ref to avoid stale closure)
+  const currentPctRef = useRef(0);
   useEffect(() => {
-    if (indeterminate) { setDisplayPct(0); return; }
-    let current = displayPct;
+    if (indeterminate) { setDisplayPct(0); currentPctRef.current = 0; return; }
     const step = () => {
-      if (current < targetPct) {
-        current = Math.min(targetPct, current + Math.max(1, Math.ceil((targetPct - current) * 0.08)));
-        setDisplayPct(current);
+      const cur = currentPctRef.current;
+      if (cur < targetPct) {
+        const next = Math.min(targetPct, cur + Math.max(1, Math.ceil((targetPct - cur) * 0.08)));
+        currentPctRef.current = next;
+        setDisplayPct(next);
         rafRef.current = requestAnimationFrame(step);
       }
     };

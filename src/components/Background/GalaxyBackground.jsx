@@ -49,11 +49,11 @@ const Stars = ({ count, depth, twinkle, parallax }) => {
         <bufferAttribute attach="attributes-color" count={colors.length / 3} array={colors} itemSize={3} />
       </bufferGeometry>
       <pointsMaterial
-        size={0.05}
+        size={0.06}
         sizeAttenuation
         depthWrite={false}
         transparent
-        opacity={0.82}
+        opacity={0.85}
         vertexColors
         blending={THREE.AdditiveBlending}
       />
@@ -95,11 +95,11 @@ const NebulaSheets = ({ texture, parallax, activeRef }) => {
             ref={(m) => { mats.current[idx] = m; }}
             map={texture}
             transparent
-            opacity={0.72 - idx * 0.16}
+            opacity={0.62 - idx * 0.14}
             depthWrite={false}
             blending={THREE.AdditiveBlending}
             toneMapped={false}
-            color={idx === 0 ? '#9fe8ff' : idx === 1 ? '#6f8dff' : '#3f4f9f'}
+            color={idx === 0 ? '#8edcff' : idx === 1 ? '#5c7cee' : '#2e3d8a'}
           />
         </mesh>
       ))}
@@ -296,6 +296,106 @@ const AuroraBand = ({ parallax, activeRef }) => {
   );
 };
 
+/* ── Cosmic Dust — tiny slow-drifting particles that add depth volume ──── */
+const buildDust = (count, depth) => {
+  const positions = new Float32Array(count * 3);
+  const sizes = new Float32Array(count);
+  for (let i = 0; i < count; i += 1) {
+    positions[i * 3] = THREE.MathUtils.randFloatSpread(60);
+    positions[i * 3 + 1] = THREE.MathUtils.randFloatSpread(30);
+    positions[i * 3 + 2] = -Math.random() * depth;
+    sizes[i] = 0.015 + Math.random() * 0.03;
+  }
+  return { positions, sizes };
+};
+
+const CosmicDust = ({ count = 600, depth = 220, parallax, activeRef }) => {
+  const ref = useRef(null);
+  const { positions, sizes } = useMemo(() => buildDust(count, depth), [count, depth]);
+
+  useFrame((state) => {
+    if (!ref.current || activeRef?.current === false) return;
+    const t = state.clock.getElapsedTime();
+    // Very slow independent drift
+    ref.current.rotation.y = t * 0.003;
+    ref.current.rotation.x = Math.sin(t * 0.015) * 0.02;
+    ref.current.material.opacity = 0.28 + Math.sin(t * 0.6) * 0.08;
+    if (parallax?.current) {
+      ref.current.position.set(
+        parallax.current.x * 0.4,
+        parallax.current.y * 0.3,
+        parallax.current.z * 3,
+      );
+    }
+  });
+
+  return (
+    <points ref={ref} frustumCulled={false} renderOrder={1}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" count={count} array={positions} itemSize={3} />
+      </bufferGeometry>
+      <pointsMaterial
+        size={0.025}
+        sizeAttenuation
+        depthWrite={false}
+        transparent
+        opacity={0.3}
+        color="#6ba0d4"
+        blending={THREE.AdditiveBlending}
+      />
+    </points>
+  );
+};
+
+/* ── DepthGlow — large soft radial glow anchored behind nebula for warmth ── */
+const DepthGlow = ({ parallax, activeRef }) => {
+  const meshRef = useRef(null);
+
+  useFrame((state) => {
+    if (!meshRef.current || activeRef?.current === false) return;
+    const t = state.clock.getElapsedTime();
+    const pulse = 0.85 + Math.sin(t * 0.35) * 0.15;
+    meshRef.current.scale.setScalar(pulse);
+    meshRef.current.material.opacity = 0.22 + Math.sin(t * 0.25) * 0.06;
+    meshRef.current.position.z = -28 + parallax.current.z * 2;
+  });
+
+  return (
+    <mesh ref={meshRef} position={[0, 0.5, -28]} renderOrder={0}>
+      <planeGeometry args={[80, 50]} />
+      <shaderMaterial
+        transparent
+        depthWrite={false}
+        blending={THREE.AdditiveBlending}
+        toneMapped={false}
+        uniforms={{
+          uColor1: { value: new THREE.Color('#1a2866') },
+          uColor2: { value: new THREE.Color('#0a0e22') },
+        }}
+        vertexShader={`
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `}
+        fragmentShader={`
+          varying vec2 vUv;
+          uniform vec3 uColor1;
+          uniform vec3 uColor2;
+          void main() {
+            vec2 p = vUv - 0.5;
+            float d = length(p) * 2.0;
+            float alpha = smoothstep(1.0, 0.15, d) * 0.35;
+            vec3 col = mix(uColor1, uColor2, d);
+            gl_FragColor = vec4(col, alpha);
+          }
+        `}
+      />
+    </mesh>
+  );
+};
+
 const usePrefersReducedMotion = () => {
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
 
@@ -317,7 +417,7 @@ const usePrefersReducedMotion = () => {
   return prefersReducedMotion;
 };
 
-const GalaxyBackground = ({ starCount = 2600, depth = 160, twinkle = true, parallaxStrength = 1.35, scrollStrength = 0.65, shootingCount = 12 }) => {
+const GalaxyBackground = ({ starCount = 3200, depth = 220, twinkle = true, parallaxStrength = 1.15, scrollStrength = 0.55, shootingCount = 14 }) => {
   const tex = useMemo(() => getNebulaTexture(), []);
   const { scene } = useThree();
   const groupRef = useRef(null);
@@ -331,8 +431,9 @@ const GalaxyBackground = ({ starCount = 2600, depth = 160, twinkle = true, paral
   }, [parallaxStrength, scrollStrength]);
 
   useMemo(() => {
-    scene.background = new THREE.Color('#040814');
-    scene.fog = new THREE.FogExp2('#040814', 0.012);
+    scene.background = new THREE.Color('#030610');
+    // Softer exponential fog for seamless depth fade-out
+    scene.fog = new THREE.FogExp2('#030610', 0.008);
   }, [scene]);
 
   useEffect(() => {
@@ -354,41 +455,51 @@ const GalaxyBackground = ({ starCount = 2600, depth = 160, twinkle = true, paral
 
   useFrame((state) => {
     if (!groupRef.current || isActive.current === false) return;
-    const motionScale = prefersReducedMotion || prefersSaveData.current ? 0.5 : 1;
+    const motionScale = prefersReducedMotion || prefersSaveData.current ? 0.4 : 1;
     const t = state.clock.getElapsedTime();
-    const driftX = Math.sin(t * 0.12) * parallaxStrength * 0.65;
-    const driftY = Math.cos(t * 0.1) * parallaxStrength * 0.52;
-    const driftZ = Math.sin(t * 0.08) * scrollStrength * 0.8;
+    // Slower, multi-frequency drift for organic feel
+    const driftX = (Math.sin(t * 0.08) * 0.55 + Math.sin(t * 0.035) * 0.3) * parallaxStrength;
+    const driftY = (Math.cos(t * 0.065) * 0.42 + Math.cos(t * 0.028) * 0.22) * parallaxStrength;
+    const driftZ = (Math.sin(t * 0.05) * 0.6 + Math.sin(t * 0.022) * 0.35) * scrollStrength;
     parallax.current.tx = driftX;
     parallax.current.ty = driftY;
     parallax.current.tz = driftZ;
-    const maxOffset = 2.7 * motionScale;
+    const maxOffset = 2.4 * motionScale;
+    // Smoother interpolation factor for buttery-smooth motion
+    const lerpFactor = 0.045 * motionScale;
     parallax.current.x = THREE.MathUtils.clamp(
-      parallax.current.x + (parallax.current.tx - parallax.current.x) * 0.085 * motionScale,
+      parallax.current.x + (parallax.current.tx - parallax.current.x) * lerpFactor,
       -maxOffset,
       maxOffset,
     );
     parallax.current.y = THREE.MathUtils.clamp(
-      parallax.current.y + (parallax.current.ty - parallax.current.y) * 0.085 * motionScale,
+      parallax.current.y + (parallax.current.ty - parallax.current.y) * lerpFactor,
       -maxOffset,
       maxOffset,
     );
     parallax.current.z = THREE.MathUtils.clamp(
-      parallax.current.z + (parallax.current.tz - parallax.current.z) * 0.11 * motionScale,
+      parallax.current.z + (parallax.current.tz - parallax.current.z) * lerpFactor * 1.2,
       -maxOffset,
       maxOffset,
     );
     // Base offset keeps glow centered behind hero while parallax adds subtle motion
-    groupRef.current.position.set(0.45 + parallax.current.x, 0.25 + parallax.current.y * 0.8, -6 + parallax.current.z * 6);
-    groupRef.current.rotation.y = parallax.current.x * 0.05;
-    groupRef.current.rotation.x = parallax.current.y * 0.04;
-    groupRef.current.rotation.z += (0.00035 + Math.sin(t * 0.12) * 0.0002) * motionScale;
+    groupRef.current.position.set(
+      0.45 + parallax.current.x,
+      0.25 + parallax.current.y * 0.75,
+      -6 + parallax.current.z * 5,
+    );
+    groupRef.current.rotation.y = parallax.current.x * 0.035;
+    groupRef.current.rotation.x = parallax.current.y * 0.03;
+    groupRef.current.rotation.z += (0.00025 + Math.sin(t * 0.1) * 0.00015) * motionScale;
   });
 
   return (
     <group ref={groupRef} position={[0, 0, -6]}>
       <NebulaSheets texture={tex} parallax={parallax} activeRef={isActive} />
       <Stars count={starCount} depth={depth} twinkle={twinkle && !prefersReducedMotion} parallax={parallax} />
+      {/* Second star layer — finer, deeper, for parallax depth illusion */}
+      <Stars count={Math.floor(starCount * 0.35)} depth={depth * 1.4} twinkle={false} parallax={parallax} />
+      <CosmicDust count={600} depth={depth} parallax={parallax} activeRef={isActive} />
       <ShootingStars
         count={shootingCount}
         depth={depth}
@@ -399,6 +510,8 @@ const GalaxyBackground = ({ starCount = 2600, depth = 160, twinkle = true, paral
       {!prefersReducedMotion && <CursorGlow texture={tex} parallax={parallax} activeRef={isActive} />}
       {!prefersReducedMotion && <PointerOrbs parallax={parallax} prefersReducedMotion={prefersReducedMotion} activeRef={isActive} />}
       {!prefersReducedMotion && <AuroraBand parallax={parallax} activeRef={isActive} />}
+      {/* Deep radial glow anchor behind nebula */}
+      <DepthGlow parallax={parallax} activeRef={isActive} />
     </group>
   );
 };
