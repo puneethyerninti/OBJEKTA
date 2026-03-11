@@ -69,7 +69,7 @@ const PostFXPanel = lazy(() => import("../components/PostFXPanel"));
 export default function Studio() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { logout, user: authUser } = useAuth() || {};
+  const { logout, user: authUser, authFetch } = useAuth() || {};
 
   // refs & API handles
   const workspaceRef = useRef(null);
@@ -1559,6 +1559,40 @@ export default function Studio() {
         return;
       }
       if (res.status === 401) {
+        // Attempt token refresh before logging out
+        try {
+          const refreshRes = await fetch(apiUrl("/api/auth/refresh"), {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+          });
+          if (refreshRes.ok) {
+            const refreshData = await safeJson(refreshRes);
+            if (refreshData?.token) {
+              localStorage.setItem("objekta_token", refreshData.token);
+              // Retry with fresh token
+              const retryRes = await fetch(apiUrl("/api/projects"), { headers: getAuthHeaders(), credentials: "include" });
+              if (retryRes.ok) {
+                const retryData = await safeJson(retryRes);
+                let list = [];
+                if (Array.isArray(retryData)) list = retryData;
+                else if (retryData?.projects && Array.isArray(retryData.projects)) list = retryData.projects;
+                else if (retryData?.length) list = retryData;
+                const normalized = (list || []).map((p) => ({
+                  _id: p._id || p.id || p.project?._id || null,
+                  name: p.name || p.title || p.project?.name || p.scene?.name || `Project ${p._id || p.id || ""}`,
+                  thumbnailUrl: p.thumbnailUrl ?? null,
+                  lastSavedAt: p.lastSavedAt || p.updatedAt || p.modifiedAt || null,
+                  raw: p,
+                }));
+                setProjects(normalized || []);
+                return;
+              }
+            }
+          }
+        } catch (refreshErr) {
+          console.warn("[OBJEKTA] token refresh failed during fetchProjects", refreshErr);
+        }
         forceLogoutDueTo401();
         return;
       }
@@ -1600,9 +1634,40 @@ export default function Studio() {
     if (!id) throw new Error("Project id required");
     const res = await fetch(apiUrl(`/api/projects/${id}`), { headers: getAuthHeaders(), credentials: "include" });
     const data = await safeJson(res);
+
+    // On 401, attempt token refresh before giving up
     if (res.status === 401) {
+      try {
+        const refreshRes = await fetch(apiUrl("/api/auth/refresh"), {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+        });
+        if (refreshRes.ok) {
+          const refreshData = await safeJson(refreshRes);
+          if (refreshData?.token) {
+            localStorage.setItem("objekta_token", refreshData.token);
+            // Retry with fresh token
+            const retryRes = await fetch(apiUrl(`/api/projects/${id}`), { headers: getAuthHeaders(), credentials: "include" });
+            const retryData = await safeJson(retryRes);
+            if (retryRes.ok) {
+              if (retryData?.project) return retryData.project;
+              return retryData;
+            }
+            if (!retryRes.ok) {
+              const msg = retryData?.message || retryData?.error || JSON.stringify(retryData);
+              throw new Error(msg || "Failed fetching project after token refresh");
+            }
+          }
+        }
+      } catch (refreshErr) {
+        console.warn("[OBJEKTA] token refresh failed during getProject", refreshErr);
+      }
       forceLogoutDueTo401();
       throw new Error("Session expired");
+    }
+    if (res.status === 403) {
+      console.warn(`[OBJEKTA] 403 Forbidden for project ${id}. Check project ownership.`, data);
     }
     if (!res.ok) {
       const msg = data?.message || data?.error || JSON.stringify(data);

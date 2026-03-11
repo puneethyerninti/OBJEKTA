@@ -21,7 +21,8 @@ function initYjs(httpServer) {
   httpServer.on('upgrade', (request, socket, head) => {
     // Only handle /yjs/<projectId> paths
     const url = new URL(request.url, `http://${request.headers.host}`);
-    const match = url.pathname.match(/^\/yjs\/([a-zA-Z0-9_-]+)$/);
+    // Accept /yjs/<projectId> or /yjs/<projectId>/<roomName> (y-websocket client appends room name)
+    const match = url.pathname.match(/^\/yjs\/([a-zA-Z0-9_-]+)(?:\/.*)?$/);
 
     if (!match) {
       // Not a Yjs path — let socket.io or other handlers deal with it

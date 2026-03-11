@@ -143,9 +143,22 @@ function toPublic(req, p) {
 function canAccess(p, userId) {
   if (!p) return false;
   const uid = String(userId || "");
-  if (!uid) return false;
-  if (p.user && String(p.user) === uid) return true;
-  if (Array.isArray(p.collaborators) && p.collaborators.some(c => String(c) === uid)) return true;
+  if (!uid || uid === "undefined" || uid === "null") return false;
+
+  // Owner check — handle both raw ObjectId and populated { _id } shapes
+  const ownerId = p.user?._id ? String(p.user._id) : p.user ? String(p.user) : null;
+  if (ownerId && ownerId === uid) return true;
+
+  // Collaborator check — handle both ObjectId array and populated objects
+  if (Array.isArray(p.collaborators) && p.collaborators.some(c => {
+    const cid = c?._id ? String(c._id) : String(c);
+    return cid === uid;
+  })) return true;
+
+  // Debug log when access is denied (only in development)
+  if (process.env.NODE_ENV !== 'production') {
+    console.warn(`[canAccess] DENIED — userId=${uid} ownerId=${ownerId} collaborators=[${(p.collaborators || []).map(c => String(c?._id || c)).join(',')}]`);
+  }
   return false;
 }
 

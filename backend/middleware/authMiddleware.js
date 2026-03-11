@@ -9,6 +9,16 @@ exports.protect = (req, res, next) => {
     token = req.headers.authorization.split(" ")[1];
   }
 
+  // Fallback: check cookies (accessToken or objekta_token)
+  if (!token && req.cookies) {
+    token = req.cookies.accessToken || req.cookies.objekta_token || null;
+  }
+
+  // Fallback: check query parameter (for WebSocket upgrades)
+  if (!token && req.query && req.query.token) {
+    token = req.query.token;
+  }
+
   if (!token) return res.status(401).json({ message: "Not authorized, token missing" });
 
   try {

@@ -67,9 +67,12 @@ export class CollaborationProvider {
       const port = import.meta.env?.VITE_BACKEND_PORT || '5000';
       wsUrl = `${proto}//${host}:${port}`;
     }
-    const fullUrl = `${wsUrl}/yjs/${projectId}`;
+    // y-websocket appends the room name as a path segment to the server URL,
+    // so we use /yjs as server URL and the projectId as room name.
+    // This produces ws://host:port/yjs/<projectId> which the backend expects.
+    const fullUrl = `${wsUrl}/yjs`;
 
-    this.wsProvider = new WebsocketProvider(fullUrl, `project:${projectId}`, this.doc, {
+    this.wsProvider = new WebsocketProvider(fullUrl, projectId, this.doc, {
       connect: true,
       awareness: new Awareness(this.doc),
       resyncInterval: 5000,
