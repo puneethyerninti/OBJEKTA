@@ -50,6 +50,11 @@ export default function MaterialLibraryPanel({ workspaceRef, selected, pushToast
     return MATERIAL_PRESETS;
   }, [searchQuery, activeCategory]);
 
+  // ── Helper to request a viewport render after material changes ──
+  const markDirty = useCallback(() => {
+    try { workspaceRef?.current?.markDirty?.(); } catch (e) {}
+  }, [workspaceRef]);
+
   // ── Apply a material preset to selected mesh ────────────────────
   const handleApplyPreset = useCallback(
     (preset) => {
@@ -66,12 +71,13 @@ export default function MaterialLibraryPanel({ workspaceRef, selected, pushToast
         }
 
         setLastRollback(rollback);
+        markDirty();
         pushToast?.({ type: "info", message: `Applied: ${preset.name}` });
       } catch (err) {
         pushToast?.({ type: "error", message: `Failed: ${err.message}` });
       }
     },
-    [selected, pushToast],
+    [selected, pushToast, markDirty],
   );
 
   // ── Undo last material application ──────────────────────────────
@@ -79,8 +85,9 @@ export default function MaterialLibraryPanel({ workspaceRef, selected, pushToast
     if (!lastRollback) return;
     rollbackPreset(lastRollback);
     setLastRollback(null);
+    markDirty();
     pushToast?.({ type: "info", message: "Material reverted" });
-  }, [lastRollback, pushToast]);
+  }, [lastRollback, pushToast, markDirty]);
 
   // ── Apply procedural texture ────────────────────────────────────
   const handleApplyTexture = useCallback(
@@ -102,12 +109,13 @@ export default function MaterialLibraryPanel({ workspaceRef, selected, pushToast
         const slot = channelMap[texChannel] || "map";
         selected.material[slot] = tex;
         selected.material.needsUpdate = true;
+        markDirty();
         pushToast?.({ type: "info", message: `${texEntry.label} → ${texChannel}` });
       } catch (err) {
         pushToast?.({ type: "error", message: err.message });
       }
     },
-    [selected, texChannel, pushToast],
+    [selected, texChannel, pushToast, markDirty],
   );
 
   // ── Save custom preset ──────────────────────────────────────────

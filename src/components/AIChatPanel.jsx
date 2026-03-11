@@ -32,7 +32,7 @@ function renderMd(text) {
     const line = lines[i];
     if (i > 0) elements.push(<br key={`br-${i}`} />);
     if (!line.trim()) continue;
-    const bulletMatch = line.match(/^(\s*)[•\-\*]\s+(.*)/);
+    const bulletMatch = line.match(/^(\s*)[•\-*]\s+(.*)/);
     if (bulletMatch) {
       elements.push(<span key={`li-${i}`} className="aichat-md-bullet">{inlineFmt(bulletMatch[2], i)}</span>);
       continue;

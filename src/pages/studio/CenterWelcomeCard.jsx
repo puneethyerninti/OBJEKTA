@@ -88,7 +88,7 @@ const CenterWelcomeCard = React.memo(function CenterWelcomeCard({
           <input
             aria-label="Import GLB"
             type="file"
-            accept=".glb,.gltf"
+            accept=".glb,.gltf,.obj,.fbx,.zip"
             className="sr-only"
             onChange={(e) => importGLTF(e.target.files?.[0])}
           />

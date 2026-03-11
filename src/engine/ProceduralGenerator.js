@@ -29,16 +29,17 @@ export function generateStairs(opts = {}) {
 
   const group = new THREE.Group();
   group.name = "ProceduralStairs";
-
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.7, metalness: 0.05 });
+  group.userData.__objekta = true;
 
   for (let i = 0; i < steps; i++) {
     const geo = new THREE.BoxGeometry(width, stepHeight, stepDepth);
+    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.7, metalness: 0.05 });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(0, stepHeight * (i + 0.5), -stepDepth * i);
     mesh.name = `Step_${i + 1}`;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    mesh.userData.__objekta = true;
     group.add(mesh);
   }
 
@@ -63,8 +64,8 @@ export function generateWall(opts = {}) {
 
   const group = new THREE.Group();
   group.name = "ProceduralWall";
+  group.userData.__objekta = true;
 
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0 });
   const unitW = brickW + gap;
   const unitH = brickH + gap;
 
@@ -72,11 +73,13 @@ export function generateWall(opts = {}) {
     const offset = r % 2 === 0 ? 0 : unitW * 0.5; // staggered
     for (let c = 0; c < cols; c++) {
       const geo = new THREE.BoxGeometry(brickW, brickH, brickD);
+      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0 });
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(offset + unitW * c - (unitW * cols) / 2, unitH * r + brickH / 2, 0);
       mesh.name = `Brick_${r}_${c}`;
       mesh.castShadow = true;
       mesh.receiveShadow = true;
+      mesh.userData.__objekta = true;
       group.add(mesh);
     }
   }
@@ -102,6 +105,7 @@ export function generateFloor(opts = {}) {
   if (tileCount > 0) {
     const group = new THREE.Group();
     group.name = "ProceduralTiledFloor";
+    group.userData.__objekta = true;
     const tileW = width / tileCount;
     const tileD = depth / tileCount;
     const colors = [color, shiftColor(color, -12)];
@@ -121,6 +125,7 @@ export function generateFloor(opts = {}) {
         );
         mesh.receiveShadow = true;
         mesh.name = `Tile_${x}_${z}`;
+        mesh.userData.__objekta = true;
         group.add(mesh);
       }
     }
@@ -133,6 +138,7 @@ export function generateFloor(opts = {}) {
   mesh.rotation.x = -Math.PI / 2;
   mesh.receiveShadow = true;
   mesh.name = "ProceduralFloor";
+  mesh.userData.__objekta = true;
   return mesh;
 }
 
@@ -176,6 +182,7 @@ export function generateTerrain(opts = {}) {
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   mesh.name = "ProceduralTerrain";
+  mesh.userData.__objekta = true;
   return mesh;
 }
 
@@ -199,6 +206,7 @@ export function scatter(source, opts = {}) {
 
   const group = new THREE.Group();
   group.name = "ProceduralScatter";
+  group.userData.__objekta = true;
   const rng = seededRandom(seed);
   const half = area / 2;
 
@@ -215,6 +223,7 @@ export function scatter(source, opts = {}) {
     clone.rotation.y = rng() * Math.PI * 2;
     clone.name = `${source.name || "Scatter"}_${i + 1}`;
     clone.castShadow = true;
+    clone.userData.__objekta = true;
     group.add(clone);
   }
 
@@ -235,6 +244,7 @@ export function array(source, opts = {}) {
 
   const group = new THREE.Group();
   group.name = "ProceduralArray";
+  group.userData.__objekta = true;
 
   for (let x = 0; x < countX; x++) {
     for (let y = 0; y < countY; y++) {
@@ -245,6 +255,7 @@ export function array(source, opts = {}) {
         clone.position.set(x * spacingX, y * spacingY, z * spacingZ);
         clone.name = `${source.name || "Array"}_${x}_${y}_${z}`;
         clone.castShadow = true;
+        clone.userData.__objekta = true;
         group.add(clone);
       }
     }
@@ -264,6 +275,7 @@ export function circularArray(source, opts = {}) {
 
   const group = new THREE.Group();
   group.name = "ProceduralCircularArray";
+  group.userData.__objekta = true;
 
   for (let i = 0; i < count; i++) {
     const angle = (i / count) * Math.PI * 2;
@@ -273,6 +285,7 @@ export function circularArray(source, opts = {}) {
     if (faceCenter) clone.rotation.y = -angle + Math.PI;
     clone.name = `${source.name || "Ring"}_${i + 1}`;
     clone.castShadow = true;
+    clone.userData.__objekta = true;
     group.add(clone);
   }
 
@@ -301,14 +314,15 @@ export function generateRoom(opts = {}) {
 
   const group = new THREE.Group();
   group.name = "ProceduralRoom";
+  group.userData.__objekta = true;
 
-  const wallMat = new THREE.MeshStandardMaterial({ color: wallColor, roughness: 0.75, metalness: 0 });
   const floorMat = new THREE.MeshStandardMaterial({ color: floorColor, roughness: 0.6, metalness: 0 });
 
   // Floor
   const floor = new THREE.Mesh(new THREE.BoxGeometry(width, 0.05, depth), floorMat);
   floor.name = "Room_Floor";
   floor.receiveShadow = true;
+  floor.userData.__objekta = true;
   group.add(floor);
 
   // Walls: front, back, left, right
@@ -320,20 +334,24 @@ export function generateRoom(opts = {}) {
   ];
 
   for (const w of walls) {
+    const wallMat = new THREE.MeshStandardMaterial({ color: wallColor, roughness: 0.75, metalness: 0 });
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(...w.size), wallMat);
     mesh.position.set(...w.pos);
     mesh.name = `Room_${w.name}`;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    mesh.userData.__objekta = true;
     group.add(mesh);
   }
 
   // Ceiling
   if (ceiling) {
-    const ceil = new THREE.Mesh(new THREE.BoxGeometry(width, 0.05, depth), wallMat);
+    const ceilMat = new THREE.MeshStandardMaterial({ color: wallColor, roughness: 0.75, metalness: 0 });
+    const ceil = new THREE.Mesh(new THREE.BoxGeometry(width, 0.05, depth), ceilMat);
     ceil.position.y = height;
     ceil.name = "Room_Ceiling";
     ceil.receiveShadow = true;
+    ceil.userData.__objekta = true;
     group.add(ceil);
   }
 
@@ -363,12 +381,14 @@ export function generateColumn(opts = {}) {
     mesh.name = "ProceduralColumn";
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    mesh.userData.__objekta = true;
     return mesh;
   }
 
   // Fluted column — cylinder with carved grooves represented as a group
   const group = new THREE.Group();
   group.name = "ProceduralFlutedColumn";
+  group.userData.__objekta = true;
 
   // Main shaft
   const shaft = new THREE.Mesh(
@@ -378,6 +398,7 @@ export function generateColumn(opts = {}) {
   shaft.position.y = height / 2;
   shaft.name = "Column_Shaft";
   shaft.castShadow = true;
+  shaft.userData.__objekta = true;
   group.add(shaft);
 
   // Base & capital
@@ -387,13 +408,16 @@ export function generateColumn(opts = {}) {
   base.position.y = 0.075;
   base.name = "Column_Base";
   base.receiveShadow = true;
+  base.userData.__objekta = true;
   group.add(base);
 
+  const capMat = mat.clone();
   const capGeo = new THREE.CylinderGeometry(radius * 1.4, radius * 1.3, 0.15, segments);
-  const cap = new THREE.Mesh(capGeo, baseMat);
+  const cap = new THREE.Mesh(capGeo, capMat);
   cap.position.y = height - 0.075;
   cap.name = "Column_Capital";
   cap.receiveShadow = true;
+  cap.userData.__objekta = true;
   group.add(cap);
 
   return group;

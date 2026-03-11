@@ -136,6 +136,7 @@ export default function ObjectPropertiesTexture({
   const [aoIntensity, setAoIntensity] = useState(1.0);
   const [invertRoughness, setInvertRoughness] = useState(false);
   const [invertMetalness, setInvertMetalness] = useState(false);
+  const [materialSide, setMaterialSide] = useState(THREE.FrontSide);
 
   // TEXTURES
   const mapsRef = useRef({});
@@ -284,6 +285,7 @@ export default function ObjectPropertiesTexture({
         if (foundMat.emissive) try { const em = `#${foundMat.emissive.getHexString()}`; snapValues.emissiveHex = em; setEmissiveHex(em); } catch (e) {}
         if (typeof foundMat.wireframe === "boolean") { snapValues.wireframe = foundMat.wireframe; setWireframe(foundMat.wireframe); }
         if (foundMat.normalScale) { snapValues.normalScale = foundMat.normalScale.x || 1; setNormalScale(foundMat.normalScale.x || 1); }
+        if (typeof foundMat.side === 'number') setMaterialSide(foundMat.side);
 
         MAP_SLOTS.forEach((slot) => {
           const k = slot.key;
@@ -443,11 +445,13 @@ export default function ObjectPropertiesTexture({
               if (patch.hex && m.color) m.color.set(patch.hex);
               if (typeof patch.roughness === 'number' && typeof m.roughness === 'number') m.roughness = (patch.invertRoughness ? 1 - patch.roughness : patch.roughness);
               if (typeof patch.metalness === 'number' && typeof m.metalness === 'number') m.metalness = (patch.invertMetalness ? 1 - patch.metalness : patch.metalness);
-              if (typeof patch.opacity === 'number') { m.opacity = patch.opacity; m.transparent = patch.opacity < 1; }
-              if (patch.emissiveHex && m.emissive) { m.emissive.set(patch.emissiveHex); if (typeof patch.emissiveIntensity === 'number' && m.emissiveIntensity !== undefined) m.emissiveIntensity = patch.emissiveIntensity; }
+              if (typeof patch.opacity === 'number') { m.opacity = patch.opacity; m.transparent = patch.opacity < 1; if (patch.opacity >= 1) m.depthWrite = true; }
+              if (patch.emissiveHex && m.emissive) m.emissive.set(patch.emissiveHex);
+              if (typeof patch.emissiveIntensity === 'number' && m.emissiveIntensity !== undefined) m.emissiveIntensity = patch.emissiveIntensity;
               if (typeof patch.wireframe === 'boolean') m.wireframe = patch.wireframe;
               if (typeof patch.normalScale === 'number' && m.normalScale) m.normalScale = new THREE.Vector2(patch.normalScale, patch.normalScale);
-              if (typeof patch.aoIntensity === 'number' && m.aoMap) { /* left to host shader code, no-op here */ }
+              if (typeof patch.aoIntensity === 'number') m.aoMapIntensity = patch.aoIntensity;
+              if (typeof patch.side === 'number') m.side = patch.side;
               m.needsUpdate = true;
             } catch (e) {}
           });
@@ -583,6 +587,13 @@ export default function ObjectPropertiesTexture({
         loader.load(url, (tex) => {
           try {
             const s = entry.settings;
+            // Color space: base color & emissive = sRGB, everything else = Linear
+            const srgbSlots = ['map', 'emissiveMap'];
+            if (srgbSlots.includes(slotKey)) {
+              try { tex.colorSpace = THREE.SRGBColorSpace; } catch (e) {}
+            } else {
+              try { tex.colorSpace = THREE.LinearSRGBColorSpace; } catch (e) {}
+            }
             if (s.wrap === 'repeat') { tex.wrapS = tex.wrapT = THREE.RepeatWrapping; }
             else if (s.wrap === 'clamp') { tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping; }
             else if (s.wrap === 'mirror') { tex.wrapS = tex.wrapT = THREE.MirroredRepeatWrapping; }
@@ -606,6 +617,13 @@ export default function ObjectPropertiesTexture({
                     if (slotKey === 'normalMap') m.normalScale = m.normalScale || new THREE.Vector2(normalScale, normalScale);
                     if (slotKey === 'roughnessMap' && typeof m.roughness === 'undefined') m.roughness = 1;
                     if (slotKey === 'metalnessMap' && typeof m.metalness === 'undefined') m.metalness = 0;
+                    if (slotKey === 'aoMap') {
+                      // AO map requires uv2; copy from uv if not present
+                      if (n.geometry && !n.geometry.attributes.uv2 && n.geometry.attributes.uv) {
+                        n.geometry.setAttribute('uv2', n.geometry.attributes.uv);
+                      }
+                      m.aoMapIntensity = m.aoMapIntensity ?? 1.0;
+                    }
                     m.needsUpdate = true;
                   } catch (e) {}
                 });
@@ -1232,6 +1250,132 @@ export default function ObjectPropertiesTexture({
       );
   }
 
+  // Per-light property inspector
+  if (selected.isLight) {
+    const lightObj = selected;
+    const lType = lightObj.isPointLight ? "point" : lightObj.isSpotLight ? "spot" : lightObj.isDirectionalLight ? "directional" : lightObj.isAmbientLight ? "ambient" : lightObj.isRectAreaLight ? "rectarea" : "unknown";
+    const lColor = "#" + (lightObj.color ? lightObj.color.getHexString() : "ffffff");
+    const lIntensity = lightObj.intensity ?? 1;
+    const lDistance = lightObj.distance ?? 0;
+    const lAngle = lightObj.angle != null ? THREE.MathUtils.radToDeg(lightObj.angle) : 45;
+    const lPenumbra = lightObj.penumbra ?? 0;
+    const lDecay = lightObj.decay ?? 2;
+    const lWidth = lightObj.width ?? 10;
+    const lHeight = lightObj.height ?? 10;
+    const lCastShadow = lightObj.castShadow ?? false;
+
+    const updateLightProp = (prop, value) => {
+      try {
+        if (prop === "color") { lightObj.color.set(value); }
+        else if (prop === "intensity") { lightObj.intensity = value; }
+        else if (prop === "distance") { lightObj.distance = value; }
+        else if (prop === "angle") { lightObj.angle = THREE.MathUtils.degToRad(value); }
+        else if (prop === "penumbra") { lightObj.penumbra = value; }
+        else if (prop === "decay") { lightObj.decay = value; }
+        else if (prop === "width") { lightObj.width = value; }
+        else if (prop === "height") { lightObj.height = value; }
+        else if (prop === "castShadow") { lightObj.castShadow = value; }
+        if (onLightChange) onLightChange({ type: lType, color: lightObj.color ? "#" + lightObj.color.getHexString() : "#ffffff", intensity: lightObj.intensity });
+      } catch (e) {}
+    };
+
+    return (
+      <div ref={rootScrollRef} className="op-container object-properties">
+        <div className="op-header">
+          <input className="op-name-input prop-input" type="text" value={name} onChange={(e) => handleRename(e.target.value)} placeholder="Light name" />
+          <div className="op-header-actions">
+            <button className="op-btn op-btn-danger" title="Delete" onClick={() => onDelete && onDelete()}>Delete</button>
+          </div>
+        </div>
+        <div className="op-sections">
+          <div className="op-panel" data-depth="1">
+            <div className="op-panel-header"><strong>Light Properties ({lType})</strong></div>
+            <div className="op-material-body">
+              <div className="op-texture-row">
+                <label>Color</label>
+                <input className="op-color-swatch small" type="color" defaultValue={lColor} onChange={(e) => updateLightProp("color", e.target.value)} />
+              </div>
+              <div className="op-texture-row">
+                <label>Intensity {lIntensity.toFixed(2)}</label>
+                <input className="op-range prop-slider" type="range" min="0" max="10" step="0.01" defaultValue={lIntensity} onChange={(e) => updateLightProp("intensity", Number(e.target.value))} />
+              </div>
+              {(lType === "point" || lType === "spot") && (
+                <div className="op-texture-row">
+                  <label>Distance {lDistance.toFixed(1)}</label>
+                  <input className="op-range prop-slider" type="range" min="0" max="100" step="0.5" defaultValue={lDistance} onChange={(e) => updateLightProp("distance", Number(e.target.value))} />
+                </div>
+              )}
+              {(lType === "point" || lType === "spot") && (
+                <div className="op-texture-row">
+                  <label>Decay {lDecay.toFixed(1)}</label>
+                  <input className="op-range prop-slider" type="range" min="0" max="5" step="0.1" defaultValue={lDecay} onChange={(e) => updateLightProp("decay", Number(e.target.value))} />
+                </div>
+              )}
+              {lType === "spot" && (
+                <>
+                  <div className="op-texture-row">
+                    <label>Angle {lAngle.toFixed(1)}°</label>
+                    <input className="op-range prop-slider" type="range" min="1" max="90" step="0.5" defaultValue={lAngle} onChange={(e) => updateLightProp("angle", Number(e.target.value))} />
+                  </div>
+                  <div className="op-texture-row">
+                    <label>Penumbra {lPenumbra.toFixed(2)}</label>
+                    <input className="op-range prop-slider" type="range" min="0" max="1" step="0.01" defaultValue={lPenumbra} onChange={(e) => updateLightProp("penumbra", Number(e.target.value))} />
+                  </div>
+                </>
+              )}
+              {lType === "rectarea" && (
+                <>
+                  <div className="op-texture-row">
+                    <label>Width {lWidth.toFixed(1)}</label>
+                    <input className="op-range prop-slider" type="range" min="0.1" max="50" step="0.1" defaultValue={lWidth} onChange={(e) => updateLightProp("width", Number(e.target.value))} />
+                  </div>
+                  <div className="op-texture-row">
+                    <label>Height {lHeight.toFixed(1)}</label>
+                    <input className="op-range prop-slider" type="range" min="0.1" max="50" step="0.1" defaultValue={lHeight} onChange={(e) => updateLightProp("height", Number(e.target.value))} />
+                  </div>
+                </>
+              )}
+              {lType !== "ambient" && (
+                <div className="op-texture-row">
+                  <label className="op-inline-checkbox">
+                    <input type="checkbox" defaultChecked={lCastShadow} onChange={(e) => updateLightProp("castShadow", e.target.checked)} />
+                    <span>Cast Shadow</span>
+                  </label>
+                </div>
+              )}
+            </div>
+          </div>
+          {/* Transform Panel for Light */}
+          <div ref={transformSectionRef} className="op-panel" data-depth="2">
+            <div className="op-panel-header">
+              <button className="op-collapse" onClick={() => setOpenTransform(v => !v)}>{openTransform ? '▾' : '▸'}</button>
+              <strong>Transform</strong>
+            </div>
+            {openTransform && (
+              <div className="op-transform-grid">
+                <div className="op-tg-header" />
+                <span className="op-tg-axis op-tg-axis-x">X</span>
+                <span className="op-tg-axis op-tg-axis-y">Y</span>
+                <span className="op-tg-axis op-tg-axis-z">Z</span>
+                <div />
+                <label className="op-tg-label">Position</label>
+                <div className="op-tg-cell op-tg-cell-x"><Numeric value={position.x} onChange={handleInputChange('position','x')} onBlur={handleInputBlur('position','x')} /></div>
+                <div className="op-tg-cell op-tg-cell-y"><Numeric value={position.y} onChange={handleInputChange('position','y')} onBlur={handleInputBlur('position','y')} /></div>
+                <div className="op-tg-cell op-tg-cell-z"><Numeric value={position.z} onChange={handleInputChange('position','z')} onBlur={handleInputBlur('position','z')} /></div>
+                <button className="op-tg-reset" title="Reset Position" onClick={() => { queueTransform('position','x',0); queueTransform('position','y',0); queueTransform('position','z',0); setPosition({x:0,y:0,z:0}); }}>↺</button>
+                <label className="op-tg-label">Rotation</label>
+                <div className="op-tg-cell op-tg-cell-x"><Numeric value={rotation.x} onChange={handleInputChange('rotation','x')} onBlur={handleInputBlur('rotation','x')} /></div>
+                <div className="op-tg-cell op-tg-cell-y"><Numeric value={rotation.y} onChange={handleInputChange('rotation','y')} onBlur={handleInputBlur('rotation','y')} /></div>
+                <div className="op-tg-cell op-tg-cell-z"><Numeric value={rotation.z} onChange={handleInputChange('rotation','z')} onBlur={handleInputBlur('rotation','z')} /></div>
+                <button className="op-tg-reset" title="Reset Rotation" onClick={() => { queueTransform('rotation','x',0); queueTransform('rotation','y',0); queueTransform('rotation','z',0); setRotation({x:0,y:0,z:0}); }}>↺</button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div ref={rootScrollRef} className={`op-container object-properties ${dragActive ? "drag-active" : ""}`} onDrop={onDrop} onDragOver={onDragOver} onDragEnter={onDragEnter} onDragLeave={onDragLeave}>
       {/* Header */}
@@ -1373,17 +1517,37 @@ export default function ObjectPropertiesTexture({
               </div>
 
               <div className="op-emissive-block">
-                <label>Emissive</label>
-                <input className="op-color-swatch small" type="color" value={emissiveHex} onChange={(e) => { setEmissiveHex(e.target.value); scheduleMaterialApply({ emissiveHex: e.target.value, emissiveIntensity }); }} />
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <label>Emissive</label>
+                  <input className="op-color-swatch small" type="color" value={emissiveHex} onChange={(e) => { setEmissiveHex(e.target.value); scheduleMaterialApply({ emissiveHex: e.target.value, emissiveIntensity }); }} />
+                  <span style={{ fontSize: 11, color: "#9da6d4" }}>{emissiveHex.toUpperCase()}</span>
+                </div>
                 <label>Intensity {emissiveIntensity.toFixed(2)}</label>
-                <input className="op-range prop-slider" type="range" min="0" max="5" step="0.01" value={emissiveIntensity} onChange={(e) => { const v = Number(e.target.value); setEmissiveIntensity(v); scheduleMaterialApply({ emissiveIntensity: v, emissiveHex }); }} />
+                <input className="op-range prop-slider" type="range" min="0" max="10" step="0.05" value={emissiveIntensity} onChange={(e) => { const v = Number(e.target.value); setEmissiveIntensity(v); scheduleMaterialApply({ emissiveIntensity: v, emissiveHex }); }} />
               </div>
 
               <div className="op-slider-block">
                 <label>Normal Strength {normalScale.toFixed(2)}</label>
                 <input className="op-range prop-slider" type="range" min="0" max="4" step="0.01" value={normalScale} onChange={(e) => { const v = Number(e.target.value); setNormalScale(v); scheduleMaterialApply({ normalScale: v }); }} />
+              </div>
+
+              <div className="op-slider-block">
                 <label>AO Intensity {aoIntensity.toFixed(2)}</label>
-                <input className="op-range prop-slider" type="range" min="0" max="2" step="0.01" value={aoIntensity} onChange={(e) => { const v = Number(e.target.value); setAoIntensity(v); scheduleMaterialApply({ aoIntensity: v }); }} />
+                <input className="op-range prop-slider" type="range" min="0" max="3" step="0.01" value={aoIntensity} onChange={(e) => { const v = Number(e.target.value); setAoIntensity(v); scheduleMaterialApply({ aoIntensity: v }); }} />
+              </div>
+
+              <div className="op-slider-block">
+                <label>Side</label>
+                <select className="op-select" value={materialSide} onChange={(e) => { const v = Number(e.target.value); setMaterialSide(v); scheduleMaterialApply({ side: v }); }}>
+                  <option value={0}>Front</option>
+                  <option value={1}>Back</option>
+                  <option value={2}>Double</option>
+                </select>
+              </div>
+
+              <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                <button className="op-small-btn" onClick={resetMaterial}>Reset Material</button>
+                <button className="op-small-btn" onClick={revertMaterial}>Revert</button>
               </div>
             </div>
           )}

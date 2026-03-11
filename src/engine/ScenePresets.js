@@ -8,6 +8,17 @@
 import * as THREE from "three";
 import { generateFloor, generateRoom, generateColumn } from "./ProceduralGenerator";
 
+/** Tag an object and all descendants as __objekta for the editor pipeline. */
+function tagObjekta(obj) {
+  obj.userData = obj.userData || {};
+  obj.userData.__objekta = true;
+  obj.traverse((child) => {
+    child.userData = child.userData || {};
+    child.userData.__objekta = true;
+  });
+  return obj;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    PRESET: Studio Lighting
    Three-point lighting with a backdrop — perfect for product visualization.
@@ -62,7 +73,7 @@ export function presetStudioLighting() {
   ambient.name = "Studio_Ambient";
   group.add(ambient);
 
-  return group;
+  return tagObjekta(group);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -104,7 +115,7 @@ export function presetOutdoor() {
     group.add(tree);
   }
 
-  return group;
+  return tagObjekta(group);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -155,7 +166,7 @@ export function presetProductShowcase() {
   rim.name = "Showcase_RimLight";
   group.add(rim);
 
-  return group;
+  return tagObjekta(group);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -203,7 +214,7 @@ export function presetArchitectural() {
   ambient.name = "Arch_Ambient";
   group.add(ambient);
 
-  return group;
+  return tagObjekta(group);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -275,7 +286,7 @@ export function presetLowPolyNature() {
   hemi.name = "Nature_Sky";
   group.add(hemi);
 
-  return group;
+  return tagObjekta(group);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

@@ -4,6 +4,24 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Objekta | 3D Design Studio</title>
+    <meta name="description" content="OBJEKTA is a browser-based 3D design studio with real-time collaboration, physics simulation, AI assistance, and a marketplace for 3D assets." />
+    <meta name="keywords" content="3D editor, web 3D, Three.js, 3D design, collaboration, physics, marketplace, GLB, GLTF" />
+    <meta name="author" content="OBJEKTA" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Objekta | 3D Design Studio" />
+    <meta property="og:description" content="Build, animate, and collaborate on 3D scenes in your browser. Real-time physics, AI tools, and a marketplace for 3D assets." />
+    <meta property="og:image" content="/assets/og-preview.png" />
+    <meta property="og:url" content="https://objekta.app" />
+    <meta property="og:site_name" content="OBJEKTA" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Objekta | 3D Design Studio" />
+    <meta name="twitter:description" content="Build, animate, and collaborate on 3D scenes in your browser." />
+    <meta name="twitter:image" content="/assets/og-preview.png" />
+
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 
     <!-- Fonts (single consolidated request) -->
@@ -16,7 +34,8 @@
 
   </head>
   <body>
-    <div id="root"></div>
+    <a href="#root" class="skip-link" style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;z-index:9999;">Skip to content</a>
+    <div id="root" role="application"></div>
     <!-- Google Identity Services (used for One-tap / button sign-in) -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <!-- Runtime globals (injected for local dev). You provided the client ID, so set it here -->

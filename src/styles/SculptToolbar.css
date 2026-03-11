@@ -1,0 +1,265 @@
+/* ==========================================================================
+   SculptToolbar — Sculpt mode floating toolbar
+   Uses tokens from tokens.css
+   ========================================================================== */
+
+.sculpt-toolbar {
+  position: fixed;
+  z-index: var(--z-toolbar, 300);
+  right: 16px;
+  top: 72px;
+  width: 260px;
+  background: var(--panel-bg, rgba(10, 6, 18, 0.65));
+  backdrop-filter: blur(18px) saturate(1.4);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  border: var(--panel-border, 1px solid rgba(127, 90, 240, 0.2));
+  border-radius: var(--radius-md, 12px);
+  padding: var(--sp-md, 16px);
+  color: var(--token-text, #E8E8F0);
+  font-family: var(--font-ui, 'Inter', sans-serif);
+  font-size: var(--fs-sm, 14px);
+  box-shadow: var(--shadow-card, 0 8px 32px rgba(0, 0, 0, 0.4));
+  user-select: none;
+  transition: opacity var(--duration-normal) var(--ease-smooth),
+              transform var(--duration-normal) var(--ease-smooth);
+  pointer-events: auto;
+}
+
+.sculpt-toolbar.dragging {
+  cursor: grabbing;
+  opacity: 0.92;
+}
+
+/* ── Header ──────────────────────────────────────────────────────── */
+.sculpt-toolbar__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--sp-sm, 8px);
+  cursor: grab;
+}
+
+.sculpt-toolbar__header:active {
+  cursor: grabbing;
+}
+
+.sculpt-toolbar__title {
+  font-weight: var(--fw-semibold, 600);
+  font-size: var(--fs-sm, 14px);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-xs, 4px);
+  color: var(--token-text, #E8E8F0);
+}
+
+.sculpt-toolbar__title svg {
+  opacity: 0.7;
+}
+
+.sculpt-toolbar__actions {
+  display: flex;
+  gap: var(--sp-xs, 4px);
+  align-items: center;
+}
+
+/* ── Shared Button Style ─────────────────────────────────────────── */
+.sculpt-toolbar__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--btn-padding-sm, 6px 8px);
+  border-radius: var(--btn-radius, 10px);
+  background: var(--control-bg, rgba(30, 0, 60, 0.4));
+  color: var(--token-text, #E8E8F0);
+  border: none;
+  font-family: inherit;
+  font-size: var(--fs-xs, 12px);
+  font-weight: var(--fw-medium, 500);
+  cursor: pointer;
+  transition: var(--btn-transition);
+  white-space: nowrap;
+  min-height: 28px;
+}
+
+.sculpt-toolbar__btn:hover {
+  background: var(--control-hover-bg, rgba(127, 90, 240, 0.25));
+}
+
+.sculpt-toolbar__btn:focus-visible {
+  box-shadow: var(--token-focus-ring, 0 0 0 3px rgba(127, 90, 240, 0.45));
+  outline: none;
+}
+
+.sculpt-toolbar__btn:active {
+  transform: scale(0.96);
+}
+
+/* ── Toggle Button ───────────────────────────────────────────────── */
+.sculpt-toolbar__toggle {
+  width: 100%;
+  padding: 8px 14px;
+  border-radius: var(--btn-radius, 10px);
+  background: var(--control-bg, rgba(30, 0, 60, 0.4));
+  color: var(--token-text, #E8E8F0);
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: var(--fs-sm, 14px);
+  font-weight: var(--fw-semibold, 600);
+  cursor: pointer;
+  transition: var(--btn-transition);
+  margin-bottom: var(--sp-sm, 8px);
+}
+
+.sculpt-toolbar__toggle:hover {
+  background: var(--control-hover-bg, rgba(127, 90, 240, 0.25));
+}
+
+.sculpt-toolbar__toggle--active {
+  background: linear-gradient(135deg, var(--token-accent, #7F5AF0), #6342d0);
+  border-color: rgba(127, 90, 240, 0.5);
+  box-shadow: var(--accent-glow, 0 0 12px rgba(127, 90, 240, 0.4));
+}
+
+.sculpt-toolbar__toggle--active:hover {
+  background: linear-gradient(135deg, #6b4de0, #5535c0);
+}
+
+/* ── Section Labels ──────────────────────────────────────────────── */
+.sculpt-toolbar__label {
+  font-size: var(--fs-xs, 12px);
+  font-weight: var(--fw-medium, 500);
+  color: var(--token-text-muted, #9CA3AF);
+  margin-bottom: var(--sp-xs, 4px);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ── Mode Grid ───────────────────────────────────────────────────── */
+.sculpt-toolbar__modes {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--sp-xs, 4px);
+  margin-bottom: var(--sp-sm, 8px);
+}
+
+.sculpt-toolbar__mode-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 2px;
+  border-radius: var(--radius-sm, 8px);
+  background: var(--control-bg, rgba(30, 0, 60, 0.4));
+  color: var(--token-text-muted, #9CA3AF);
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: var(--fw-medium, 500);
+  cursor: pointer;
+  transition: var(--btn-transition);
+  text-transform: capitalize;
+}
+
+.sculpt-toolbar__mode-btn:hover {
+  background: var(--control-hover-bg, rgba(127, 90, 240, 0.25));
+  color: var(--token-text, #E8E8F0);
+}
+
+.sculpt-toolbar__mode-btn--active {
+  background: rgba(127, 90, 240, 0.3);
+  border-color: var(--token-accent, #7F5AF0);
+  color: var(--token-text, #E8E8F0);
+  box-shadow: var(--accent-glow, 0 0 12px rgba(127, 90, 240, 0.4));
+}
+
+/* ── Slider Section ──────────────────────────────────────────────── */
+.sculpt-toolbar__slider-group {
+  margin-bottom: var(--sp-sm, 8px);
+}
+
+.sculpt-toolbar__slider-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2px;
+}
+
+.sculpt-toolbar__slider-value {
+  font-size: var(--fs-xs, 12px);
+  color: var(--token-primary, #00F0FF);
+  font-weight: var(--fw-medium, 500);
+  font-variant-numeric: tabular-nums;
+}
+
+.sculpt-toolbar__slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  background: var(--control-bg, rgba(30, 0, 60, 0.4));
+  border-radius: var(--radius-full, 9999px);
+  outline: none;
+  cursor: pointer;
+}
+
+.sculpt-toolbar__slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--token-accent, #7F5AF0);
+  border: 2px solid var(--token-text, #E8E8F0);
+  cursor: pointer;
+  transition: transform var(--duration-fast) ease;
+}
+
+.sculpt-toolbar__slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.sculpt-toolbar__slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--token-accent, #7F5AF0);
+  border: 2px solid var(--token-text, #E8E8F0);
+  cursor: pointer;
+}
+
+/* ── Symmetry Row ────────────────────────────────────────────────── */
+.sculpt-toolbar__symmetry {
+  display: flex;
+  gap: var(--sp-sm, 8px);
+  margin-bottom: var(--sp-sm, 8px);
+}
+
+.sculpt-toolbar__symmetry label {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-xs, 4px);
+  font-size: var(--fs-xs, 12px);
+  color: var(--token-text-muted, #9CA3AF);
+  cursor: pointer;
+}
+
+.sculpt-toolbar__symmetry input[type="checkbox"] {
+  accent-color: var(--token-accent, #7F5AF0);
+  cursor: pointer;
+}
+
+/* ── Footer ──────────────────────────────────────────────────────── */
+.sculpt-toolbar__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: var(--sp-xs, 4px);
+  border-top: 1px solid var(--token-border, #2D2D3F);
+}
+
+.sculpt-toolbar__shortcuts {
+  font-size: 11px;
+  color: var(--token-text-muted, #9CA3AF);
+  opacity: 0.7;
+}

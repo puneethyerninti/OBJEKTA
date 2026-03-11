@@ -7,13 +7,23 @@ export const ExportEngine = {
   /**
    * Export the scene as GLTF/GLB
    * @param {boolean} binary - If true, exports as .glb (binary), otherwise .gltf (JSON)
+   * @param {object} [animationEngine] - Optional AnimationEngine instance; if provided, baked animations are embedded
    */
-  exportGLTF(binary = true) {
+  exportGLTF(binary = true, animationEngine = null) {
     const exporter = new GLTFExporter();
     const objects = SceneGraphStore.getObjects();
 
     const scene = new THREE.Scene();
     objects.forEach((obj) => scene.add(obj.clone()));
+
+    const options = { binary };
+
+    if (animationEngine && typeof animationEngine.toAnimationClip === 'function') {
+      const clip = animationEngine.toAnimationClip(30);
+      if (clip && clip.tracks.length > 0) {
+        options.animations = [clip];
+      }
+    }
 
     exporter.parse(
       scene,
@@ -25,7 +35,8 @@ export const ExportEngine = {
           this._saveString(output, "scene.gltf");
         }
       },
-      { binary }
+      (error) => { console.error('GLTF export failed:', error); },
+      options
     );
   },
 

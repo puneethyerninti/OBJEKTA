@@ -48,8 +48,9 @@ export default function Login() {
           
           <form onSubmit={handleSubmit} className="auth-form">
             <div className="auth-field">
-              <label className="auth-label">Email</label>
+              <label className="auth-label" htmlFor="login-email">Email</label>
               <input 
+                id="login-email"
                 className="auth-input" 
                 type="email"
                 name="email" 
@@ -57,12 +58,14 @@ export default function Login() {
                 onChange={(e) => setEmail(e.target.value)} 
                 placeholder="name@company.com"
                 required
+                autoComplete="email"
               />
             </div>
             
             <div className="auth-field">
-              <label className="auth-label">Password</label>
+              <label className="auth-label" htmlFor="login-password">Password</label>
               <input 
+                id="login-password"
                 className="auth-input" 
                 type="password"
                 name="password" 
@@ -70,12 +73,13 @@ export default function Login() {
                 onChange={(e) => setPassword(e.target.value)} 
                 placeholder="Enter your password"
                 required
+                autoComplete="current-password"
               />
             </div>
             
-            {err && <div className="auth-error">{err}</div>}
+            {err && <div className="auth-error" role="alert">{err}</div>}
             
-            <button type="submit" className="auth-button" disabled={loading}>
+            <button type="submit" className="auth-button" disabled={loading} aria-busy={loading}>
               {loading ? 'Signing in...' : 'Sign in'}
             </button>
           </form>
@@ -103,7 +107,7 @@ export default function Login() {
                   }
                 }}
               >
-                <span className="auth-google-logo" aria-hidden>
+                <span className="auth-google-logo" aria-hidden="true">
                   <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" focusable="false">
                     <path fill="#EA4335" d="M17.64 9.2c0-.63-.06-1.23-.18-1.8H9v3.4h4.84c-.21 1.15-.84 2.12-1.8 2.78v2.3h2.9c1.7-1.57 2.7-3.88 2.7-6.68z"/>
                     <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.16l-2.9-2.3c-.8.54-1.84.86-3.06.86-2.35 0-4.34-1.58-5.05-3.7H1.02v2.32C2.5 15.9 5.5 18 9 18z"/>

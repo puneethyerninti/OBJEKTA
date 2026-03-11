@@ -30,7 +30,7 @@ function renderMd(text) {
     const line = lines[i];
     if (i > 0) elements.push(<br key={`br-${i}`} />);
     // Bullet points
-    const bulletMatch = line.match(/^(\s*)[•\-\*]\s+(.*)/);
+    const bulletMatch = line.match(/^(\s*)[•\-*]\s+(.*)/);
     if (bulletMatch) {
       elements.push(<span key={`li-${i}`} className="ai-md-bullet">{inlineFormat(bulletMatch[2], i)}</span>);
       continue;

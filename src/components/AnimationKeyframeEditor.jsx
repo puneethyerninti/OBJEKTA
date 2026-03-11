@@ -1,12 +1,42 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { EASING_NAMES, resolveEasing } from '../engine/AnimationEngine';
 
-// AnimationKeyframeEditor: unique minimal keyframe UI for position/rotation/scale and scalar tracks.
+// Mini canvas-based bezier curve preview
+function EasingPreview({ easing, width = 80, height = 50 }) {
+  const canvasRef = useRef(null);
+  useEffect(() => {
+    const ctx = canvasRef.current?.getContext('2d');
+    if (!ctx) return;
+    const fn = resolveEasing(easing);
+    ctx.clearRect(0, 0, width, height);
+    ctx.strokeStyle = 'rgba(127,90,240,0.3)';
+    ctx.lineWidth = 1;
+    // Grid
+    ctx.beginPath();
+    ctx.moveTo(0, height); ctx.lineTo(width, 0);
+    ctx.stroke();
+    // Curve
+    ctx.strokeStyle = '#7f5af0';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let px = 0; px <= width; px++) {
+      const t = px / width;
+      const y = height - fn(t) * height;
+      px === 0 ? ctx.moveTo(px, y) : ctx.lineTo(px, y);
+    }
+    ctx.stroke();
+  }, [easing, width, height]);
+  return <canvas ref={canvasRef} width={width} height={height} style={{ borderRadius: 4, background: 'rgba(0,0,0,0.3)', display: 'block' }} />;
+}
+
+// AnimationKeyframeEditor: keyframe UI for position/rotation/scale and scalar tracks.
 // Integrates with window.__OBJEKTA_WORKSPACE AnimationEngine.
 export default function AnimationKeyframeEditor() {
   const [engine, setEngine] = useState(null);
   const [selectedObj, setSelectedObj] = useState(null);
   const [tracks, setTracks] = useState([]);
   const [property, setProperty] = useState('position');
+  const [easing, setEasing] = useState('linear');
   const [time, setTime] = useState(0);
   const [pendingKeys, setPendingKeys] = useState([]);
   const [size, setSize] = useState(3); // default vector3
@@ -67,7 +97,7 @@ export default function AnimationKeyframeEditor() {
     const ordered = normalizePending(pendingKeys);
     const times = ordered.map((k) => k.time);
     const values = ordered.flatMap((k) => k.value);
-    engine.addTrack({ uuid: selectedObj.uuid, property, times, values, size });
+    engine.addTrack({ uuid: selectedObj.uuid, property, times, values, size, easing });
     setPendingKeys([]);
     refreshRef.current && refreshRef.current();
   };
@@ -102,6 +132,12 @@ export default function AnimationKeyframeEditor() {
             </select>
             <input type='number' step='0.01' value={time} onChange={(e)=>setTime(e.target.value)} style={{ width: 70 }} />
             <button className='studio-btn' onClick={addKeyframe}>Add</button>
+          </div>
+          <div style={{ marginBottom: 6, display: 'flex', gap: 6, alignItems: 'center' }}>
+            <select value={easing} onChange={(e)=>setEasing(e.target.value)} style={{ flex: 1 }}>
+              {EASING_NAMES.map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
+            <EasingPreview easing={easing} width={80} height={40} />
           </div>
           <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
             <button className='studio-btn' onClick={commitTrack} disabled={pendingKeys.length === 0}>Commit Track</button>

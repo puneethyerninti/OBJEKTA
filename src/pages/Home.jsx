@@ -13,7 +13,6 @@ import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.j
 import { useAuth } from "../contexts/AuthContext";
 import { assetUrl } from "../utils/assets";
 import "../index.css";
-import "../styles/home.css";
 
 const FEATURE_ITEMS = [
   {
@@ -710,25 +709,6 @@ export default function Home() {
                 </article>
               );
             })}
-          </div>
-        </section>
-
-        {/* ──── CTA BANNER ──── */}
-        <section className="hp-cta-banner">
-          <h2 className="hp-cta-banner-title">
-            Ready to build your next 3D project?
-          </h2>
-          <p className="hp-cta-banner-desc">
-            Start collaborating on production-quality 3D scenes today — no install, no plugins, just your browser.
-          </p>
-          <div className="hp-actions">
-            <button
-              type="button"
-              className="hp-cta hp-cta-primary"
-              onClick={handleLaunch}
-            >
-              {user ? "Open Dashboard" : "Get Started Free"}
-            </button>
           </div>
         </section>
 

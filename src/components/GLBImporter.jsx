@@ -3,8 +3,11 @@ import * as THREE from "three";
 import createSafeGLTFLoader from "../utils/gltfLoader";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader";
 import { unzipSync } from "three/examples/jsm/libs/fflate.module.js";
+import { OBJLoader } from "three-stdlib";
+import { FBXLoader } from "three-stdlib";
 import EventBus from "../utils/EventBus";
 import BlobURLManager from "../utils/BlobURLManager";
+import { generateThumbnail } from "../utils/thumbnailGenerator";
 
 /**
  * initGLBImporter({ scene, domElement, onLoad })
@@ -65,6 +68,15 @@ export function initGLBImporter({ scene, domElement, onLoad = () => {}, normaliz
     }
 
     onLoad(gltf, meta, stats);
+
+    // Auto-generate thumbnail
+    try {
+      const thumb = generateThumbnail(root);
+      if (thumb) {
+        root.userData.__thumbnail = thumb;
+        EventBus.emit?.('import:thumbnail', { thumbnail: thumb, name: meta?.name || 'model' });
+      }
+    } catch (e) { /* thumbnail generation optional */ }
   }
 
   function reportImportError(err, context = 'import', extra = {}) {
@@ -181,6 +193,26 @@ export function initGLBImporter({ scene, domElement, onLoad = () => {}, normaliz
     if (/\.zip$/i.test(file.name)) {
       return loadFromZip(file);
     }
+    // OBJ import
+    if (/\.obj$/i.test(file.name)) {
+      const text = await file.text();
+      try {
+        const objLoader = new OBJLoader();
+        const group = objLoader.parse(text);
+        _addToScene({ scene: group }, file);
+      } catch (err) { reportImportError(err, file.name); }
+      return;
+    }
+    // FBX import
+    if (/\.fbx$/i.test(file.name)) {
+      const buf = await file.arrayBuffer();
+      try {
+        const fbxLoader = new FBXLoader();
+        const group = fbxLoader.parse(buf, '');
+        _addToScene({ scene: group }, file);
+      } catch (err) { reportImportError(err, file.name); }
+      return;
+    }
     const url = BlobURLManager.create(file);
     if (/\.gltf$/i.test(file.name)) {
       console.warn('[GLBImporter] Detected .gltf file with potential external resources. Please ensure textures/buffers are embedded (.glb) to avoid 404 errors.');
@@ -214,7 +246,7 @@ export function initGLBImporter({ scene, domElement, onLoad = () => {}, normaliz
         loadFromFile(archive);
         return;
       }
-      const glb = files.find(f => /\.(gltf|glb)$/i.test(f.name));
+      const glb = files.find(f => /\.(gltf|glb|obj|fbx)$/i.test(f.name));
       if (glb) loadFromFile(glb);
     }
     function onDragOver(e) { e.preventDefault(); }

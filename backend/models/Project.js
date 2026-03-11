@@ -7,6 +7,9 @@ const projectSchema = new mongoose.Schema(
     description: { type: String, default: "" },
     user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: false },
     collaborators: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    // Per-collaborator permission: { "<userId>": "editor" | "viewer" }
+    // Owner is always the `user` field. Collaborators default to "editor".
+    collaboratorRoles: { type: Map, of: String, default: {} },
     progress: { type: Number, default: 0 },
     assets: { type: Array, default: [] },
     thumbnail: { type: String, default: "" },

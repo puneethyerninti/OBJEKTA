@@ -16,9 +16,9 @@ export default function StudioToolbar({
       <button className="studio-btn icon-btn" onClick={onRedo} aria-label="Redo">⤻</button>
 
       <div className="segmented-control" role="group" aria-label="Transform modes">
-        <button className={activeMode === 'translate' ? 'active' : ''} onClick={() => setActiveMode('translate')}>Move</button>
-        <button className={activeMode === 'rotate' ? 'active' : ''} onClick={() => setActiveMode('rotate')}>Rotate</button>
-        <button className={activeMode === 'scale' ? 'active' : ''} onClick={() => setActiveMode('scale')}>Scale</button>
+        <button className={activeMode === 'translate' ? 'active' : ''} onClick={() => setActiveMode('translate')} aria-pressed={activeMode === 'translate'}>Move</button>
+        <button className={activeMode === 'rotate' ? 'active' : ''} onClick={() => setActiveMode('rotate')} aria-pressed={activeMode === 'rotate'}>Rotate</button>
+        <button className={activeMode === 'scale' ? 'active' : ''} onClick={() => setActiveMode('scale')} aria-pressed={activeMode === 'scale'}>Scale</button>
       </div>
 
       <div style={{ display: 'flex', gap: 8, marginLeft: 8 }}>

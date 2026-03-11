@@ -17,6 +17,7 @@ import { useDrop } from "react-dnd";
 import { PALETTE_TYPE } from "./Palette";
 import EventBus from "../utils/EventBus";
 import { SceneGraphStore } from "../store/SceneGraphStore";
+import { alignObjects, distributeObjects } from "../engine/SceneGraphOps";
 
 import initCameraControls from "../components/CameraControls";
 import setupEnvironment from "../components/EnvironmentSetup";
@@ -79,7 +80,7 @@ try {
   }
 } catch (e) {}
 
-const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChange, panelTopOffset = 12, onSceneChange, onLightChange, showInternalPanels = true }, ref) => {
+const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect, onFullScreenChange, panelTopOffset = 12, onSceneChange, onLightChange, showInternalPanels = true }, ref) {
   // DOM refs
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
@@ -199,7 +200,6 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
   const mouseRef = useRef(new THREE.Vector2());
   const nameCountRef = useRef(1);
   const blobUrlsRef = useRef(new Set());
-  const materialOriginalsRef = useRef(new WeakMap());
 
   // state
   const [isCanvasReady, setIsCanvasReady] = useState(false);
@@ -208,6 +208,8 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
   const [transformMode, setTransformModeState] = useState("translate"); // translate | rotate | scale
   const [loading, setLoading] = useState(false);
   const [bookmarkUiVersion, setBookmarkUiVersion] = useState(0);
+  const [cameraType, setCameraType] = useState("perspective"); // perspective | orthographic
+  const orthoCameraRef = useRef(null);
   const [hover, setHover] = useState({ name: "", x: -999, y: -999 });
 
   // render/scene tracking
@@ -229,6 +231,9 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
   const captureBusyRef = useRef(false);
 
   // Cmd and HistoryManager are now imported from ./workspace/HistoryManager
+
+  // Physics step callback — set from outside via useImperativeHandle
+  const physicsStepRef = useRef(null);
 
   // ---------- Global resize helper (exposed & used by effect) ----------
   const doResize = (w = null, h = null) => {
@@ -452,446 +457,454 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
     }
   }
 
-  // sculpting state & logic
+  // ═══════════════════════════════════════════════════════════════════
+  // SCULPT ENGINE — production vertex sculpt with symmetry,
+  // proper per-mode math, 3D brush cursor, and undo integration.
+  // ═══════════════════════════════════════════════════════════════════
   const sculptStateRef = useRef({
     active: false,
     target: null,
     mode: "inflate",
     radius: 0.25,
-    strength: 0.6,
+    strength: 0.5,
     symmetry: { x: false, y: false, z: false },
     pointerDown: false,
     lastPoint: null,
-    neighborsMap: new Map(),
+    flattenPlane: null,
     undoTmp: null,
+    neighborsCache: new Map(),
+    brushCursorMesh: null,
   });
 
   const buildVertexNeighbors = (geometry) => {
     if (!geometry || !geometry.isBufferGeometry) return [];
     const posAttr = geometry.attributes.position;
-    const idxAttr = geometry.index;
     const nVerts = posAttr.count;
-    const neighbors = new Array(nVerts);
-    for (let i = 0; i < nVerts; i++) neighbors[i] = new Set();
-    if (idxAttr) {
-      const idx = idxAttr.array;
-      for (let i = 0; i < idx.length; i += 3) {
-        const a = idx[i], b = idx[i + 1], c = idx[i + 2];
-        neighbors[a].add(b);
-        neighbors[a].add(c);
-        neighbors[b].add(a);
-        neighbors[b].add(c);
-        neighbors[c].add(a);
-        neighbors[c].add(b);
+    const nb = new Array(nVerts);
+    for (let i = 0; i < nVerts; i++) nb[i] = new Set();
+    const idx = geometry.index;
+    if (idx) {
+      const a = idx.array;
+      for (let i = 0; i < a.length; i += 3) {
+        const v0 = a[i], v1 = a[i + 1], v2 = a[i + 2];
+        nb[v0].add(v1); nb[v0].add(v2);
+        nb[v1].add(v0); nb[v1].add(v2);
+        nb[v2].add(v0); nb[v2].add(v1);
       }
     } else {
-      const pos = posAttr.array;
-      for (let i = 0, vi = 0; i < pos.length; i += 9, vi += 3) {
-        const a = vi,
-          b = vi + 1,
-          c = vi + 2;
-        neighbors[a].add(b);
-        neighbors[a].add(c);
-        neighbors[b].add(a);
-        neighbors[b].add(c);
-        neighbors[c].add(a);
-        neighbors[c].add(b);
+      for (let i = 0; i < nVerts; i += 3) {
+        if (i + 2 >= nVerts) break;
+        nb[i].add(i + 1); nb[i].add(i + 2);
+        nb[i + 1].add(i); nb[i + 1].add(i + 2);
+        nb[i + 2].add(i); nb[i + 2].add(i + 1);
       }
     }
-    return neighbors.map((s) => Array.from(s));
+    return nb.map((s) => Array.from(s));
   };
 
-  const falloff = (t) => {
-    const x = Math.max(0, Math.min(1, t));
-    return 0.5 * (1 + Math.cos(Math.PI * Math.min(1, x)));
+  const getNeighbors = (geometry) => {
+    const id = geometry.uuid;
+    if (!sculptStateRef.current.neighborsCache.has(id))
+      sculptStateRef.current.neighborsCache.set(id, buildVertexNeighbors(geometry));
+    return sculptStateRef.current.neighborsCache.get(id);
+  };
+
+  const falloffSmooth = (t) => {
+    const c = 1 - Math.max(0, Math.min(1, t));
+    return c * c * (3 - 2 * c);
   };
 
   const applyBrushToMesh = (mesh, worldPoint, opts = {}) => {
     if (!mesh || !mesh.geometry || !mesh.geometry.isBufferGeometry) return null;
-    const geometry = mesh.geometry;
-    const posAttr = geometry.attributes.position;
+    const geo = mesh.geometry;
+    const posAttr = geo.attributes.position;
     const nVerts = posAttr.count;
+    const positions = posAttr.array;
     const localPoint = worldPoint.clone();
     mesh.worldToLocal(localPoint);
-    const radius = typeof opts.radius === "number" ? opts.radius : sculptStateRef.current.radius;
-    const strength = typeof opts.strength === "number" ? opts.strength : sculptStateRef.current.strength;
+
+    const radius = opts.radius ?? sculptStateRef.current.radius;
+    const strength = opts.strength ?? sculptStateRef.current.strength;
     const mode = opts.mode || sculptStateRef.current.mode;
+    const pressure = opts.pressure ?? 1.0;
+    const effectiveStr = strength * pressure;
 
-    // Optimization: Check bounding sphere first
-    if (!geometry.boundingSphere) geometry.computeBoundingSphere();
-    if (geometry.boundingSphere) {
-        const dist = geometry.boundingSphere.center.distanceTo(localPoint);
-        if (dist > geometry.boundingSphere.radius + radius) return null;
+    if (!geo.boundingSphere) geo.computeBoundingSphere();
+    if (geo.boundingSphere) {
+      const d = geo.boundingSphere.center.distanceTo(localPoint);
+      if (d > geo.boundingSphere.radius + radius * 1.5) return null;
     }
 
-    if (!sculptStateRef.current.neighborsMap.has(geometry.uuid)) sculptStateRef.current.neighborsMap.set(geometry.uuid, buildVertexNeighbors(geometry));
-    const neighbors = sculptStateRef.current.neighborsMap.get(geometry.uuid);
-
-    if (!geometry.attributes.normal) geometry.computeVertexNormals();
-    const normals = geometry.attributes.normal.array;
-    const positions = posAttr.array;
+    if (!geo.attributes.normal) geo.computeVertexNormals();
+    const normals = geo.attributes.normal.array;
+    const neighbors = getNeighbors(geo);
     const changed = new Map();
+    const radSq = radius * radius;
 
-    // Pre-calculate grab vector in local space
-    let grabVector = null;
+    let grabLocal = null;
     if (mode === "grab" && opts.delta) {
-        // Transform world delta to local delta
-        const worldDelta = opts.delta.clone();
-        // We only care about direction/magnitude, but scale matters. 
-        // Simple approximation: rotate delta by inverse mesh rotation and scale by inverse mesh scale
-        const invQuat = mesh.quaternion.clone().invert();
-        const localDelta = worldDelta.applyQuaternion(invQuat).divide(mesh.scale);
-        grabVector = localDelta;
+      grabLocal = opts.delta.clone();
+      const invQ = mesh.quaternion.clone().invert();
+      grabLocal.applyQuaternion(invQ).divide(mesh.scale);
     }
+
+    const flatPlane = sculptStateRef.current.flattenPlane;
 
     for (let i = 0; i < nVerts; i++) {
       const ix = i * 3;
-      const vx = positions[ix],
-        vy = positions[ix + 1],
-        vz = positions[ix + 2];
-      const dx = vx - localPoint.x,
-        dy = vy - localPoint.y,
-        dz = vz - localPoint.z;
+      const vx = positions[ix], vy = positions[ix + 1], vz = positions[ix + 2];
+      const dx = vx - localPoint.x, dy = vy - localPoint.y, dz = vz - localPoint.z;
       const distSq = dx * dx + dy * dy + dz * dz;
-      const radSq = radius * radius;
-      
       if (distSq > radSq) continue;
-      
       const dist = Math.sqrt(distSq);
-      const t = dist / radius;
-      const w = falloff(1 - t); // 0 to 1
-
-      let nx = normals[ix],
-        ny = normals[ix + 1],
-        nz = normals[ix + 2];
-      const nl = Math.hypot(nx, ny, nz) || 1;
-      nx /= nl;
-      ny /= nl;
-      nz /= nl;
-
-      let dirx = nx,
-        diry = ny,
-        dirz = nz;
-      
-      let effectiveStrength = strength;
-
-      if (mode === "grab") {
-        if (grabVector) {
-            dirx = grabVector.x;
-            diry = grabVector.y;
-            dirz = grabVector.z;
-            // Grab moves everything in radius by delta * weight
-            // We don't use 'strength' as multiplier for delta usually, 
-            // but we can use it to attenuate the effect if needed.
-            // Usually grab follows mouse exactly at center.
-            effectiveStrength = 1.0; 
-            // For grab, we want to move by the delta amount scaled by falloff
-            // The 'delta' variable below is calculated as strength * sign * w * 0.08
-            // We need to override this.
-        } else {
-            continue; // No movement if no delta
-        }
-      } else if (mode === "flatten") {
-        if (opts.planeNormal) {
-          dirx = opts.planeNormal.x;
-          diry = opts.planeNormal.y;
-          dirz = opts.planeNormal.z;
-        }
-      } else if (mode === "pinch") {
-        dirx = -dx;
-        diry = -dy;
-        dirz = -dz;
-        const dl = Math.hypot(dirx, diry, dirz) || 1;
-        dirx /= dl;
-        diry /= dl;
-        dirz /= dl;
-      }
-
-      const sign = mode === "deflate" ? -1 : 1;
-      
-      let deltaX, deltaY, deltaZ;
-
-      if (mode === "grab" && grabVector) {
-          deltaX = grabVector.x * w;
-          deltaY = grabVector.y * w;
-          deltaZ = grabVector.z * w;
-      } else {
-          const d = effectiveStrength * sign * w * 0.08; // 0.08 is arbitrary scaling factor
-          deltaX = dirx * d;
-          deltaY = diry * d;
-          deltaZ = dirz * d;
-      }
+      const w = falloffSmooth(dist / radius);
+      if (w < 0.001) continue;
 
       if (!changed.has(i)) changed.set(i, [vx, vy, vz]);
 
-      positions[ix] = vx + deltaX;
-      positions[ix + 1] = vy + deltaY;
-      positions[ix + 2] = vz + deltaZ;
+      let nx = normals[ix], ny = normals[ix + 1], nz = normals[ix + 2];
+      const nl = Math.hypot(nx, ny, nz) || 1;
+      nx /= nl; ny /= nl; nz /= nl;
+
+      let ox = 0, oy = 0, oz = 0;
+      const s = effectiveStr * 0.08;
+
+      switch (mode) {
+        case "inflate":
+          ox = nx * s * w; oy = ny * s * w; oz = nz * s * w;
+          break;
+        case "deflate":
+          ox = -nx * s * w; oy = -ny * s * w; oz = -nz * s * w;
+          break;
+        case "clay": {
+          const plateau = Math.min(1, w * 2);
+          ox = nx * s * w * plateau; oy = ny * s * w * plateau; oz = nz * s * w * plateau;
+          break;
+        }
+        case "crease": {
+          const toC = new THREE.Vector3(-dx, -dy, -dz).normalize();
+          const d2 = s * w;
+          ox = (toC.x * 0.6 - nx * 0.4) * d2;
+          oy = (toC.y * 0.6 - ny * 0.4) * d2;
+          oz = (toC.z * 0.6 - nz * 0.4) * d2;
+          break;
+        }
+        case "flatten": {
+          if (!flatPlane) break;
+          const pn = flatPlane.normal;
+          const dot = (vx - flatPlane.point.x) * pn.x + (vy - flatPlane.point.y) * pn.y + (vz - flatPlane.point.z) * pn.z;
+          const move = -dot * effectiveStr * w * 0.15;
+          ox = pn.x * move; oy = pn.y * move; oz = pn.z * move;
+          break;
+        }
+        case "pinch": {
+          const dl = Math.hypot(dx, dy, dz) || 1;
+          ox = (-dx / dl) * s * w; oy = (-dy / dl) * s * w; oz = (-dz / dl) * s * w;
+          break;
+        }
+        case "grab": {
+          if (!grabLocal) continue;
+          ox = grabLocal.x * w; oy = grabLocal.y * w; oz = grabLocal.z * w;
+          break;
+        }
+        case "smooth": break;
+        default: break;
+      }
+
+      if (mode !== "smooth") {
+        positions[ix] += ox; positions[ix + 1] += oy; positions[ix + 2] += oz;
+      }
     }
 
     if (mode === "smooth") {
-      const out = new Float32Array(positions.length);
-      out.set(positions);
-      const lambda = strength * 0.6;
+      const lambda = effectiveStr * 0.5;
       for (let i = 0; i < nVerts; i++) {
+        const ix = i * 3;
+        const vx = positions[ix], vy = positions[ix + 1], vz = positions[ix + 2];
+        const dx = vx - localPoint.x, dy = vy - localPoint.y, dz = vz - localPoint.z;
+        const distSq = dx * dx + dy * dy + dz * dz;
+        if (distSq > radSq) continue;
+        const w = falloffSmooth(Math.sqrt(distSq) / radius);
+        if (w < 0.001) continue;
         const nb = neighbors[i];
         if (!nb || nb.length === 0) continue;
-        const ix = i * 3;
-        let sx = 0,
-          sy = 0,
-          sz = 0;
+        let sx = 0, sy = 0, sz = 0;
         for (let j = 0; j < nb.length; j++) {
           const k = nb[j] * 3;
-          sx += positions[k];
-          sy += positions[k + 1];
-          sz += positions[k + 2];
+          sx += positions[k]; sy += positions[k + 1]; sz += positions[k + 2];
         }
         const inv = 1 / nb.length;
-        sx *= inv;
-        sy *= inv;
-        sz *= inv;
-        out[ix] += (sx - positions[ix]) * lambda;
-        out[ix + 1] += (sy - positions[ix + 1]) * lambda;
-        out[ix + 2] += (sz - positions[ix + 2]) * lambda;
+        sx *= inv; sy *= inv; sz *= inv;
+        if (!changed.has(i)) changed.set(i, [vx, vy, vz]);
+        positions[ix] += (sx - vx) * lambda * w;
+        positions[ix + 1] += (sy - vy) * lambda * w;
+        positions[ix + 2] += (sz - vz) * lambda * w;
       }
-      positions.set(out);
     }
 
+    // Symmetry passes
+    const sym = sculptStateRef.current.symmetry;
+    if (sym.x || sym.y || sym.z) {
+      const mirror = localPoint.clone();
+      if (sym.x) mirror.x = -mirror.x;
+      if (sym.y) mirror.y = -mirror.y;
+      if (sym.z) mirror.z = -mirror.z;
+      const savedSym = { ...sculptStateRef.current.symmetry };
+      sculptStateRef.current.symmetry = { x: false, y: false, z: false };
+      const mirrorWorld = mirror.clone();
+      mesh.localToWorld(mirrorWorld);
+      let mirrorDelta = null;
+      if (grabLocal && opts.delta) {
+        mirrorDelta = opts.delta.clone();
+        if (sym.x) mirrorDelta.x = -mirrorDelta.x;
+        if (sym.y) mirrorDelta.y = -mirrorDelta.y;
+        if (sym.z) mirrorDelta.z = -mirrorDelta.z;
+      }
+      const symRes = applyBrushToMesh(mesh, mirrorWorld, { ...opts, delta: mirrorDelta });
+      sculptStateRef.current.symmetry = savedSym;
+      if (symRes && symRes.changed) {
+        for (const [k, v] of symRes.changed) { if (!changed.has(k)) changed.set(k, v); }
+      }
+    }
+
+    if (changed.size === 0) return null;
     posAttr.needsUpdate = true;
-    if (geometry.computeVertexNormals) geometry.computeVertexNormals();
-    if (geometry.computeBoundingSphere) geometry.computeBoundingSphere();
-
-    try {
-      ensureBVHForObject(mesh);
-    } catch (e) {}
-
+    geo.computeVertexNormals();
+    geo.computeBoundingSphere();
+    try { ensureBVHForObject(mesh); } catch (e) {}
     needsRenderRef.current = true;
-    return { mesh, geometry, changed };
+    return { mesh, geometry: geo, changed };
   };
 
   const pushSculptCommand = (mesh, changedMap, label = "sculpt") => {
     if (!mesh || !mesh.geometry || !changedMap || changedMap.size === 0) return;
     try {
-      const geometry = mesh.geometry;
-      const pos = geometry.attributes.position;
-      const redoSnapshot = new Map();
+      const pos = mesh.geometry.attributes.position;
+      const redoSnap = new Map();
       for (const [i] of changedMap) {
         const ix = i * 3;
-        redoSnapshot.set(i, [pos.array[ix], pos.array[ix + 1], pos.array[ix + 2]]);
+        redoSnap.set(i, [pos.array[ix], pos.array[ix + 1], pos.array[ix + 2]]);
       }
-      const undoSnapshot = changedMap;
-
+      const undoSnap = changedMap;
       cmdHistoryRef.current.push(
         new Cmd(
           () => {
-            for (const [i, v] of redoSnapshot) {
-              const ix = i * 3;
-              pos.array[ix] = v[0];
-              pos.array[ix + 1] = v[1];
-              pos.array[ix + 2] = v[2];
-            }
-            pos.needsUpdate = true;
-            geometry.computeVertexNormals && geometry.computeVertexNormals();
-            ensureBVHForObject(mesh);
-            bumpSceneVersion("sculpt-redo");
-            needsRenderRef.current = true;
+            for (const [i, v] of redoSnap) { const ix = i * 3; pos.array[ix] = v[0]; pos.array[ix + 1] = v[1]; pos.array[ix + 2] = v[2]; }
+            pos.needsUpdate = true; mesh.geometry.computeVertexNormals(); ensureBVHForObject(mesh); bumpSceneVersion("sculpt-redo"); needsRenderRef.current = true;
           },
           () => {
-            for (const [i, v] of undoSnapshot) {
-              const ix = i * 3;
-              pos.array[ix] = v[0];
-              pos.array[ix + 1] = v[1];
-              pos.array[ix + 2] = v[2];
-            }
-            pos.needsUpdate = true;
-            geometry.computeVertexNormals && geometry.computeVertexNormals();
-            ensureBVHForObject(mesh);
-            bumpSceneVersion("sculpt-undo");
-            needsRenderRef.current = true;
+            for (const [i, v] of undoSnap) { const ix = i * 3; pos.array[ix] = v[0]; pos.array[ix + 1] = v[1]; pos.array[ix + 2] = v[2]; }
+            pos.needsUpdate = true; mesh.geometry.computeVertexNormals(); ensureBVHForObject(mesh); bumpSceneVersion("sculpt-undo"); needsRenderRef.current = true;
           },
           label
         )
       );
-    } catch (e) {
-      console.warn("pushSculptCommand failed", e);
-    }
+    } catch (e) { console.warn("pushSculptCommand:", e); }
   };
 
-  const startSculptingInternal = (mesh, { mode = "inflate", radius = 0.25, strength = 0.6 } = {}) => {
-    if (!mesh || !mesh.geometry) return false;
-    sculptStateRef.current.active = true;
-    sculptStateRef.current.target = mesh;
-    sculptStateRef.current.mode = mode;
-    sculptStateRef.current.radius = radius;
-    sculptStateRef.current.strength = strength;
-    sculptStateRef.current.pointerDown = false;
-    sculptStateRef.current.lastPoint = null;
-    sculptStateRef.current.undoTmp = null;
+  // ── 3D brush cursor ──
+  const updateBrushCursor = (worldPoint, normal) => {
     try {
-      mesh.geometry.computeVertexNormals?.();
+      const eg = sceneRef.current?._editorGroup;
+      if (!eg) return;
+      let cursor = sculptStateRef.current.brushCursorMesh;
+      if (!cursor) {
+        const ringGeo = new THREE.RingGeometry(0.95, 1.0, 48);
+        const ringMat = new THREE.MeshBasicMaterial({
+          color: 0x7f5af0, side: THREE.DoubleSide, transparent: true, opacity: 0.55,
+          depthTest: false, depthWrite: false,
+        });
+        cursor = new THREE.Mesh(ringGeo, ringMat);
+        cursor.name = "_sculptBrushCursor";
+        cursor.userData.__editorHelper = true;
+        cursor.renderOrder = 9999;
+        cursor.frustumCulled = false;
+        eg.add(cursor);
+        sculptStateRef.current.brushCursorMesh = cursor;
+      }
+      cursor.visible = true;
+      cursor.position.copy(worldPoint).addScaledVector(normal, 0.002);
+      const r = sculptStateRef.current.radius;
+      cursor.scale.set(r, r, r);
+      const up = Math.abs(normal.y) > 0.99 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0, 1, 0);
+      cursor.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), normal, up));
+      needsRenderRef.current = true;
     } catch (e) {}
+  };
+
+  const hideBrushCursor = () => {
     try {
-      ensureBVHForObject(mesh);
+      if (sculptStateRef.current.brushCursorMesh) {
+        sculptStateRef.current.brushCursorMesh.visible = false;
+        needsRenderRef.current = true;
+      }
     } catch (e) {}
+  };
+
+  const startSculptingInternal = (mesh, { mode, radius, strength } = {}) => {
+    if (!mesh) return false;
+    let target = null;
+    if (mesh.isMesh && mesh.geometry) target = mesh;
+    else mesh.traverse((n) => { if (!target && n.isMesh && n.geometry) target = n; });
+    if (!target) return false;
+
+    // Convert to non-indexed for proper sculpting
+    if (target.geometry.index) {
+      target.geometry = target.geometry.toNonIndexed();
+      target.geometry.computeVertexNormals();
+    }
+
+    const st = sculptStateRef.current;
+    st.active = true;
+    st.target = target;
+    if (mode) st.mode = mode;
+    if (typeof radius === "number") st.radius = radius;
+    if (typeof strength === "number") st.strength = strength;
+    st.pointerDown = false;
+    st.lastPoint = null;
+    st.flattenPlane = null;
+    st.undoTmp = null;
+    st.neighborsCache.delete(target.geometry.uuid);
+
+    try { target.geometry.computeVertexNormals(); } catch (e) {}
+    try { ensureBVHForObject(target); } catch (e) {}
+    try { orbitRef.current && (orbitRef.current.enabled = false); } catch (e) {}
+    try { transformRef.current && (transformRef.current.enabled = false); } catch (e) {}
     bumpSceneVersion("sculpt-start");
-    try {
-      orbitRef.current && (orbitRef.current.enabled = false);
-      transformRef.current && (transformRef.current.enabled = false);
-    } catch (e) {}
     needsRenderRef.current = true;
     return true;
   };
+
   const stopSculptingInternal = () => {
-    if (!sculptStateRef.current.active) return;
-    sculptStateRef.current.active = false;
-    sculptStateRef.current.target = null;
-    sculptStateRef.current.pointerDown = false;
-    sculptStateRef.current.lastPoint = null;
-    sculptStateRef.current.undoTmp = null;
+    const st = sculptStateRef.current;
+    if (!st.active) return;
+    st.active = false;
+    st.target = null;
+    st.pointerDown = false;
+    st.lastPoint = null;
+    st.flattenPlane = null;
+    st.undoTmp = null;
+    hideBrushCursor();
+    try { orbitRef.current && (orbitRef.current.enabled = true); } catch (e) {}
+    try { transformRef.current && (transformRef.current.enabled = true); } catch (e) {}
     bumpSceneVersion("sculpt-stop");
-    try {
-      orbitRef.current && (orbitRef.current.enabled = true);
-      transformRef.current && (transformRef.current.enabled = true);
-    } catch (e) {}
     needsRenderRef.current = true;
   };
 
-  // sculpt pointer events
+  // ── Sculpt raycast helper ──
+  const sculptRaycast = (event) => {
+    const renderer = rendererRef.current;
+    const camera = cameraRef.current;
+    if (!renderer || !camera) return null;
+    const rect = renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1
+    );
+    raycasterRef.current.setFromCamera(ndc, camera);
+    const target = sculptStateRef.current.target;
+    if (!target) return null;
+    const hits = raycasterRef.current.intersectObject(target, true);
+    return hits.length > 0 ? hits[0] : null;
+  };
+
+  // ── Sculpt pointer events ──
   const onSculptPointerDown = (event) => {
-    if (!sculptStateRef.current.active) return;
-    sculptStateRef.current.pointerDown = true;
-    try {
-      const rect = rendererRef.current.domElement.getBoundingClientRect();
-      const ndc = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
-      raycasterRef.current.setFromCamera(ndc, cameraRef.current);
-      const hits = raycasterRef.current.intersectObjects(sceneRef.current.children, true);
-      if (!hits || hits.length === 0) return;
-      const hit = hits[0];
-      const mesh = sculptStateRef.current.target || findObjektaAncestor(hit.object);
-      if (!mesh) return;
-      const worldPoint = hit.point.clone();
-      
-      sculptStateRef.current.lastPoint = worldPoint.clone(); // Initialize lastPoint
+    const st = sculptStateRef.current;
+    if (!st.active) return;
+    const hit = sculptRaycast(event);
+    if (!hit) return;
+    st.pointerDown = true;
+    const wp = hit.point.clone();
+    st.lastPoint = wp.clone();
 
-      const res = applyBrushToMesh(mesh, worldPoint, {
-        radius: sculptStateRef.current.radius,
-        strength: sculptStateRef.current.strength,
-        mode: sculptStateRef.current.mode,
-        viewDir: cameraRef.current.getWorldDirection(new THREE.Vector3()).clone(),
-      });
-      if (res && res.changed && res.changed.size > 0) sculptStateRef.current.undoTmp = res.changed;
-    } catch (e) {
-      console.warn("sculpt pointerdown", e);
+    // Capture flatten reference plane at stroke start (in local space)
+    if (st.mode === "flatten" && st.target) {
+      const localPt = wp.clone();
+      st.target.worldToLocal(localPt);
+      const wNormal = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize() : new THREE.Vector3(0, 1, 0);
+      // Transform normal to local space
+      const invMat = new THREE.Matrix4().copy(st.target.matrixWorld).invert().transpose();
+      const localNormal = wNormal.clone().applyMatrix4(invMat).normalize();
+      st.flattenPlane = { point: localPt, normal: localNormal };
     }
+
+    const viewDir = cameraRef.current.getWorldDirection(new THREE.Vector3()).clone();
+    const res = applyBrushToMesh(st.target, wp, {
+      radius: st.radius, strength: st.strength, mode: st.mode, viewDir,
+      pressure: event.pressure ?? 0.5,
+    });
+    if (res?.changed?.size > 0) st.undoTmp = res.changed;
+    updateBrushCursor(wp, hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize() : new THREE.Vector3(0, 1, 0));
   };
+
   const onSculptPointerMove = (event) => {
-    if (!sculptStateRef.current.active || !sculptStateRef.current.pointerDown) return;
-    try {
-      const rect = rendererRef.current.domElement.getBoundingClientRect();
-      const ndc = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
-      raycasterRef.current.setFromCamera(ndc, cameraRef.current);
-      const hits = raycasterRef.current.intersectObjects(sceneRef.current.children, true);
-      
-      // For grab, we might not hit the object if we dragged off it, but we still want to move vertices based on mouse delta.
-      // But we need a reference point.
-      // If we have a target, we can project the mouse ray onto a plane at the target's depth?
-      
-      if (!hits || hits.length === 0) return;
-      const hit = hits[0];
-      const mesh = sculptStateRef.current.target || findObjektaAncestor(hit.object);
-      if (!mesh) return;
-      const worldPoint = hit.point.clone();
-      
-      // Calculate delta
-      let delta = null;
-      if (sculptStateRef.current.lastPoint) {
-          delta = worldPoint.clone().sub(sculptStateRef.current.lastPoint);
-      }
-      sculptStateRef.current.lastPoint = worldPoint.clone();
+    const st = sculptStateRef.current;
+    if (!st.active) return;
+    const hit = sculptRaycast(event);
 
-      const res = applyBrushToMesh(mesh, worldPoint, {
-        radius: sculptStateRef.current.radius,
-        strength: sculptStateRef.current.strength,
-        mode: sculptStateRef.current.mode,
-        viewDir: cameraRef.current.getWorldDirection(new THREE.Vector3()).clone(),
-        delta: delta
-      });
-      if (res && res.changed && res.changed.size > 0) {
-        if (!sculptStateRef.current.undoTmp) sculptStateRef.current.undoTmp = new Map();
-        for (const [k, v] of res.changed) {
-          if (!sculptStateRef.current.undoTmp.has(k)) sculptStateRef.current.undoTmp.set(k, v);
-        }
+    // Hover cursor even without button
+    if (hit) {
+      const n = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize() : new THREE.Vector3(0, 1, 0);
+      updateBrushCursor(hit.point, n);
+    } else {
+      hideBrushCursor();
+    }
+
+    if (!st.pointerDown || !hit) return;
+    const wp = hit.point.clone();
+    let delta = null;
+    if (st.lastPoint) delta = wp.clone().sub(st.lastPoint);
+    st.lastPoint = wp.clone();
+
+    const viewDir = cameraRef.current.getWorldDirection(new THREE.Vector3()).clone();
+    const res = applyBrushToMesh(st.target, wp, {
+      radius: st.radius, strength: st.strength, mode: st.mode, viewDir, delta,
+      pressure: event.pressure ?? 0.5,
+    });
+    if (res?.changed?.size > 0) {
+      if (!st.undoTmp) st.undoTmp = new Map();
+      for (const [k, v] of res.changed) {
+        if (!st.undoTmp.has(k)) st.undoTmp.set(k, v);
       }
-    } catch (e) {
-      console.warn("sculpt pointermove", e);
     }
   };
+
   const onSculptPointerUp = () => {
-    if (!sculptStateRef.current.active || !sculptStateRef.current.pointerDown) return;
-    sculptStateRef.current.pointerDown = false;
-    const mesh = sculptStateRef.current.target;
-    if (sculptStateRef.current.undoTmp && mesh) {
-      pushSculptCommand(mesh, sculptStateRef.current.undoTmp, "sculpt-stroke");
-      sculptStateRef.current.undoTmp = null;
+    const st = sculptStateRef.current;
+    if (!st.active || !st.pointerDown) return;
+    st.pointerDown = false;
+    st.flattenPlane = null;
+    const mesh = st.target;
+    if (st.undoTmp && mesh) {
+      pushSculptCommand(mesh, st.undoTmp, "sculpt-stroke");
+      st.undoTmp = null;
       bumpSceneVersion("sculpt-stroke-commit");
     }
   };
 
-  // API wrappers that accept pointer-like objects
-  const wrapperSculptPointerDown = (evOrObj) => {
-    try {
-      if (!evOrObj) return;
-      let e = evOrObj;
-      if (!(evOrObj instanceof Event) && typeof evOrObj.x === "number") {
-        e = { clientX: evOrObj.x, clientY: evOrObj.y, pressure: evOrObj.pressure ?? 0.5 };
-      }
-      onSculptPointerDown(e);
-    } catch (e) {
-      console.warn("wrapperSculptPointerDown", e);
-    }
+  // API wrappers that accept pointer-like objects from SculptToolbar
+  const wrapSculptEvent = (evOrObj) => {
+    if (!evOrObj) return null;
+    if (evOrObj instanceof Event || evOrObj instanceof window.PointerEvent) return evOrObj;
+    if (typeof evOrObj.clientX === "number") return evOrObj;
+    if (typeof evOrObj.x === "number") return { clientX: evOrObj.x, clientY: evOrObj.y, pressure: evOrObj.pressure ?? 0.5 };
+    return null;
   };
-  const wrapperSculptPointerMove = (evOrObj) => {
-    try {
-      if (!evOrObj) return;
-      let e = evOrObj;
-      if (!(evOrObj instanceof Event) && typeof evOrObj.x === "number") {
-        e = { clientX: evOrObj.x, clientY: evOrObj.y, pressure: evOrObj.pressure ?? 0.5, pxRadius: evOrObj.pxRadius };
-      }
-      onSculptPointerMove(e);
-    } catch (e) {
-      console.warn("wrapperSculptPointerMove", e);
-    }
-  };
-  const wrapperSculptPointerUp = (evOrObj) => {
-    try {
-      if (!evOrObj) {
-        onSculptPointerUp();
-        return;
-      }
-      let e = evOrObj;
-      if (!(evOrObj instanceof Event) && typeof evOrObj.x === "number") {
-        e = { clientX: evOrObj.x, clientY: evOrObj.y, pressure: evOrObj.pressure ?? 0 };
-      }
-      onSculptPointerUp(e);
-    } catch (e) {
-      console.warn("wrapperSculptPointerUp", e);
-    }
-  };
+  const wrapperSculptPointerDown = (ev) => { const e = wrapSculptEvent(ev); if (e) onSculptPointerDown(e); };
+  const wrapperSculptPointerMove = (ev) => { const e = wrapSculptEvent(ev); if (e) onSculptPointerMove(e); };
+  const wrapperSculptPointerUp = (ev) => { onSculptPointerUp(); };
 
-
-  // sculpt setters
+  // ── Sculpt setters ──
   const setSculptRadius = (r) => {
     sculptStateRef.current.radius = r;
+    // Update live cursor scale
+    const cursor = sculptStateRef.current.brushCursorMesh;
+    if (cursor?.visible) cursor.scale.set(r, r, r);
   };
-  const setSculptStrength = (s) => {
-    sculptStateRef.current.strength = s;
-  };
-  const setSculptMode = (m) => {
-    sculptStateRef.current.mode = m;
-  };
-  const setSculptSymmetry = (s) => {
-    sculptStateRef.current.symmetry = s;
-  };
+  const setSculptStrength = (s) => { sculptStateRef.current.strength = s; };
+  const setSculptMode = (m) => { sculptStateRef.current.mode = m; };
+  const setSculptSymmetry = (s) => { sculptStateRef.current.symmetry = s; };
 
   // dispose helper
   const disposeObject = (obj) => {
@@ -942,7 +955,7 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
 
     // Scene
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0a0a1a);
+    scene.background = new THREE.Color(0x1a1a1a);
     sceneRef.current = scene;
 
     const editorGroup = new THREE.Group();
@@ -1126,6 +1139,18 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
       console.warn("env init failed", e);
       envApiRef.current = null;
     }
+
+    // Provide a minimal neutral environment so PBR metallic materials
+    // resolve correctly even before the user loads an HDRI.
+    try {
+      if (!scene.environment) {
+        const pmrem = new THREE.PMREMGenerator(renderer);
+        pmrem.compileEquirectangularShader?.();
+        const neutralEnv = pmrem.fromScene(new THREE.Scene(), 0, 0.1, 100).texture;
+        scene.environment = neutralEnv;
+        pmrem.dispose();
+      }
+    } catch (e) { /* non-critical */ }
 
     // Expose minimal workspace handle for external systems (e.g. AnimationEngine object lookup)
     try {
@@ -1328,15 +1353,27 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
         }
       }
       if (foundObj) {
-        selectObject(foundObj);
-        try {
-          // Guard: only attach if object still in scene graph
-          if (sceneRef.current && sceneRef.current.getObjectById(foundObj.id)) {
-            transformRef.current.setMode(transformMode);
-            transformRef.current.attach(foundObj);
+        if (event.shiftKey) {
+          // Multi-select: add/remove from set
+          if (selectedInternal && !selectedSetRef.current.has(selectedInternal)) {
+            // Promote current single-selection into multi-set
+            selectedSetRef.current.add(selectedInternal);
+            markSelectionVisual(selectedInternal, true);
           }
-        } catch (e) {}
+          toggleMultiSelect(foundObj);
+        } else {
+          // Normal single-select; clear any multi-selection first
+          clearMultiSelectionIfAny();
+          selectObject(foundObj);
+          try {
+            if (sceneRef.current && sceneRef.current.getObjectById(foundObj.id)) {
+              transformRef.current.setMode(transformMode);
+              transformRef.current.attach(foundObj);
+            }
+          } catch (e) {}
+        }
       } else {
+        clearMultiSelectionIfAny();
         clearSelection();
       }
       needsRenderRef.current = true;
@@ -1605,6 +1642,14 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
         }
       } catch (e) {}
 
+      // Physics step (Rapier)
+      try {
+        if (physicsStepRef.current) {
+          const physicsMoved = physicsStepRef.current();
+          if (physicsMoved) needsRenderRef.current = true;
+        }
+      } catch (e) {}
+
       // Fallback lights if none
       try {
         const scene = sceneRef.current;
@@ -1625,6 +1670,32 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
             fallbackLightsRef.current.amb = null; fallbackLightsRef.current.dir = null;
             needsRenderRef.current = true; console.log('[Workspace] Removed fallback lights');
           }
+        }
+      } catch (e) {}
+
+      // Enforce shading mode on newly added meshes (lightweight per-frame check)
+      try {
+        const curMode = shadingModeRef.current;
+        if (curMode !== "rendered" && sceneRef.current) {
+          const origCache = originalMaterialCacheRef.current;
+          const solidMat = getSolidMaterial();
+          sceneRef.current.traverse((obj) => {
+            if (!obj.isMesh) return;
+            if (obj.name && (obj.name.startsWith('_') || obj.userData?.__helper)) return;
+            if (curMode === "solid" && !origCache.has(obj) && obj.material !== solidMat) {
+              origCache.set(obj, obj.material);
+              obj.material = solidMat;
+              needsRenderRef.current = true;
+            } else if (curMode === "wireframe" && !origCache.has(obj) && !obj.material?.wireframe) {
+              origCache.set(obj, obj.material);
+              obj.material = new THREE.MeshBasicMaterial({ color: 0xe0e0e0, wireframe: true, transparent: false, fog: false });
+              needsRenderRef.current = true;
+            } else if (curMode === "material" && obj.material?.toneMapped !== false) {
+              const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+              mats.forEach(m => { if (m) { m.toneMapped = false; m.needsUpdate = true; } });
+              needsRenderRef.current = true;
+            }
+          });
         }
       } catch (e) {}
 
@@ -1694,6 +1765,24 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
         else if (key === "2") applyViewPreset("right");
         else if (key === "3") applyViewPreset("top");
         else applyViewPreset("iso");
+      } else if (cmd && key === "a") {
+        e.preventDefault();
+        selectAllObjects();
+      } else if (key === "escape") {
+        clearMultiSelectionIfAny();
+        clearSelection();
+      } else if (key === "numpad5" || (!cmd && !e.altKey && !e.shiftKey && key === "5")) {
+        e.preventDefault();
+        toggleCameraType();
+      } else if (key === "numpad1" || (!cmd && !e.altKey && !e.shiftKey && key === "numpad1")) {
+        e.preventDefault();
+        applyViewPreset("front");
+      } else if (key === "numpad3") {
+        e.preventDefault();
+        applyViewPreset("right");
+      } else if (key === "numpad7") {
+        e.preventDefault();
+        applyViewPreset("top");
       } else if (e.key === "Delete") deleteSelected();
     };
     window.addEventListener("keydown", onKeyDown);
@@ -1875,36 +1964,38 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
     try {
       const selBox = sceneRef.current._editorGroup.getObjectByName("_selection_box");
       if (selBox && selBox.isBoxHelper) {
-        if (selectedFlag) {
+        // For multi-select, hide the single shared box (per-object helpers below)
+        if (selectedSetRef.current.size > 1) {
+          selBox.visible = false;
+        } else if (selectedFlag) {
           selBox.setFromObject(obj);
           selBox.material.color.set(0x7f5af0);
           selBox.visible = true;
         } else selBox.visible = false;
       }
-    } catch (err) {}
-    obj.traverse((n) => {
-      if (n.isMesh && n.material) {
+      // Per-object multi-select outline helpers
+      if (selectedFlag && selectedSetRef.current.size > 0) {
+        if (!obj.userData._multiBox) {
+          const helper = new THREE.BoxHelper(obj, 0x7f5af0);
+          helper.name = "_multi_box_" + obj.uuid;
+          helper.userData.__editorHelper = true;
+          sceneRef.current._editorGroup.add(helper);
+          obj.userData._multiBox = helper;
+        } else {
+          obj.userData._multiBox.setFromObject(obj);
+          obj.userData._multiBox.visible = true;
+        }
+      } else if (!selectedFlag && obj.userData._multiBox) {
         try {
-          const mats = Array.isArray(n.material) ? n.material : [n.material];
-          if (selectedFlag) {
-            mats.forEach((mat) => {
-              try {
-                if (mat && mat.emissive && !materialOriginalsRef.current.has(mat)) materialOriginalsRef.current.set(mat, mat.emissive.clone());
-                if (mat && mat.emissive) mat.emissive.set(0x7f5af0);
-              } catch (e) {}
-            });
-          } else {
-            mats.forEach((mat) => {
-              try {
-                const orig = materialOriginalsRef.current.get(mat);
-                if (orig && mat && mat.emissive) mat.emissive.copy(orig);
-                materialOriginalsRef.current.delete(mat);
-              } catch (e) {}
-            });
-          }
-        } catch (err) {}
+          obj.userData._multiBox.visible = false;
+          sceneRef.current._editorGroup.remove(obj.userData._multiBox);
+          obj.userData._multiBox.dispose?.();
+        } catch (e) {}
+        delete obj.userData._multiBox;
       }
-    });
+    } catch (err) {}
+    // Selection is indicated by BoxHelper outline only — no emissive modification,
+    // so applied materials/colors remain visually accurate while selected.
     obj.userData.__selected = !!selectedFlag;
     needsRenderRef.current = true;
   };
@@ -1952,12 +2043,70 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
     clearSelection();
   };
 
+  const selectAllObjects = () => {
+    const ug = getUserGroup();
+    if (!ug) return;
+    clearMultiSelectionIfAny();
+    clearSelection();
+    const children = ug.children.filter((c) => c.userData.__objekta && !c.userData.__locked);
+    if (children.length === 0) return;
+    if (children.length === 1) {
+      selectObject(children[0]);
+      return;
+    }
+    for (const obj of children) {
+      selectedSetRef.current.add(obj);
+      markSelectionVisual(obj, true);
+    }
+    createTransformGroupFromSet();
+    needsRenderRef.current = true;
+  };
+
   // ---------- Camera helpers (presets, framing, bookmarks) ----------
   const getOrbitTarget = () => {
     try {
       if (orbitRef.current?.target) return orbitRef.current.target.clone();
     } catch (e) {}
     return new THREE.Vector3(0, 0.7, 0);
+  };
+
+  const toggleCameraType = () => {
+    const cam = cameraRef.current;
+    if (!cam) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const aspect = container.clientWidth / Math.max(container.clientHeight, 1);
+    const target = getOrbitTarget();
+
+    if (cam.isPerspectiveCamera) {
+      // Switch to orthographic
+      const dist = cam.position.distanceTo(target);
+      const halfH = dist * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2));
+      const ortho = new THREE.OrthographicCamera(
+        -halfH * aspect, halfH * aspect, halfH, -halfH, 0.1, 2000
+      );
+      ortho.position.copy(cam.position);
+      ortho.quaternion.copy(cam.quaternion);
+      ortho.zoom = 1;
+      ortho.updateProjectionMatrix();
+      cameraRef.current = ortho;
+      orthoCameraRef.current = ortho;
+      if (orbitRef.current) orbitRef.current.object = ortho;
+      if (transformRef.current) transformRef.current.camera = ortho;
+      setCameraType("orthographic");
+    } else {
+      // Switch back to perspective
+      const perspCam = new THREE.PerspectiveCamera(60, aspect, 0.1, 2000);
+      perspCam.position.copy(cam.position);
+      perspCam.quaternion.copy(cam.quaternion);
+      perspCam.updateProjectionMatrix();
+      cameraRef.current = perspCam;
+      if (orbitRef.current) orbitRef.current.object = perspCam;
+      if (transformRef.current) transformRef.current.camera = perspCam;
+      setCameraType("perspective");
+    }
+    orbitRef.current?.update?.();
+    needsRenderRef.current = true;
   };
 
   const applyCameraState = (state = {}) => {
@@ -2215,40 +2364,143 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
     return true;
   }, [selectedInternal]);
 
-  // ---------- Shading / viewport modes ----------
+  // ---------- Shading / viewport modes (Blender-style) ----------
+  const solidMaterialRef = useRef(null);
+  const solidWireMaterialRef = useRef(null);
+  const originalMaterialCacheRef = useRef(new WeakMap());
+  const envCacheRef = useRef({ environment: null, background: null });
+
+  const getSolidMaterial = () => {
+    if (!solidMaterialRef.current) {
+      // MeshLambertMaterial for Blender-style solid mode — no env map needed
+      solidMaterialRef.current = new THREE.MeshLambertMaterial({
+        color: 0xc0c0c0,
+        flatShading: false,
+      });
+    }
+    return solidMaterialRef.current;
+  };
+
+  const getWireOverlayMaterial = () => {
+    if (!solidWireMaterialRef.current) {
+      solidWireMaterialRef.current = new THREE.MeshBasicMaterial({
+        color: 0x222222,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.15,
+        depthTest: true,
+        depthWrite: false,
+      });
+    }
+    return solidWireMaterialRef.current;
+  };
+
   const setShadingMode = useCallback((mode = "rendered") => {
     const scene = sceneRef.current;
     const renderer = rendererRef.current;
     if (!scene) return;
 
-    const normalized = mode === "wireframe" ? "wireframe" : mode === "material" ? "material" : "rendered";
+    const VALID = ["rendered", "material", "wireframe", "solid"];
+    const normalized = VALID.includes(mode) ? mode : "rendered";
+    const prevMode = shadingModeRef.current;
     shadingModeRef.current = normalized;
 
+    // Post-processing: only in "rendered" mode
     const composerEnabled = normalized === "rendered";
     if (postfxApiRef.current?.composer) postfxApiRef.current.composer.enabled = composerEnabled;
     if (composerRef.current) composerRef.current.enabled = composerEnabled;
 
+    // Tone mapping: full in rendered, reduced in material, off in wireframe/solid
+    if (renderer) {
+      if (normalized === "rendered") {
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.0;
+      } else if (normalized === "material") {
+        renderer.toneMapping = THREE.LinearToneMapping;
+        renderer.toneMappingExposure = 1.0;
+      } else {
+        renderer.toneMapping = THREE.NoToneMapping;
+        renderer.toneMappingExposure = 1.0;
+      }
+    }
+
+    // Cache environment + background when entering solid/wireframe; restore on exit
+    const enteringOverride = normalized === "solid" || normalized === "wireframe";
+    const leavingOverride  = (prevMode === "solid" || prevMode === "wireframe") && !enteringOverride;
+
+    if (enteringOverride) {
+      // Only cache once — avoid overwriting with an already-overridden value
+      if (envCacheRef.current.environment == null && envCacheRef.current.background == null) {
+        envCacheRef.current.environment = scene.environment;
+        envCacheRef.current.background  = scene.background;
+      }
+    }
+    if (leavingOverride) {
+      // Restore cached originals (may be null if user never loaded an HDR)
+      scene.environment = envCacheRef.current.environment;
+      scene.background  = envCacheRef.current.background;
+      envCacheRef.current.environment = null;
+      envCacheRef.current.background  = null;
+    }
+
+    const solidMat = getSolidMaterial();
+    const origCache = originalMaterialCacheRef.current;
+    const wireCache = materialWireframeCacheRef.current;
+
     scene.traverse((obj) => {
       if (!obj.isMesh) return;
-      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-      mats.forEach((mat) => {
-        if (!mat) return;
-        const cache = materialWireframeCacheRef.current;
-        if (!cache.has(mat)) cache.set(mat, { wireframe: !!mat.wireframe, toneMapped: mat.toneMapped !== false });
-        const original = cache.get(mat);
-        if (normalized === "wireframe") {
-          mat.wireframe = true;
-          mat.toneMapped = false;
-        } else if (normalized === "material") {
-          mat.wireframe = original?.wireframe || false;
-          mat.toneMapped = false;
-        } else {
-          mat.wireframe = original?.wireframe || false;
-          mat.toneMapped = original?.toneMapped !== false;
-        }
-        mat.needsUpdate = true;
-      });
+      // Skip helpers / gizmos
+      if (obj.name && (obj.name.startsWith('_') || obj.userData?.__helper)) return;
+
+      // Always restore original material first before applying new mode
+      if (origCache.has(obj)) {
+        obj.material = origCache.get(obj);
+        origCache.delete(obj);
+      }
+
+      if (normalized === "solid") {
+        // Cache original and replace with Blender-style flat grey
+        origCache.set(obj, obj.material);
+        obj.material = solidMat;
+      } else if (normalized === "wireframe") {
+        // Cache original, replace with wireframe basic material (white lines on dark)
+        origCache.set(obj, obj.material);
+        const wireMat = new THREE.MeshBasicMaterial({
+          color: 0xe0e0e0,
+          wireframe: true,
+          transparent: false,
+          fog: false,
+        });
+        obj.material = wireMat;
+      } else {
+        // "material" and "rendered": use original materials
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        mats.forEach((mat) => {
+          if (!mat) return;
+          // Restore cached wireframe state
+          if (wireCache.has(mat)) {
+            const original = wireCache.get(mat);
+            mat.wireframe = original.wireframe || false;
+            wireCache.delete(mat);
+          }
+          if (normalized === "material") {
+            // Material preview: show textures and colors, disable tone mapping per material
+            mat.toneMapped = false;
+          } else {
+            // Rendered: full PBR
+            mat.toneMapped = true;
+          }
+          mat.needsUpdate = true;
+        });
+      }
     });
+
+    // Override background for solid / wireframe modes
+    if (normalized === "solid") {
+      scene.background = new THREE.Color(0x404040);
+    } else if (normalized === "wireframe") {
+      scene.background = new THREE.Color(0x1a1a2e);
+    }
 
     if (renderer) {
       needsRenderRef.current = true;
@@ -2380,6 +2632,13 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
         obj = new THREE.DirectionalLight(opts.color ? parseColor(opts.color) : 0xffffff, 1);
         obj.position.set(3, 5, 3);
         obj.add(makeIcon(opts.color ? parseColor(opts.color) : 0xddddff, 0.06));
+        break;
+      case "Area Light":
+      case "Rect Area Light":
+        obj = new THREE.RectAreaLight(opts.color ? parseColor(opts.color) : 0xffffff, opts.intensity ?? 1, opts.width ?? 4, opts.height ?? 4);
+        obj.position.set(0, 2, 0);
+        obj.lookAt(0, 0, 0);
+        obj.add(makeIcon(opts.color ? parseColor(opts.color) : 0xffddaa, 0.06));
         break;
       case "Camera":
         obj = new THREE.PerspectiveCamera(50, cameraRef.current?.aspect || 1, 0.1, 2000);
@@ -2830,6 +3089,18 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
 
       exportScene.updateMatrixWorld(true);
 
+      // Bake animation clip from AnimationEngine if tracks exist
+      const exportOptions = { binary, embedImages: true, truncateDrawRange: true };
+      try {
+        const eng = animationEngineRef.current;
+        if (eng && typeof eng.toAnimationClip === 'function') {
+          const clip = eng.toAnimationClip(30);
+          if (clip && clip.tracks.length > 0) {
+            exportOptions.animations = [clip];
+          }
+        }
+      } catch (e) { /* animation export optional */ }
+
       exporter.parse(
         exportScene,
         (result) => {
@@ -2864,13 +3135,89 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
             reject(e);
           }
         },
-        { binary, embedImages: true, truncateDrawRange: true }
+        exportOptions
       );
     });
   };
 
   // Helper for preparing a FormData payload suitable to send to your backend (server)
   // It uses exportGLTF(binary) to build a single .glb that contains current scene meshes & textures.
+  // ---------- Add object to scene (no import normalization) ----------
+  const addObject = (object) => {
+    if (!sceneRef.current || !object) return;
+
+    // Tag all nodes for the editor pipeline
+    object.userData = object.userData || {};
+    object.userData.__objekta = true;
+    object.traverse((child) => {
+      if (!child.userData) child.userData = {};
+      child.userData.__objekta = true;
+    });
+
+    if (!object.name) object.name = "Object_" + nameCountRef.current++;
+
+    const userGroup = getUserGroup();
+    const parent = userGroup || sceneRef.current;
+    safeAdd(parent, object, object.name);
+
+    try { ensureBVHForObject(object); } catch (e) {}
+
+    // Register in SceneGraphStore
+    try {
+      SceneGraphStore.addObject(object.uuid, object, { name: object.name, type: "procedural" });
+      object.traverse((child) => {
+        if (child !== object) {
+          SceneGraphStore.addObject(child.uuid, child, {
+            name: child.name || "child",
+            type: child.isMesh ? "mesh" : child.isLight ? "light" : "group",
+          });
+        }
+      });
+    } catch (e) {}
+
+    try { EventBus?.emit?.("scene:updated", { id: object.uuid, type: "add" }); } catch (e) {}
+    selectObject(object);
+    bumpSceneVersion("addObject");
+
+    // Undo support
+    try {
+      const snap = object.toJSON();
+      const uuid = object.uuid;
+      cmdHistoryRef.current.push(
+        new Cmd(
+          () => {
+            try {
+              const loader = new THREE.ObjectLoader();
+              const recreated = loader.parse(snap);
+              recreated.userData = recreated.userData || {};
+              recreated.userData.__objekta = true;
+              recreated.traverse((n) => { n.userData = n.userData || {}; n.userData.__objekta = true; });
+              const ug = getUserGroup();
+              safeAdd(ug || sceneRef.current, recreated, "redo_add_procedural");
+              ensureBVHForObject(recreated);
+              selectObject(recreated);
+              bumpSceneVersion("redo-addObject");
+            } catch (e) {}
+          },
+          () => {
+            try {
+              const ug = getUserGroup();
+              const existing = ug?.getObjectByProperty("uuid", uuid);
+              if (existing) {
+                ug.remove(existing);
+                try { SceneGraphStore.removeObject(uuid); } catch (e) {}
+              }
+              clearSelection();
+              bumpSceneVersion("undo-addObject");
+            } catch (e) {}
+          },
+        ),
+      );
+    } catch (e) {}
+
+    needsRenderRef.current = true;
+  };
+
   const prepareSavePayload = async (meta = {}) => {
     // returns FormData ready to send: { file: scene.glb, meta: JSON.stringify(meta) }
     try {
@@ -3646,6 +3993,7 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
 
   useImperativeHandle(ref, () => ({
     addItem,
+    addObject,
     addGLTF,
     exportGLTF,
     prepareSavePayload, // new helper to prepare FormData (GLB) for backend
@@ -3672,6 +4020,10 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
     listCameraBookmarks,
     selectObject,
     clearSelection,
+    toggleCameraType,
+    selectAllObjects,
+    toggleMultiSelect,
+    clearMultiSelectionIfAny,
     startSculpting: (mesh = null, opts = {}) => {
       const target = mesh || selectedInternal;
       if (!target) {
@@ -3765,6 +4117,9 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
     loadAnimationSnapshot: (tracks) => animationEngineRef.current.loadSnapshot(tracks),
     getSelected: () => selectedInternal,
     setShadingMode,
+    // Physics integration
+    setPhysicsStep: (fn) => { physicsStepRef.current = fn; },
+    markDirty: () => { needsRenderRef.current = true; },
   }));
 
   // Mirror global API for dev convenience
@@ -3897,6 +4252,10 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
       case "ambient":
         light = new THREE.AmbientLight(color, opts.intensity ?? 0.5);
         break;
+      case "rect":
+      case "rectarea":
+        light = new THREE.RectAreaLight(color, opts.intensity ?? 1, opts.width ?? 4, opts.height ?? 4);
+        break;
       default:
         light = new THREE.PointLight(color, opts.intensity ?? 1, opts.distance ?? 20);
     }
@@ -3905,6 +4264,23 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
     const ug = getUserGroup();
     safeAdd(ug || sceneRef.current, light, light.name);
     ensureBVHForObject(light);
+    // Add visual helper gizmo for the light
+    try {
+      let helper = null;
+      if (light.isPointLight) {
+        helper = new THREE.PointLightHelper(light, 0.3);
+      } else if (light.isSpotLight) {
+        helper = new THREE.SpotLightHelper(light);
+      } else if (light.isDirectionalLight) {
+        helper = new THREE.DirectionalLightHelper(light, 0.5);
+      }
+      if (helper) {
+        helper.name = "_light_helper_" + light.name;
+        helper.userData.__editorHelper = true;
+        sceneRef.current._editorGroup.add(helper);
+        light.userData._lightHelper = helper;
+      }
+    } catch (e) {}
     bumpSceneVersion("addLight");
     needsRenderRef.current = true;
     return light;
@@ -3921,6 +4297,14 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
   const removeLight = (light) => {
     try {
       if (!light) return;
+      // Remove associated helper
+      if (light.userData._lightHelper) {
+        try {
+          const helper = light.userData._lightHelper;
+          if (helper.parent) helper.parent.remove(helper);
+          helper.dispose?.();
+        } catch (e) {}
+      }
       if (light.parent) light.parent.remove(light);
       disposeObject(light);
       bumpSceneVersion("removeLight");
@@ -4090,12 +4474,18 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
               if (typeof patch.opacity === "number") {
                 m.opacity = patch.opacity;
                 m.transparent = patch.opacity < 1;
+                // Restore depthWrite when fully opaque
+                if (patch.opacity >= 1) m.depthWrite = true;
               }
               if (patch.emissiveHex && m.emissive) m.emissive.set(patch.emissiveHex);
               if (typeof patch.emissiveIntensity === "number" && m.emissiveIntensity !== undefined)
                 m.emissiveIntensity = patch.emissiveIntensity;
               if (typeof patch.wireframe === "boolean") m.wireframe = patch.wireframe;
               if (typeof patch.normalScale === "number" && m.normalScale) m.normalScale = new THREE.Vector2(patch.normalScale, patch.normalScale);
+              if (typeof patch.aoIntensity === "number") m.aoMapIntensity = patch.aoIntensity;
+              if (typeof patch.side === "number") {
+                m.side = patch.side;
+              }
               m.needsUpdate = true;
             } catch (e) {}
           });
@@ -4119,15 +4509,39 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
       url,
       (tex) => {
         try {
-          try { tex.colorSpace = THREE.SRGBColorSpace; } catch (e) { try { tex.encoding = THREE.sRGBEncoding; } catch (e2) {} }
+          // Color space: only base color and emissive maps use sRGB; all others use Linear
+          const srgbSlots = ['map', 'emissiveMap'];
+          if (srgbSlots.includes(slotKey)) {
+            try { tex.colorSpace = THREE.SRGBColorSpace; } catch (e) { try { tex.encoding = THREE.sRGBEncoding; } catch (e2) {} }
+          } else {
+            try { tex.colorSpace = THREE.LinearSRGBColorSpace; } catch (e) { try { tex.encoding = THREE.LinearEncoding; } catch (e2) {} }
+          }
           tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+          tex.flipY = slotKey !== 'normalMap'; // Normal maps from some tools need flipY=false
+          tex.needsUpdate = true;
           selectedInternal.traverse((n) => {
             if (n.isMesh && n.material) {
               const mats = Array.isArray(n.material) ? n.material : [n.material];
               mats.forEach((m) => {
                 try {
                   m[slotKey] = tex;
-                  if (slotKey === "normalMap") m.normalScale = m.normalScale || new THREE.Vector2(1, 1);
+                  if (slotKey === "normalMap") {
+                    m.normalScale = m.normalScale || new THREE.Vector2(1, 1);
+                  }
+                  if (slotKey === "aoMap") {
+                    // AO map requires uv2; copy from uv if not present
+                    if (n.geometry && !n.geometry.attributes.uv2 && n.geometry.attributes.uv) {
+                      n.geometry.setAttribute('uv2', n.geometry.attributes.uv);
+                    }
+                    m.aoMapIntensity = m.aoMapIntensity ?? 1.0;
+                  }
+                  if (slotKey === "roughnessMap") {
+                    // Ensure roughness is 1.0 so the map is fully used
+                    if (m.roughness === 0) m.roughness = 1.0;
+                  }
+                  if (slotKey === "metalnessMap") {
+                    if (m.metalness === 0) m.metalness = 1.0;
+                  }
                   m.needsUpdate = true;
                 } catch (e) {}
               });
@@ -4503,6 +4917,9 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
         <button className="studio-btn" style={{ fontSize: 10, padding: "3px 6px", minHeight: 24 }} title="Isometric view (Alt+4)" onClick={() => applyViewPreset("iso")}>
           Iso
         </button>
+        <button className="studio-btn" style={{ fontSize: 10, padding: "3px 6px", minHeight: 24, background: cameraType === "orthographic" ? "rgba(127,90,240,0.35)" : undefined }} title="Toggle Perspective/Ortho (Numpad 5)" onClick={() => toggleCameraType()}>
+          {cameraType === "perspective" ? "Persp" : "Ortho"}
+        </button>
         {["1", "2", "3", "4"].map((slot) => {
           const hasBookmark = cameraBookmarksRef.current.has(slot);
           return (
@@ -4534,6 +4951,72 @@ const Workspace = forwardRef(({ selected: _selected, onSelect, onFullScreenChang
           );
         })}
       </div>
+
+      {/* Alignment toolbar — visible when multi-select active */}
+      {selectedSetRef.current.size >= 2 && (
+        <div
+          style={{
+            position: "absolute",
+            left: 12,
+            top: 410,
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 3,
+            background: "rgba(0,0,0,0.75)",
+            padding: "4px 6px",
+            borderRadius: 6,
+            color: "#eee",
+            zIndex: 80,
+            fontSize: 10,
+            maxWidth: 240,
+          }}
+        >
+          <span style={{ width: "100%", fontWeight: 600, marginBottom: 2 }}>Align</span>
+          {[
+            { label: "⬅ Left", axis: "x", mode: "min" },
+            { label: "↔ CenterX", axis: "x", mode: "center" },
+            { label: "➡ Right", axis: "x", mode: "max" },
+            { label: "⬆ Top", axis: "y", mode: "max" },
+            { label: "↕ CenterY", axis: "y", mode: "center" },
+            { label: "⬇ Bottom", axis: "y", mode: "min" },
+            { label: "◈ Front", axis: "z", mode: "max" },
+            { label: "↹ CenterZ", axis: "z", mode: "center" },
+            { label: "◇ Back", axis: "z", mode: "min" },
+          ].map(({ label, axis, mode }) => (
+            <button
+              key={label}
+              className="studio-btn"
+              style={{ fontSize: 9, padding: "2px 5px", minHeight: 20 }}
+              title={`Align ${mode} on ${axis.toUpperCase()}`}
+              onClick={() => {
+                const objs = Array.from(selectedSetRef.current);
+                if (objs.length < 2) return;
+                alignObjects(objs, axis, mode);
+                needsRenderRef.current = true;
+              }}
+            >
+              {label}
+            </button>
+          ))}
+          <span style={{ width: "100%", fontWeight: 600, marginTop: 4, marginBottom: 2 }}>Distribute</span>
+          {["x", "y", "z"].map((axis) => (
+            <button
+              key={`dist-${axis}`}
+              className="studio-btn"
+              style={{ fontSize: 9, padding: "2px 5px", minHeight: 20 }}
+              title={`Distribute evenly on ${axis.toUpperCase()}`}
+              onClick={() => {
+                const objs = Array.from(selectedSetRef.current);
+                if (objs.length < 3) return;
+                distributeObjects(objs, axis);
+                needsRenderRef.current = true;
+              }}
+            >
+              {axis.toUpperCase()}
+            </button>
+          ))}
+        </div>
+      )}
 
       {loading && (
         <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none">

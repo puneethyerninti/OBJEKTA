@@ -332,6 +332,18 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Prevent card-3d perspective transform from affecting viewport layout */
+.workspace-area.card-3d {
+  transform: none !important;
+  --tilt-x: 0deg;
+  --tilt-y: 0deg;
+  --hover-lift: 0px;
+  --scale-boost: 0;
 }
 
 /* ── Toolbar (Blender-style compact header) ───────────── */
@@ -1051,6 +1063,8 @@ canvas, model-viewer { position: relative; z-index: 1; }
   margin: 0;
   border-radius: 0;
   overflow: hidden;
+  flex: 1;
+  min-height: 0;
   background:
     radial-gradient(1000px 600px at 10% 10%, rgba(127,90,240,0.05), transparent 60%),
     radial-gradient(900px 500px at 90% 90%, rgba(0,215,255,0.04), transparent 60%),

@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { Home, Info, Palette, Folder, Mail, Menu, X } from 'lucide-react';
+import { Home, Info, Palette, Folder, Mail, Menu, X, Store } from 'lucide-react';
 
 /**
  * Premium floating glass navbar with auth-awareness.
@@ -63,6 +63,7 @@ export default function Navbar(props) {
     { to: "/gallery", label: "Gallery", icon: <Palette size={15} /> },
     { to: "/projects", label: "Projects", icon: <Folder size={15} /> },
     { to: "/contact", label: "Contact", icon: <Mail size={15} /> },
+    { to: "/marketplace", label: "Marketplace", icon: <Store size={15} /> },
   ];
 
   const handleLogout = () => {
@@ -75,8 +76,12 @@ export default function Navbar(props) {
     <nav ref={navRef} className="navbar hp-nav" aria-label="Main navigation">
       <div className="nav-left">
         <h1 className="nav-logo" style={{ margin: 0 }}>
-          <Link to="/" onClick={closeMenu} aria-label="OBJEKTA home" style={{ textDecoration: "none" }}>
-            Objekta
+          <Link to="/" onClick={closeMenu} aria-label="OBJEKTA home" className="nav-logo-link" style={{ textDecoration: "none" }}>
+            <span className="nav-logo-mark" aria-hidden="true">
+              <span className="nav-logo-core" />
+              <span className="nav-logo-orbit" />
+            </span>
+            <span className="nav-logo-text">Objekta</span>
           </Link>
         </h1>
 

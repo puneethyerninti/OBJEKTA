@@ -600,6 +600,8 @@ export default function Dashboard() {
     if (!target) return;
     const id = target._id;
     setProjects((p) => p.filter((x) => x._id !== id));
+    // keep the stats counter in sync with local deletion
+    setStats((s) => ({ ...s, projects: Math.max(0, (s?.projects || 1) - 1) }));
     try {
       const res = await doFetch(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (res.ok) pushToast("Project deleted", "warn");

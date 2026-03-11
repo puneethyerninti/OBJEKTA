@@ -44,8 +44,9 @@ export default function Register() {
           
           <form onSubmit={handleSubmit} className="auth-form">
             <div className="auth-field">
-              <label className="auth-label">Full name</label>
+              <label className="auth-label" htmlFor="register-name">Full name</label>
               <input 
+                id="register-name"
                 className="auth-input" 
                 type="text"
                 name="name" 
@@ -53,12 +54,14 @@ export default function Register() {
                 onChange={(e) => setName(e.target.value)} 
                 placeholder="John Doe"
                 required
+                autoComplete="name"
               />
             </div>
             
             <div className="auth-field">
-              <label className="auth-label">Email</label>
+              <label className="auth-label" htmlFor="register-email">Email</label>
               <input 
+                id="register-email"
                 className="auth-input" 
                 type="email"
                 name="email" 
@@ -66,12 +69,14 @@ export default function Register() {
                 onChange={(e) => setEmail(e.target.value)} 
                 placeholder="name@company.com"
                 required
+                autoComplete="email"
               />
             </div>
             
             <div className="auth-field">
-              <label className="auth-label">Password</label>
+              <label className="auth-label" htmlFor="register-password">Password</label>
               <input 
+                id="register-password"
                 className="auth-input" 
                 type="password"
                 name="password" 
@@ -80,13 +85,15 @@ export default function Register() {
                 placeholder="Create a strong password"
                 required
                 minLength="6"
+                autoComplete="new-password"
+                aria-describedby="password-hint"
               />
-              <span className="auth-hint">Must be at least 6 characters</span>
+              <span id="password-hint" className="auth-hint">Must be at least 6 characters</span>
             </div>
             
-            {err && <div className="auth-error">{err}</div>}
+            {err && <div className="auth-error" role="alert">{err}</div>}
             
-            <button type="submit" className="auth-button" disabled={loading}>
+            <button type="submit" className="auth-button" disabled={loading} aria-busy={loading}>
               {loading ? 'Creating account...' : 'Create account'}
             </button>
           </form>

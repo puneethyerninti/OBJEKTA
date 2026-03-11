@@ -18,6 +18,23 @@ import Studio from "./pages/Studio";
 // New dashboard (intermediate)
 import Dashboard from "./pages/Dashboard";
 
+// Admin panel
+import Admin from "./pages/Admin";
+
+// Auth flow pages
+import VerifyEmailPage from "./pages/VerifyEmail";
+import ForgotPasswordPage from "./pages/ForgotPassword";
+import ResetPasswordPage from "./pages/ResetPassword";
+
+// Marketplace pages
+import MarketplacePage from "./pages/marketplace/MarketplacePage";
+import ProductDetail from "./pages/marketplace/ProductDetail";
+import CartPage from "./pages/marketplace/CartPage";
+import CheckoutPage from "./pages/marketplace/CheckoutPage";
+import OrderHistory from "./pages/marketplace/OrderHistory";
+import OrderTracking from "./pages/marketplace/OrderTracking";
+import SellerDashboard from "./pages/marketplace/SellerDashboard";
+
 // Auth context (NOTE: path is ./contexts/AuthContext)
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
@@ -84,6 +101,9 @@ export default function App() {
           <Route path="/contact" element={<Layout><Contact /></Layout>} />
           <Route path="/login" element={<Layout><Login /></Layout>} />
           <Route path="/register" element={<Layout><Register /></Layout>} />
+          <Route path="/verify-email" element={<Layout><VerifyEmailPage /></Layout>} />
+          <Route path="/reset-password" element={<Layout><ResetPasswordPage /></Layout>} />
+          <Route path="/forgot-password" element={<Layout><ForgotPasswordPage /></Layout>} />
 
           {/* Dashboard — requires login */}
           <Route
@@ -94,6 +114,25 @@ export default function App() {
               </PrivateRoute>
             }
           />
+
+          {/* Admin panel — requires admin role */}
+          <Route
+            path="/admin"
+            element={
+              <PrivateRoute>
+                <Admin />
+              </PrivateRoute>
+            }
+          />
+
+          {/* Marketplace — public browse, auth for cart/checkout/seller */}
+          <Route path="/marketplace" element={<Layout><MarketplacePage /></Layout>} />
+          <Route path="/marketplace/product/:idOrSlug" element={<Layout><ProductDetail /></Layout>} />
+          <Route path="/marketplace/cart" element={<Layout><PrivateRoute><CartPage /></PrivateRoute></Layout>} />
+          <Route path="/marketplace/checkout" element={<Layout><PrivateRoute><CheckoutPage /></PrivateRoute></Layout>} />
+          <Route path="/marketplace/orders" element={<Layout><PrivateRoute><OrderHistory /></PrivateRoute></Layout>} />
+          <Route path="/marketplace/orders/:orderId" element={<Layout><PrivateRoute><OrderTracking /></PrivateRoute></Layout>} />
+          <Route path="/marketplace/seller" element={<Layout><PrivateRoute><SellerDashboard /></PrivateRoute></Layout>} />
 
           {/* Studio — requires login and uses DnD provider */}
           <Route

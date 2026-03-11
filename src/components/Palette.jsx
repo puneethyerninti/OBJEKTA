@@ -8,12 +8,13 @@ const PALETTE_TYPE = "PALETTE_ITEM";
 const shapeIcons = {
   Cube: "▦", Sphere: "◯", Cone: "◭", Plane: "▭", Cylinder: "⬒",
   Torus: "◎", Empty: "⊙", "Axis Helper": "⟂", "Point Light": "●",
-  "Spot Light": "◍", "Directional Light": "➤", Camera: "📷", Default: "■",
+  "Spot Light": "◍", "Directional Light": "➤", "Area Light": "▬",
+  Camera: "📷", Default: "■",
 };
 
 const DEFAULT_GROUPS = {
   Shapes: ["Cube", "Sphere", "Cone", "Plane", "Cylinder", "Torus"],
-  Lights: ["Point Light", "Spot Light", "Directional Light"],
+  Lights: ["Point Light", "Spot Light", "Directional Light", "Area Light"],
   Helpers: ["Empty", "Axis Helper"],
   Camera: ["Camera"],
 };

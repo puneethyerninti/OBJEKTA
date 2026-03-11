@@ -1,5 +1,6 @@
 // backend/socket.js
 const { Server } = require("socket.io");
+const { registerMarketplaceEvents } = require("./socket/marketplace");
 
 let io = null;
 
@@ -110,6 +111,9 @@ function initSocket(server) {
       }
       socket.broadcast.emit("scene:push", payload);
     });
+
+    // ──── Marketplace events ────
+    registerMarketplaceEvents(io, socket);
 
     socket.on("disconnect", () => {
       if (socket.data.projectId) {

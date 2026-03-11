@@ -21,8 +21,8 @@ export function setupDefaultLighting(scene, renderer, opts = {}) {
   scene.add(amb);
   lights.ambient = amb;
 
-  // Hemisphere
-  const hemi = new THREE.HemisphereLight(0x606080, 0x202020, 0.35);
+  // Hemisphere — neutral warm tones to avoid color tint
+  const hemi = new THREE.HemisphereLight(0xffeedd, 0x333333, 0.4);
   hemi.name = "_hemi_light";
   scene.add(hemi);
   lights.hemisphere = hemi;

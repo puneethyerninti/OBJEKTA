@@ -1,5 +1,6 @@
 // backend/server.js
 require("dotenv").config();
+require("./config/validateEnv")();
 const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
@@ -12,7 +13,11 @@ const multer = require("multer");
 const crypto = require("crypto");
 const connectDB = require("./config/db");
 const { initSocket } = require("./socket");
+const { initYjs } = require("./yjs");
 const { protect } = require("./middleware/authMiddleware");
+const cookieParser = require("cookie-parser");
+const swaggerUi = require("swagger-ui-express");
+const swaggerSpec = require("./config/swagger");
 const tus = require("tus-node-server");
 const FileStore = tus.FileStore || (tus.stores && tus.stores.FileStore);
 
@@ -24,6 +29,8 @@ const scenesRoutes = require("./routes/scenes");
 const activityRoutes = require("./routes/activity");
 const collaboratorsRoutes = require("./routes/collaborators");
 const aiRoutes = require("./routes/ai");
+const marketplaceRoutes = require("./routes/marketplace");
+const versionsRoutes = require("./routes/versions");
 const app = express();
 app.disable("x-powered-by");
 
@@ -45,6 +52,7 @@ app.use(morgan(":id :method :url :status :response-time ms"));
 
 app.use(express.json({ limit: "200mb" }));
 app.use(express.urlencoded({ limit: "200mb", extended: true }));
+app.use(cookieParser());
 
 // CORS: allow configured origins (comma-separated), common production frontends, and localhost
 const envOrigins = (process.env.FRONTEND_ORIGIN || "")
@@ -134,6 +142,10 @@ const upload = multer({
 // ---------- Static Files ----------
 app.use("/uploads", express.static(uploadDir));
 
+// ---------- API Documentation ----------
+app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, { customSiteTitle: "OBJEKTA API Docs" }));
+app.get("/api/docs.json", (req, res) => res.json(swaggerSpec));
+
 // ---------- API Routes ----------
 app.use("/api", apiLimiter);
 app.use("/api/auth", authRoutes);
@@ -143,6 +155,8 @@ app.use("/api/scenes", scenesRoutes);
 app.use("/api/activity", activityRoutes);
 app.use("/api/collaborators", collaboratorsRoutes);
 app.use("/api/ai", aiRoutes);
+app.use("/api/marketplace", marketplaceRoutes);
+app.use("/api/versions", versionsRoutes);
 
 // ---------- tus resumable uploads (fallback) ----------
 try {
@@ -190,6 +204,20 @@ app.post("/api/upload-glb", protect, (req, res, _next) => {
 // ---------- Health Check ----------
 app.get("/", (req, res) => res.send("🧠 OBJEKTA backend is running 🚀"));
 app.get("/api/test", (req, res) => res.json({ message: "Backend OK ✅" }));
+app.get("/health", async (req, res) => {
+  const checks = { status: "ok", uptime: process.uptime(), timestamp: new Date().toISOString() };
+  try {
+    const mongoose = require("mongoose");
+    const dbState = mongoose.connection.readyState;
+    checks.database = dbState === 1 ? "connected" : dbState === 2 ? "connecting" : "disconnected";
+    if (dbState !== 1) checks.status = "degraded";
+  } catch (e) {
+    checks.database = "error";
+    checks.status = "degraded";
+  }
+  const code = checks.status === "ok" ? 200 : 503;
+  res.status(code).json(checks);
+});
 
 // ---------- Error Handler ----------
 app.use((err, req, res, _next) => {
@@ -212,6 +240,7 @@ app.use((err, req, res, _next) => {
 // ---------- Create HTTP + WebSocket Server ----------
 const server = http.createServer(app);
 initSocket(server);
+initYjs(server);
 
 // ---------- Start Server ----------
 const PORT = process.env.PORT || 5000;

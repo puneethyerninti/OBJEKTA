@@ -91,6 +91,10 @@ module.exports = defineConfig(async () => {
 							return 'vendor-collab';
 						}
 
+						if (id.includes('/rapier3d-compat')) {
+							return 'vendor-physics';
+						}
+
 						return 'vendor-misc';
 					},
 				},

@@ -28,6 +28,7 @@ import Timeline from "../components/Timeline";
 import StudioToast from "../components/StudioToast";
 import Loader from "../components/Loader";
 const BackupsPanel = lazy(() => import("../components/BackupsPanel"));
+const VersionTimeline = lazy(() => import("../components/VersionTimeline"));
 import "../styles/Studio.css";
 
 import { SceneGraphStore } from "../store/SceneGraphStore";
@@ -46,6 +47,14 @@ import { PALETTE_ITEMS } from "./studio/constants";
 import ConfirmModal from "./studio/ConfirmModal";
 import CenterWelcomeCard from "./studio/CenterWelcomeCard";
 import { saveBackupToIndexedDB } from "./studio/backupDB";
+import useCollaboration from "../collaboration/useCollaboration";
+import usePhysics from "../hooks/usePhysics";
+const PresencePanel = lazy(() => import("../collaboration/PresencePanel"));
+const PhysicsPanel = lazy(() => import("../components/PhysicsPanel"));
+const PhysicsToolbar = lazy(() => import("../components/PhysicsToolbar"));
+const PhysicsDebugRenderer = lazy(() => import("../components/PhysicsDebugRenderer"));
+const JointEditor = lazy(() => import("../components/JointEditor"));
+const JointVisualizer = lazy(() => import("../components/JointVisualizer"));
 const AIChatPanel = lazy(() => import("../components/AIChatPanel"));
 const MeshToolsPanel = lazy(() => import("../components/MeshToolsPanel"));
 const OptimizationPanel = lazy(() => import("../components/OptimizationPanel"));
@@ -60,7 +69,7 @@ const PostFXPanel = lazy(() => import("../components/PostFXPanel"));
 export default function Studio() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { logout } = useAuth() || {};
+  const { logout, user: authUser } = useAuth() || {};
 
   // refs & API handles
   const workspaceRef = useRef(null);
@@ -385,6 +394,63 @@ export default function Studio() {
 
   // upload progress (fraction 0..1) for current save operation (visual in Studio)
   const [saveProgress, setSaveProgress] = useState(0);
+
+  // --- Yjs CRDT Collaboration ---
+  const collabUser = authUser ? { id: authUser._id || authUser.id, name: authUser.name || authUser.email } : null;
+  const {
+    status: yjsStatus,
+    yjsConnected,
+    remoteUsers,
+    pushObjectUpdate,
+    pushObjectRemove,
+    lockObject,
+    unlockObject,
+    isLockedByOther,
+    setCursor: setCollabCursor,
+    setSelectedObjects: setCollabSelected,
+  } = useCollaboration({ projectId, user: collabUser, workspaceRef, onToast: (t) => { try { pushToast(t); } catch (e) {} } });
+
+  // --- Physics (Rapier WASM) ---
+  const {
+    ready: physicsReady,
+    running: physicsRunning,
+    gravity: physicsGravity,
+    debugVisible: physicsDebugVisible,
+    setDebugVisible: setPhysicsDebugVisible,
+    bodies: physicsBodies,
+    manager: physicsManagerRef,
+    addPhysicsBody,
+    removePhysicsBody,
+    updatePhysicsBody,
+    hasPhysicsBody,
+    getPhysicsConfig,
+    playPhysics,
+    pausePhysics,
+    resetPhysics,
+    stepPhysics,
+    setGravityPreset: setPhysicsGravityPreset,
+    addJoint: addPhysicsJoint,
+    removeJoint: removePhysicsJoint,
+    getJoints: getPhysicsJoints,
+    getJointsForBody: getPhysicsJointsForBody,
+    addTrigger: addPhysicsTrigger,
+    removeTrigger: removePhysicsTrigger,
+    applyImpulse: applyPhysicsImpulse,
+    getDebugLines: getPhysicsDebugLines,
+    createRagdoll: createPhysicsRagdoll,
+    bakeToKeyframes: bakePhysicsToKeyframes,
+  } = usePhysics(workspaceRef);
+
+  // Connect physics step to Workspace render loop
+  useEffect(() => {
+    const ws = workspaceRef.current;
+    if (ws?.setPhysicsStep) {
+      ws.setPhysicsStep(stepPhysics);
+    }
+    return () => {
+      if (ws?.setPhysicsStep) ws.setPhysicsStep(null);
+    };
+  }, [stepPhysics]);
 
   const safeDate = useCallback(() => new Date().toISOString().replace(/[:.]/g, "-"), []);
 
@@ -849,6 +915,8 @@ export default function Studio() {
   /* selection handler */
   const handleWorkspaceSelect = useCallback((obj) => {
     setSelected(obj);
+    // Sync selected objects to Yjs awareness
+    setCollabSelected(obj ? [obj.uuid] : []);
     try { materialEditorApiRef.current?.refresh?.(); } catch (e) {}
     if (!obj) {
       setMatColor('#888888'); setMatRough(0.5); setMatMetal(0); setMatHasMap(false); setMatMapURL(null);
@@ -1020,10 +1088,10 @@ export default function Studio() {
       if (e.dataTransfer.files?.length > 0) {
         const file = e.dataTransfer.files[0];
         const name = (file.name || "").toLowerCase();
-        if (name.endsWith(".glb") || name.endsWith(".gltf")) importGLTF(file);
+        if (name.endsWith(".glb") || name.endsWith(".gltf") || name.endsWith(".obj") || name.endsWith(".fbx") || name.endsWith(".zip")) importGLTF(file);
         else if (name.endsWith(".json")) loadJSON(file);
         else if (name.endsWith(".hdr") || name.endsWith(".exr") || name.endsWith(".jpg") || name.endsWith(".png")) applyEnvironmentFromFile(file);
-        else pushToast({ type: "error", message: "Unsupported file. Drop a .glb, .gltf, .json, or .hdr file." });
+        else pushToast({ type: "error", message: "Unsupported file. Drop a .glb, .gltf, .obj, .fbx, .json, or .hdr file." });
       }
     };
     container.addEventListener("dragover", onDragOver);
@@ -1132,19 +1200,20 @@ export default function Studio() {
     });
   }, [disposeObjectResources, pushToast]);
 
-  /* collaboration (unchanged dynamic import for client) */
+  /* collaboration — Yjs-backed (CRDT). Legacy socket.io collab is kept for backward compat. */
   const startCollab = useCallback(async () => {
     if (collabSocketRef.current) {
       try { collabSocketRef.current.disconnect(); } catch (e) {}
       collabSocketRef.current = null; setCollabConnected(false); pushToast({ type: "info", message: "Collab disconnected" }); return;
     }
+    // Yjs is already auto-connected via useCollaboration when projectId is set.
+    // The legacy socket collab is kept for backward compatibility.
     setCollabLoading(true);
     try {
       const module = await import("socket.io-client");
       const ioClient = module.io || module.default || module;
-      // use same backend base as API calls
-  const base = API_BASE || window.location.origin;
-  const socket = ioClient(base, { autoConnect: true, transports: ["websocket", "polling"], withCredentials: true });
+      const base = API_BASE || window.location.origin;
+      const socket = ioClient(base, { autoConnect: true, transports: ["websocket", "polling"], withCredentials: true });
       collabSocketRef.current = socket;
       socket.on("connect", () => {
         setCollabConnected(true); setCollabLoading(false); pushToast({ type: "info", message: "Connected to collab server" });
@@ -1254,14 +1323,44 @@ export default function Studio() {
     EventBus.on?.("objects:selected", onObjectsSelected);
     EventBus.on?.("object:selected", onObjectSelected);
 
+    // Push transform changes to Yjs CRDT
+    const onTransformCommit = (payload) => {
+      try {
+        const obj = payload?.object;
+        if (!obj?.uuid) return;
+        pushObjectUpdate(obj.uuid, {
+          position: [obj.position.x, obj.position.y, obj.position.z],
+          rotation: [obj.rotation.x, obj.rotation.y, obj.rotation.z],
+          scale: [obj.scale.x, obj.scale.y, obj.scale.z],
+          name: obj.name || '',
+          type: obj.type || 'Object3D',
+        });
+      } catch (e) {}
+    };
+    EventBus.on?.("transform:commit", onTransformCommit);
+
+    // When user manually transforms an object, sync position to physics body
+    const onTransformCommitPhysics = (payload) => {
+      try {
+        const obj = payload?.object;
+        if (!obj?.uuid) return;
+        if (physicsManagerRef?.current?.hasBody(obj.uuid)) {
+          physicsManagerRef.current.syncFromThreeObject(obj.uuid, obj);
+        }
+      } catch (e) {}
+    };
+    EventBus.on?.("transform:commit", onTransformCommitPhysics);
+
     return () => {
       try {
         EventBus.off?.("scene:updated", onSceneUpdated);
         EventBus.off?.("objects:selected", onObjectsSelected);
         EventBus.off?.("object:selected", onObjectSelected);
+        EventBus.off?.("transform:commit", onTransformCommit);
+        EventBus.off?.("transform:commit", onTransformCommitPhysics);
       } catch (e) {}
     };
-  }, [refreshLightListFromScene, resolveSelectedObject, handleWorkspaceSelect]);
+  }, [refreshLightListFromScene, resolveSelectedObject, handleWorkspaceSelect, pushObjectUpdate]);
 
   useEffect(() => {
     refreshLightListFromScene();
@@ -2488,7 +2587,7 @@ export default function Studio() {
             <div className="toolbar-group" role="group" aria-label="Shading">
             <div className="toolbar-shading-group">
               <div className="segmented-control" role="group" aria-label="Viewport shading">
-                {[ ['rendered', 'Rendered'], ['material', 'Material'], ['wireframe', 'Wireframe'] ].map(([mode, label]) => (
+                {[ ['rendered', 'Rendered'], ['solid', 'Solid'], ['material', 'Material'], ['wireframe', 'Wireframe'] ].map(([mode, label]) => (
                   <button key={mode} onClick={() => setViewMode(mode)} className={viewMode === mode ? 'active' : ''} title={`${label} view`} aria-pressed={viewMode === mode}>{label}</button>
                 ))}
               </div>
@@ -2501,7 +2600,7 @@ export default function Studio() {
 
             <label className="studio-btn icon-btn" title="Import GLB/GLTF" aria-label="Import">
               <FiUpload />
-              <input aria-label="Import GLB or GLTF" type="file" accept=".glb,.gltf" className="sr-only" onChange={(e) => { const file = e.target.files?.[0]; if (file) { importGLTF(file); e.target.value = ""; } }} />
+              <input aria-label="Import 3D Model" type="file" accept=".glb,.gltf,.obj,.fbx,.zip" className="sr-only" onChange={(e) => { const file = e.target.files?.[0]; if (file) { importGLTF(file); e.target.value = ""; } }} />
             </label>
 
             <button className="studio-btn icon-btn" onClick={() => exportGLTF(true)} title="Export as GLB" aria-label="Export"><FiSave /></button>
@@ -2521,8 +2620,8 @@ export default function Studio() {
 
             {/* Inspector collapse toggle removed */}
 
-            <button className={`studio-btn icon-btn ${collabConnected ? 'connected' : ''}`} onClick={() => startCollab()} title={collabConnected ? "Disconnect collaboration" : "Start collaboration"} aria-pressed={collabConnected}>
-              {collabConnected ? <FiWifi /> : <FiWifiOff />}
+            <button className={`studio-btn icon-btn ${collabConnected || yjsConnected ? 'connected' : ''}`} onClick={() => startCollab()} title={collabConnected ? "Disconnect collaboration" : yjsConnected ? `Yjs: ${yjsStatus} (${remoteUsers.length} users)` : "Start collaboration"} aria-pressed={collabConnected || yjsConnected}>
+              {collabConnected || yjsConnected ? <FiWifi /> : <FiWifiOff />}
             </button>
 
             <button className="studio-btn icon-btn" onClick={() => toggleSculpt()} title="Toggle sculpt" aria-label="Toggle sculpt"><FiEdit3 /></button>
@@ -2710,7 +2809,7 @@ export default function Studio() {
           </div>
 
           <Suspense fallback={null}>
-            <SculptToolbar workspaceRef={workspaceRef} rendererSelector=".workspace-area canvas" />
+            <SculptToolbar workspaceRef={workspaceRef} />
           </Suspense>
 
           <Workspace
@@ -2721,6 +2820,87 @@ export default function Studio() {
             showInternalPanels={false}
             onSceneChange={(_v) => { setSceneVersion((s) => s + 1); refreshLightListFromScene(); setIsDirty(true); }}
           />
+
+          {/* Physics Toolbar (simulation controls) */}
+          {physicsReady && (
+            <Suspense fallback={null}>
+              <PhysicsToolbar
+                physicsReady={physicsReady}
+                physicsRunning={physicsRunning}
+                gravity={physicsGravity}
+                debugVisible={physicsDebugVisible}
+                bodies={physicsBodies}
+                onPlay={playPhysics}
+                onPause={pausePhysics}
+                onReset={resetPhysics}
+                onGravityChange={setPhysicsGravityPreset}
+                onDebugToggle={setPhysicsDebugVisible}
+                onBakePhysics={() => {
+                  const tracks = bakePhysicsToKeyframes(5, 30);
+                  const uuids = Object.keys(tracks);
+                  if (uuids.length === 0) { pushToast({ type: 'warn', message: 'No physics bodies to bake.' }); return; }
+                  // Convert to animation tracks
+                  const animApi = workspaceRef.current?.getAnimationApi?.();
+                  if (animApi) {
+                    for (const uuid of uuids) {
+                      const frames = tracks[uuid];
+                      for (const frame of frames) {
+                        animApi.addTrack({
+                          id: `phys_${uuid}_pos`,
+                          objectUuid: uuid,
+                          property: 'position',
+                          keyframes: frames.map(f => ({
+                            time: f.time,
+                            value: { x: f.position.x, y: f.position.y, z: f.position.z },
+                          })),
+                        });
+                      }
+                    }
+                    pushToast({ type: 'success', message: `Baked ${uuids.length} physics tracks to animation.` });
+                  }
+                }}
+              />
+            </Suspense>
+          )}
+
+          {/* Physics Debug Renderer + Joint Visualizer */}
+          {physicsReady && (
+            <Suspense fallback={null}>
+              <PhysicsDebugRenderer
+                scene={workspaceRef.current?.scene}
+                physicsManager={physicsManagerRef}
+                visible={physicsDebugVisible}
+              />
+              <JointVisualizer
+                scene={workspaceRef.current?.scene}
+                getJoints={getPhysicsJoints}
+                debugVisible={physicsDebugVisible}
+              />
+            </Suspense>
+          )}
+
+          {/* Yjs Collaboration Presence Panel */}
+          {yjsConnected && (
+            <Suspense fallback={null}>
+              <PresencePanel remoteUsers={remoteUsers} yjsStatus={yjsStatus} />
+            </Suspense>
+          )}
+
+          {/* Yjs connection status dot (bottom-right) */}
+          {projectId && (
+            <div style={{
+              position: 'absolute', bottom: 12, right: 12, display: 'flex', alignItems: 'center', gap: 6,
+              background: 'rgba(0,0,0,0.5)', color: '#eee', fontSize: 10, borderRadius: 12,
+              padding: '4px 10px', zIndex: 90, pointerEvents: 'none',
+            }}>
+              <span style={{
+                width: 6, height: 6, borderRadius: '50%', display: 'inline-block',
+                background: yjsStatus === 'connected' ? '#4ade80' : yjsStatus === 'connecting' ? '#facc15' : '#ef4444',
+              }} />
+              {yjsStatus === 'connected' ? 'Synced' : yjsStatus === 'connecting' ? 'Syncing…' : 'Offline'}
+              {remoteUsers.length > 0 && ` · ${remoteUsers.length} user${remoteUsers.length > 1 ? 's' : ''}`}
+            </div>
+          )}
 
           {/* Welcome card removed — inspector empty state provides same actions */}
           <Timeline workspaceRef={workspaceRef} selected={selected} />
@@ -2773,6 +2953,7 @@ export default function Studio() {
                 <button role="tab" id="tab-procedural" aria-selected={propsTab === 'procedural'} aria-controls="tabpanel-procedural" onClick={() => setPropsTab('procedural')} className={propsTab === 'procedural' ? 'active' : ''}>Procedural</button>
                 <button role="tab" id="tab-library" aria-selected={propsTab === 'library'} aria-controls="tabpanel-library" onClick={() => setPropsTab('library')} className={propsTab === 'library' ? 'active' : ''}>Library</button>
                 <button role="tab" id="tab-postfx" aria-selected={propsTab === 'postfx'} aria-controls="tabpanel-postfx" onClick={() => setPropsTab('postfx')} className={propsTab === 'postfx' ? 'active' : ''}>PostFX</button>
+                {physicsReady && <button role="tab" id="tab-physics" aria-selected={propsTab === 'physics'} aria-controls="tabpanel-physics" onClick={() => setPropsTab('physics')} className={propsTab === 'physics' ? 'active' : ''}>Physics</button>}
               </div>
 
               <div className="inspector-selection-bar" aria-live="polite">
@@ -2832,6 +3013,30 @@ export default function Studio() {
                       }}
                       onLightChange={(_payload) => { /* optional: forward to lighting system */ }}
                     />
+                    {/* Physics properties panel */}
+                    {physicsReady && !selected?.isLight && !selected?.isCamera && (
+                      <Suspense fallback={null}>
+                        <PhysicsPanel
+                          selected={selected}
+                          physicsReady={physicsReady}
+                          physicsRunning={physicsRunning}
+                          hasPhysicsBody={hasPhysicsBody}
+                          getPhysicsConfig={getPhysicsConfig}
+                          addPhysicsBody={addPhysicsBody}
+                          removePhysicsBody={removePhysicsBody}
+                          updatePhysicsBody={updatePhysicsBody}
+                          getJointsForBody={getPhysicsJointsForBody}
+                          onCreateRagdoll={(obj) => {
+                            let rootBone = null;
+                            obj.traverse?.(c => { if (!rootBone && c.isBone) rootBone = c; });
+                            if (rootBone) {
+                              createPhysicsRagdoll(rootBone);
+                              pushToast({ type: 'success', message: 'Ragdoll generated!' });
+                            }
+                          }}
+                        />
+                      </Suspense>
+                    )}
                     {/* Bloom tagging quick toggle */}
                     {postApiRef.current?.tagForBloom && selected.isObject3D && (
                       <div className="postfx-section">
@@ -2996,6 +3201,14 @@ export default function Studio() {
                       onRestore={handleRestoreBackup}
                       onNotify={(type, message) => pushToast({ type, message })}
                     />
+                    <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", margin: "12px 0" }} />
+                    <VersionTimeline
+                      projectId={projectId}
+                      onRestore={(project) => {
+                        if (project?.data) handleRestoreBackup({ data: project.data, type: "scene-data" });
+                      }}
+                      onNotify={(type, message) => pushToast({ type, message })}
+                    />
                   </Suspense>
                 )}
 
@@ -3046,6 +3259,58 @@ export default function Studio() {
                       pushToast={pushToast}
                     />
                   </Suspense>
+                )}
+
+                {/* Physics tab */}
+                {propsTab === 'physics' && physicsReady && (
+                  <div style={{ padding: 12 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0', marginBottom: 12 }}>
+                      ⚡ Physics Engine
+                    </div>
+                    <div style={{ fontSize: 11, color: '#a0aec0', marginBottom: 8 }}>
+                      {physicsBodies.length} active {physicsBodies.length === 1 ? 'body' : 'bodies'} · Gravity: {physicsGravity}
+                    </div>
+
+                    {/* Joint Editor */}
+                    <Suspense fallback={null}>
+                      <JointEditor
+                        selectedA={selected?.uuid}
+                        selectedB={null}
+                        onAddJoint={addPhysicsJoint}
+                        onRemoveJoint={removePhysicsJoint}
+                        getJoints={getPhysicsJoints}
+                        physicsRunning={physicsRunning}
+                        hasPhysicsBody={hasPhysicsBody}
+                      />
+                    </Suspense>
+
+                    {/* Physics bodies list */}
+                    {physicsBodies.length > 0 && (
+                      <div style={{ marginTop: 12, borderTop: '1px solid #2d3748', paddingTop: 8 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: '#a0aec0', marginBottom: 6 }}>
+                          Physics Bodies
+                        </div>
+                        {physicsBodies.map(b => (
+                          <div key={b.uuid} style={{
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                            padding: '3px 0', fontSize: 11, color: '#a0aec0',
+                          }}>
+                            <span>{b.uuid.slice(0, 8)}… ({b.type}, {b.colliderType})</span>
+                            <button
+                              onClick={() => removePhysicsBody(b.uuid)}
+                              disabled={physicsRunning}
+                              style={{
+                                background: '#e53e3e', color: '#fff', border: 'none',
+                                borderRadius: 3, padding: '1px 6px', fontSize: 10, cursor: 'pointer',
+                              }}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             </div>

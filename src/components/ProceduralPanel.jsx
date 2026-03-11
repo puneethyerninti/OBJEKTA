@@ -10,6 +10,8 @@ import React, { useState, useCallback, useMemo } from "react";
 import { FiBox, FiGrid, FiLayers, FiPlay, FiRotateCcw } from "react-icons/fi";
 import { PROCEDURAL_CATALOG } from "../engine/ProceduralGenerator";
 import { PRESET_CATALOG } from "../engine/ScenePresets";
+import { SceneGraphStore } from "../store/SceneGraphStore";
+import EventBus from "../utils/EventBus";
 
 import "../styles/ProceduralPanel.css";
 
@@ -227,17 +229,59 @@ function addToScene(object, workspaceRef, pushToast) {
     return;
   }
 
-  // Use workspace API if available
+  // Tag the object and all its descendants as __objekta so they are
+  // selectable, saveable, and visible to raycaster / scene graph store.
+  object.userData = object.userData || {};
+  object.userData.__objekta = true;
+  object.traverse((child) => {
+    child.userData = child.userData || {};
+    child.userData.__objekta = true;
+    if (child.isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+    }
+  });
+
+  // Use the dedicated addObject method (no normalization, with undo, BVH, etc.)
   if (typeof ws.addObject === "function") {
-    ws.addObject(object);
+    try {
+      ws.addObject(object);
+      return;
+    } catch (e) {
+      // fall through to manual path
+    }
+  }
+
+  // Fallback: add directly to scene and register manually
+  const scene = ws.scene;
+  if (!scene) {
+    pushToast?.({ type: "error", message: "Cannot add object — no scene reference" });
     return;
   }
 
-  // Fallback: add directly to scene
-  if (ws.scene) {
-    ws.scene.add(object);
-    return;
-  }
+  scene.add(object);
 
-  pushToast?.({ type: "error", message: "Cannot add object — no scene reference" });
+  try {
+    SceneGraphStore.addObject(object.uuid, object, {
+      name: object.name || "Procedural",
+      type: "procedural",
+    });
+    object.traverse((child) => {
+      if (child !== object) {
+        SceneGraphStore.addObject(child.uuid, child, {
+          name: child.name || "ProceduralChild",
+          type: child.isMesh ? "mesh" : child.isLight ? "light" : "group",
+        });
+      }
+    });
+  } catch (e) {}
+
+  try { EventBus.emit("scene:updated", { id: object.uuid, type: "add" }); } catch (e) {}
+
+  if (typeof ws.selectObject === "function") {
+    try { ws.selectObject(object); } catch (e) {}
+  }
+  if (typeof ws.markDirty === "function") {
+    try { ws.markDirty(); } catch (e) {}
+  }
 }

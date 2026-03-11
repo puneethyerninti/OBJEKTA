@@ -9,6 +9,7 @@ const Project = require("../models/Project");
 const { getIO } = require("../socket");
 const { protect } = require("../middleware/authMiddleware");
 const { processScenePayload, hydrateSceneFromFile, approxBytes } = require("../utils/sceneStorage");
+const { createVersion } = require("../services/versioningService");
 
 // ensure uploads dir exists
 const uploadsDir = path.resolve(__dirname, "..", "uploads");
@@ -421,6 +422,14 @@ router.put("/:id", protect, handleProjectFiles, async (req, res) => {
 
     const updated = await Project.findByIdAndUpdate(id, updates, { new: true });
     if (!updated) return res.status(404).json({ message: "Project not found" });
+
+    // auto-version on scene data changes
+    if (hasSceneUpdate) {
+      try {
+        const sceneData = updates.data || (updated.sceneStorageType === 'disk' ? await hydrateSceneFromFile(updated) : updated.data);
+        if (sceneData) await createVersion(id, req.userId, sceneData, req.body.versionMessage);
+      } catch (e) { console.error("Auto-version error:", e); }
+    }
 
     // cleanup previous scene file when replaced
     if (scenePayload && scenePayload.sceneStorageType === 'disk' && existing.sceneFilePath && existing.sceneFilePath !== scenePayload.sceneFilePath) {

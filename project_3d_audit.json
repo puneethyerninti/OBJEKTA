@@ -1,0 +1,421 @@
+{
+  "project": "OBJEKTA — 3D Web Design App",
+  "branch": "main",
+  "remote": "https://github.com/puneethyerninti/OBJEKTA.git",
+  "scan_date": "2026-03-08",
+  "vcs_state": {
+    "branch": "main",
+    "modified_files": 18,
+    "untracked_files": 15,
+    "deleted_files": 1
+  },
+  "test_results": {
+    "framework": "vitest",
+    "total_test_files": 22,
+    "passed_files": 21,
+    "failed_files": 1,
+    "total_tests": 371,
+    "passed_tests": 366,
+    "failed_tests": 5,
+    "duration_seconds": 5.12,
+    "failing_suite": "src/__tests__/marketplace.test.js",
+    "failing_tests": [
+      "MarketplaceStore > initializes with empty state",
+      "MarketplaceStore > fetchProducts populates products",
+      "MarketplaceStore > fetchProducts sends correct query params",
+      "MarketplaceStore > fetchCart populates cart items",
+      "MarketplaceStore > addNotification appends and respects max"
+    ]
+  },
+  "dependencies_summary": {
+    "three_js": "0.152.2",
+    "react_three_fiber": "8.13.7",
+    "react_three_drei": "9.88.7",
+    "react_three_postprocessing": "2.15.0",
+    "react_three_cannon": "6.6.0 (installed but unused)",
+    "socket_io": "4.8.1",
+    "stripe": "20.4.0",
+    "mongoose": "7.3.1",
+    "yjs": "13.6.27 (installed but unused)",
+    "zustand": "5.0.8",
+    "tus_js_client": "4.3.1",
+    "transformers_js": "3.8.1"
+  },
+  "file_counts": {
+    "engine_modules": 21,
+    "ui_components": 71,
+    "pages": 18,
+    "store_files": 4,
+    "test_files": 23,
+    "shader_files": 12,
+    "backend_routes": 7,
+    "models": 7,
+    "total_glb_assets": 7,
+    "total_glb_size_mb": 197.3
+  },
+  "requirements": [
+    {
+      "name": "Core Rendering & Engine",
+      "score": 88,
+      "status": "Present",
+      "evidence": [
+        "src/components/Workspace.jsx — R3F Canvas, Three.js 0.152.2 integration, WebGL renderer",
+        "src/engine/LODGenerator.js — 4-tier LOD (100%→50%→25%→10%) via vertex-clustering",
+        "src/store/SceneGraphStore.js — Scene graph state management",
+        "src/engine/SceneGraphOps.js — group/ungroup/clone/remove/reparent ops (320 lines)",
+        "src/engine/SceneOptimizer.js — scene stats, geometry/material dedup, perf budgets",
+        "src/components/PostProcessing.jsx — selective bloom, EffectComposer passes",
+        "src/engine/PostFXManager.js — bloom, SSAO, DOF, chromatic aberration, tone mapping (280 lines)",
+        "three-mesh-bvh@0.6.8 — BVH acceleration"
+      ],
+      "notes": "Full WebGL/Three.js pipeline via React Three Fiber. Scene graph implemented with selection, hierarchy, and LOD. Lacks advanced features like instanced rendering controls and occlusion culling UI."
+    },
+    {
+      "name": "Scene Editor",
+      "score": 85,
+      "status": "Present",
+      "evidence": [
+        "src/components/Workspace.jsx — TransformControls with translate/rotate/scale modes (~800 lines)",
+        "src/components/Outliner.jsx — Scene graph tree UI with search (~350 lines)",
+        "src/components/ObjectProperties.jsx — Inspector panel with transform, material, texture slots (~800 lines)",
+        "src/components/StudioToolbar.jsx — Undo/redo, mode switching, save/export",
+        "src/components/PalettePanel.jsx + Palette.jsx — Object library with drag-drop shapes/lights/cameras",
+        "src/pages/Studio.jsx — Full editor page with keyboard shortcuts (Ctrl+Z undo, Del remove, F frame)",
+        "src/engine/HistoryEngine.js — JSON-snapshot undo/redo (50-item stack)",
+        "src/components/workspace/HistoryManager.js — React-integrated history management",
+        "src/engine/SnapManager.js — Grid/angle/scale/surface snapping (280 lines)"
+      ],
+      "notes": "Full scene editor: outliner, inspector, transform gizmos (move/rotate/scale), palette, keyboard shortcuts, undo/redo. Snapping and grid well implemented. Missing: multi-select transform, alignment tools, measurement/dimension tools."
+    },
+    {
+      "name": "Asset Pipeline",
+      "score": 80,
+      "status": "Present",
+      "evidence": [
+        "src/engine/ImportEngine.js — GLB/GLTF import with texture fallback (80 lines)",
+        "src/engine/ExportEngine.js — GLB/GLTF/JSON export (60 lines)",
+        "src/engine/ExportPipeline.js — Size estimation, metadata stripping, export presets (220 lines)",
+        "src/components/GLBImporter.jsx — Drag-drop UI with DRACO support (~150 lines)",
+        "src/utils/gltfLoader.js — Safe GLTFLoader with blob URL fallback",
+        "src/utils/upload.js — Multi-strategy upload: presign/multipart-S3/tus (280 lines)",
+        "backend/routes/uploads.js — Presign, multipart, tus endpoints",
+        "public/models/ — 7 GLB assets (197.3 MB total)",
+        "src/components/Thumbnail.jsx — Thumbnail display with fallback"
+      ],
+      "notes": "GLB/GLTF import/export is solid including DRACO. No OBJ/FBX import (only GLB/GLTF). Thumbnails exist but auto-generation from 3D preview is not confirmed. Resumable uploads via tus are excellent."
+    },
+    {
+      "name": "Materials & Shading",
+      "score": 90,
+      "status": "Present",
+      "evidence": [
+        "src/engine/MaterialLibrary.js — 50+ PBR presets across metals/woods/stones/glass/fabric (~350 lines)",
+        "src/components/MaterialEditor.jsx — PBR property controls (~150 lines)",
+        "src/components/MaterialLibraryPanel.jsx — Searchable material browser with apply/rollback (~300 lines)",
+        "src/components/ObjectProperties.jsx — 6 texture map slots (base, normal, roughness, metalness, emissive, AO)",
+        "src/engine/TextureGenerator.js — 8+ procedural textures: checkerboard, noise, wood, marble, gradient, grid, brick (400 lines)",
+        "src/engine/PostFXManager.js — Full post-processing: bloom, SSAO, DOF, chromatic aberration, tone mapping, film grain, vignette (280 lines)",
+        "src/shaders/ — 12 GLSL shader files (hologram, planet, atmosphere, starfield, grid, blob)",
+        "src/store/TextureStore.js — Refcounted texture cache with blob URL management"
+      ],
+      "notes": "Outstanding material system: 50+ PBR presets, full texture pipeline (6 channels), procedural textures, custom shaders. Post-processing suite is comprehensive with 8+ effects and presets."
+    },
+    {
+      "name": "Lighting & Environment",
+      "score": 82,
+      "status": "Present",
+      "evidence": [
+        "src/engine/EnvironmentManager.js — 8 presets (studio, sunset, forest, night, desert, arctic, underwater, neon) with fog, ambient, directional lights (250 lines)",
+        "src/components/EnvironmentSetup.jsx — HDR/EXR loading via RGBELoader/EXRLoader, PMREMGenerator for IBL (~80 lines)",
+        "src/components/LightingSetup.jsx — Ambient, hemisphere, directional lights (~100 lines)",
+        "src/engine/ScenePresets.js — 5 scene templates with lighting configs (studio, outdoor, architectural, product showcase, low-poly nature) (280 lines)",
+        "src/components/ContactShadow.jsx — Contact shadow plane (~50 lines)",
+        "src/components/PostProcessing.jsx — Selective bloom with layer-based tagging"
+      ],
+      "notes": "Full IBL pipeline with HDRI/EXR support and PMREMGenerator. 8 environment presets, fog control, multiple light types. Missing: per-light shadow settings UI, point/spot light UI controls, light gizmo visualization in viewport."
+    },
+    {
+      "name": "Camera & Controls",
+      "score": 72,
+      "status": "Present",
+      "evidence": [
+        "src/components/CameraControls.jsx — OrbitControls with damping, pan, zoom limits (~50 lines)",
+        "src/components/workspace/cameraUtils.js — Camera preset management (~100 lines)",
+        "src/components/Workspace.jsx — OrbitControls + disable during transform drag",
+        "src/engine/PostFXManager.js — 'cinematic' preset with DOF/vignette/film grain",
+        "src/components/Background/BlobBackground.jsx — Orthographic camera usage"
+      ],
+      "notes": "Orbit/pan/zoom works well. Camera preset system exists. Orthographic camera is available but limited to background scenes — no full orthographic editing mode in the main viewport. No first-person/fly camera. No camera path animations or cinematic camera rail."
+    },
+    {
+      "name": "Animation & Timeline",
+      "score": 68,
+      "status": "Present",
+      "evidence": [
+        "src/engine/AnimationEngine.js — Track-based keyframe animation for position/quaternion/scale with slerp (120 lines)",
+        "src/components/Timeline.jsx — Playback controls, time display (~150 lines)",
+        "src/components/AnimationKeyframeEditor.jsx — Keyframe grid, property/time selection (~100 lines)",
+        "src/components/AnimationScrubber.jsx — Play/pause/seek UI (~50 lines)"
+      ],
+      "notes": "Basic keyframe animation system with timeline UI and scrubber. Supports position, rotation (slerp), and scale tracks. Missing: easing curve editor, animation export (glTF anim), multi-track editing, animation blending, skeletal animation editing."
+    },
+    {
+      "name": "Physics & Interactions",
+      "score": 15,
+      "status": "Missing",
+      "evidence": [
+        "@react-three/cannon@6.6.0 — Installed in package.json but not imported anywhere in src/",
+        "No physics world, rigid body, or collision detection code found in engine/ or components/"
+      ],
+      "notes": "react-three/cannon is a dependency but completely unused. No physics simulation, collision detection, or interaction system implemented. This is an optional feature for a design app but notable given the dependency exists."
+    },
+    {
+      "name": "Persistence & Storage",
+      "score": 85,
+      "status": "Present",
+      "evidence": [
+        "backend/routes/projects.js — Full CRUD: create, read, update, save, delete, share, export",
+        "backend/routes/scenes.js — Scene save/list/get/update endpoints",
+        "backend/models/Project.js — Tiered storage: inline (<12MB), disk, S3 with deflate compression",
+        "backend/models/Scene.js — Scene snapshots with camera state, effects, environment map",
+        "src/components/BackupsPanel.jsx — localStorage + IndexedDB backup/restore UI (~200 lines)",
+        "src/utils/sceneData.js — Scene serialization with deflate compression (80 lines)",
+        "src/components/workspace/sceneSerializer.js — Scene to/from JSON (~200 lines)",
+        "backend/utils/sceneStorage.js — Tiered storage utilities"
+      ],
+      "notes": "Excellent persistence: server-side project/scene CRUD with tiered storage (inline/disk/S3), client-side backups in IndexedDB, scene compression. Missing: true versioning with diff/merge (only snapshots), no version comparison UI."
+    },
+    {
+      "name": "Collaboration & Realtime",
+      "score": 40,
+      "status": "Partial",
+      "evidence": [
+        "backend/socket.js — Socket.IO room-based project sync: join/leave room, project:update, scene:push, presence_update",
+        "socket.io@4.8.1 + socket.io-client@4.8.1 — Installed both ends",
+        "yjs@13.6.27 + y-websocket@3.0.0 — Installed but NOT used anywhere in src/",
+        "src/pages/Studio.jsx — collabSocketRef, collabConnected state (skeletal)",
+        "backend/socket/index.js — Socket.IO server setup"
+      ],
+      "notes": "Basic Socket.IO presence and broadcast implemented (join room, push updates, presence). Yjs/CRDT is installed but completely unwired — no operational transform, no conflict resolution, no real-time co-editing. Locking mechanism is absent. This is the biggest gap for a collaborative 3D design tool."
+    },
+    {
+      "name": "Marketplace & Commerce",
+      "score": 88,
+      "status": "Present",
+      "evidence": [
+        "backend/routes/marketplace/ — Full API: products, cart, orders, payments, reviews, seller dashboard",
+        "backend/models/Product.js — 25+ fields with categories, pricing, seller, stock, ratings",
+        "backend/models/Cart.js — Cart with price snapshots and computed totals",
+        "backend/models/Order.js — Orders with status history, download links, seller payouts",
+        "backend/models/Review.js — Reviews with verified purchases and avg rating sync",
+        "backend/services/paymentService.js — Stripe + mock fallback, platform fees, webhooks",
+        "backend/socket/marketplace.js — Real-time order tracking, seller notifications",
+        "src/store/MarketplaceStore.js — Zustand store for products/cart/orders/reviews (~400 lines)",
+        "src/pages/marketplace/ — 7 marketplace pages (browse, detail, cart, checkout, orders, tracking, seller dashboard)",
+        "src/components/marketplace/ — 11 components (ProductCard, CartSidebar, CheckoutForm, ReviewSection, ModelPreview3D, etc.)",
+        "backend/scripts/seed-marketplace.js — Sample data with 6 real 3D models",
+        "MARKETPLACE_README.md — Comprehensive documentation"
+      ],
+      "notes": "Exceptional marketplace: full e-commerce with product catalog, cart, Stripe checkout, order tracking (WebSocket), seller dashboard, reviews & ratings. 10% platform fee. Missing: download delivery pipeline for purchased assets, license enforcement, refund policy automation."
+    },
+    {
+      "name": "Auth & User Management",
+      "score": 78,
+      "status": "Present",
+      "evidence": [
+        "backend/controllers/authController.js — register, login, oauth (Google), getMe",
+        "backend/middleware/authMiddleware.js — JWT Bearer token verification",
+        "backend/models/User.js — User schema: name, email, password, avatar, role (buyer/seller/admin), OAuth",
+        "src/contexts/AuthContext.jsx — JWT persistence, cross-tab sync, authFetch helper, session notifications",
+        "src/pages/Login.jsx — Email/password + Google OAuth login UI",
+        "src/pages/Register.jsx — Registration with validation",
+        "src/api/auth.js — Auth API client"
+      ],
+      "notes": "Solid auth: JWT + Google OAuth, role-based (buyer/seller/admin), protected routes. Missing: email verification, password reset, admin panel, fine-grained permissions (e.g., project-level ACL), 2FA."
+    },
+    {
+      "name": "Performance & Optimization",
+      "score": 86,
+      "status": "Present",
+      "evidence": [
+        "src/engine/MeshDecimator.js — Vertex-clustering decimation O(n) (220 lines)",
+        "src/engine/LODGenerator.js — 4-tier LOD generation with preview (180 lines)",
+        "src/engine/SceneOptimizer.js — Stats, material/geometry dedup, performance budgets (350 lines)",
+        "src/engine/MeshAnalyzer.js — Mesh quality analysis, UV coverage, topology issues (280 lines)",
+        "src/components/OptimizationPanel.jsx — Stats display, budget check, export optimization (~400 lines)",
+        "src/components/MeshToolsPanel.jsx — LOD/decimation/UV UI (~250 lines)",
+        "src/workers/sceneCompress.worker.js — Off-thread scene compression",
+        "src/utils/BlobURLManager.js — Refcounted blob URL lifecycle",
+        "src/utils/validator.js — Mesh validation with auto-fixes (recompute normals, merge verts, remove zero-area faces) (320 lines)",
+        "three-mesh-bvh@0.6.8 — BVH raycast acceleration"
+      ],
+      "notes": "Excellent: LOD, mesh decimation, deduplication, performance budgets, BVH acceleration, off-thread compression, blob lifecycle management. Missing: GPU instancing controls, texture atlas generation, draw call batching UI."
+    },
+    {
+      "name": "Tests & CI",
+      "score": 78,
+      "status": "Present",
+      "evidence": [
+        "src/__tests__/ — 21 test files, 366 passing, 5 failing (marketplace store tests)",
+        "tests/Studio.test.jsx — Integration test with keyboard shortcuts (3 tests)",
+        "backend/tests/marketplace.test.js — Backend marketplace tests with MongoMemoryServer",
+        "backend/tests/sceneStorage.test.js — Scene storage tiered tests",
+        "vitest.config.js — Vitest configuration",
+        ".github/workflows/ci.yml — 3-job CI: frontend (lint+test+build), backend (test), docker (build)",
+        "Total: 371 tests (366 pass / 5 fail) across 22 test files"
+      ],
+      "notes": "Good coverage: 371 tests covering engine modules (LOD, materials, meshes, textures, scenes, procedural, snap, postfx, AI). 5 marketplace store tests failing (likely state shape mismatch). No E2E tests (Playwright/Cypress). CI runs but lint failures are non-blocking."
+    },
+    {
+      "name": "Documentation & Examples",
+      "score": 70,
+      "status": "Present",
+      "evidence": [
+        "README.md — Quick start, architecture overview, env vars, troubleshooting, contributing guide",
+        "MARKETPLACE_README.md — Comprehensive marketplace documentation: API, Socket events, design decisions",
+        "src/pages/About.jsx — Feature showcase page",
+        "src/pages/Gallery.jsx — Model gallery with demo assets",
+        "public/models/ — 7 demo GLB models (197 MB)",
+        "backend/scripts/seed-marketplace.js — Sample marketplace data seeder"
+      ],
+      "notes": "Two READMEs with good coverage. Gallery page as live demo. Missing: API documentation (Swagger/OpenAPI), component storybook, inline JSDoc for engine modules, user guide, video tutorials."
+    },
+    {
+      "name": "DevOps & Deployment",
+      "score": 82,
+      "status": "Present",
+      "evidence": [
+        "Dockerfile — Multi-stage build: frontend build → production Node image with health check",
+        "docker-compose.yml — 3 services: mongo, backend, frontend (dev)",
+        "render.yaml — Render.com deployment: backend service + static frontend",
+        "vercel.json — Vercel SPA deployment with rewrites",
+        ".github/workflows/ci.yml — 3-job CI pipeline (frontend, backend, docker)",
+        "backend/Procfile — Heroku-compatible: web: node server.js"
+      ],
+      "notes": "Multi-platform deployment: Docker, Render.com, Vercel, Heroku (Procfile). CI pipeline with test gating. Missing: staging environment config, secrets management (using plain env vars), Terraform/IaC, monitoring/alerting setup, CDN configuration."
+    }
+  ],
+  "overall_score": 75,
+  "progress_percent": 75,
+  "confidence": "high",
+  "blockers": [
+    {
+      "description": "Yjs/CRDT collaboration is installed but completely unwired — no real-time co-editing, no conflict resolution, no operational transform. The collaboration feature listed in the app's marketing is currently non-functional beyond basic presence.",
+      "severity": "high",
+      "files": ["src/pages/Studio.jsx", "backend/socket.js", "package.json (yjs, y-websocket)"]
+    },
+    {
+      "description": "5 marketplace store unit tests are failing (state shape mismatch in MarketplaceStore). This blocks CI green status for the marketplace feature.",
+      "severity": "high",
+      "files": ["src/__tests__/marketplace.test.js", "src/store/MarketplaceStore.js"]
+    },
+    {
+      "description": "Physics engine (@react-three/cannon) is installed but completely unused. Dead dependency adding ~200KB to bundle with zero functionality.",
+      "severity": "medium",
+      "files": ["package.json"]
+    },
+    {
+      "description": "No OBJ/FBX import support — only GLB/GLTF. Many 3D workflows require FBX or OBJ interop, limiting usability for professional users.",
+      "severity": "medium",
+      "files": ["src/engine/ImportEngine.js"]
+    },
+    {
+      "description": "Animation system is basic — no easing curves, no skeletal animation editing, no glTF animation export. Timeline exists but limited for production animation workflows.",
+      "severity": "medium",
+      "files": ["src/engine/AnimationEngine.js", "src/components/Timeline.jsx", "src/components/AnimationKeyframeEditor.jsx"]
+    },
+    {
+      "description": "No E2E testing (Playwright/Cypress). Only unit tests exist. Critical user flows (login → create project → edit scene → save → export) are not tested end-to-end.",
+      "severity": "medium",
+      "files": [".github/workflows/ci.yml"]
+    },
+    {
+      "description": "No email verification or password reset flow. Users can register but cannot recover accounts.",
+      "severity": "medium",
+      "files": ["backend/controllers/authController.js", "backend/models/User.js"]
+    },
+    {
+      "description": "Orthographic camera editing mode is not available in the main 3D viewport — only used in background decorative scenes. Professional 3D apps require top/front/side orthographic views.",
+      "severity": "low",
+      "files": ["src/components/Workspace.jsx", "src/components/CameraControls.jsx"]
+    },
+    {
+      "description": "No API documentation (Swagger/OpenAPI). Backend has 40+ endpoints without formal documentation beyond the READMEs.",
+      "severity": "low",
+      "files": ["backend/server.js", "backend/routes/"]
+    }
+  ],
+  "next_steps": [
+    {
+      "priority": 1,
+      "task": "Fix 5 failing marketplace store tests",
+      "description": "Align MarketplaceStore state shape with test expectations. Likely a rename/restructure mismatch after recent store changes.",
+      "effort_hours": 2,
+      "files": ["src/__tests__/marketplace.test.js", "src/store/MarketplaceStore.js"]
+    },
+    {
+      "priority": 2,
+      "task": "Wire up Yjs/CRDT real-time collaboration",
+      "description": "Implement Y.Doc sync for scene state, connect Y-WebSocket provider in Studio, add awareness (cursor presence), handle conflict resolution for transforms and scene graph ops.",
+      "effort_hours": 40,
+      "files": ["src/pages/Studio.jsx", "backend/socket.js", "src/components/Workspace.jsx"]
+    },
+    {
+      "priority": 3,
+      "task": "Add orthographic camera views (top/front/side)",
+      "description": "Allow toggling PerspectiveCamera to OrthographicCamera in Workspace with preset views (top/front/right/iso), viewport splitting optional.",
+      "effort_hours": 8,
+      "files": ["src/components/Workspace.jsx", "src/components/CameraControls.jsx"]
+    },
+    {
+      "priority": 4,
+      "task": "Expand animation: easing curves and glTF animation export",
+      "description": "Add cubic-bezier easing curve editor to AnimationKeyframeEditor, implement animation track export in GLB via GLTFExporter animation support.",
+      "effort_hours": 16,
+      "files": ["src/engine/AnimationEngine.js", "src/components/AnimationKeyframeEditor.jsx", "src/engine/ExportEngine.js"]
+    },
+    {
+      "priority": 5,
+      "task": "Add OBJ/FBX import support",
+      "description": "Integrate OBJLoader and FBXLoader from three-stdlib. Add format detection in ImportEngine. Update GLBImporter UI to accept .obj/.fbx extensions.",
+      "effort_hours": 8,
+      "files": ["src/engine/ImportEngine.js", "src/components/GLBImporter.jsx"]
+    },
+    {
+      "priority": 6,
+      "task": "Add E2E tests with Playwright",
+      "description": "Set up Playwright, write critical path tests: auth flow, project CRUD, scene editing, export, marketplace purchase.",
+      "effort_hours": 20,
+      "files": [".github/workflows/ci.yml", "tests/"]
+    },
+    {
+      "priority": 7,
+      "task": "Add email verification and password reset",
+      "description": "Implement email sending (SendGrid/Resend), verification tokens, password reset flow with time-limited links.",
+      "effort_hours": 12,
+      "files": ["backend/controllers/authController.js", "backend/routes/auth.js", "src/pages/"]
+    },
+    {
+      "priority": 8,
+      "task": "Remove unused @react-three/cannon dependency",
+      "description": "Remove from package.json or implement basic physics (rigid bodies, collision). Removing saves bundle size.",
+      "effort_hours": 1,
+      "files": ["package.json"]
+    },
+    {
+      "priority": 9,
+      "task": "Add Swagger/OpenAPI documentation for backend",
+      "description": "Document all 40+ API endpoints with request/response schemas using swagger-jsdoc or similar.",
+      "effort_hours": 8,
+      "files": ["backend/server.js", "backend/routes/"]
+    },
+    {
+      "priority": 10,
+      "task": "Implement asset download delivery for marketplace purchases",
+      "description": "Generate time-limited signed download URLs after order confirmation, enforce license checks.",
+      "effort_hours": 6,
+      "files": ["backend/routes/marketplace/", "backend/services/paymentService.js"]
+    }
+  ],
+  "verdict": "OBJEKTA is a 75% complete 3D web design application with a strong engine, comprehensive scene editor, excellent materials/post-processing, and a full marketplace — its primary gaps are real-time collaboration (Yjs unwired), limited animation, and missing orthographic editing views."
+}

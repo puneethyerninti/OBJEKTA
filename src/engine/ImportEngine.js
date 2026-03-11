@@ -1,6 +1,8 @@
 // src/engine/ImportEngine.js
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { OBJLoader } from "three-stdlib";
+import { FBXLoader } from "three-stdlib";
 import { SceneGraphStore } from "../store/SceneGraphStore";
 import EventBus from "../utils/EventBus";
 
@@ -33,9 +35,19 @@ export const ImportEngine = {
   })(),
 
   /**
-   * Import a .glb/.gltf file from a File input
+   * Import a file — dispatches to the correct loader by extension
    */
   importFile(file) {
+    const name = (file.name || '').toLowerCase();
+    if (name.endsWith('.obj')) return this.importOBJ(file);
+    if (name.endsWith('.fbx')) return this.importFBX(file);
+    return this.importGLTF(file);
+  },
+
+  /**
+   * Import a .glb/.gltf file from a File input
+   */
+  importGLTF(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
 
@@ -66,6 +78,58 @@ export const ImportEngine = {
       reader.onerror = (err) => reject(err);
       reader.readAsArrayBuffer(file);
     });
+  },
+
+  /**
+   * Import a .obj file (with optional .mtl in same directory via data URL)
+   */
+  importOBJ(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const loader = new OBJLoader();
+          const group = loader.parse(event.target.result);
+          this._addGroupToScene(group, file.name);
+          resolve(group);
+        } catch (e) { reject(e); }
+      };
+      reader.onerror = (err) => reject(err);
+      reader.readAsText(file);
+    });
+  },
+
+  /**
+   * Import a .fbx file
+   */
+  importFBX(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const loader = new FBXLoader();
+          const group = loader.parse(event.target.result, '');
+          this._addGroupToScene(group, file.name);
+          resolve(group);
+        } catch (e) { reject(e); }
+      };
+      reader.onerror = (err) => reject(err);
+      reader.readAsArrayBuffer(file);
+    });
+  },
+
+  /**
+   * Common helper: walk parsed group and register meshes in SceneGraphStore
+   */
+  _addGroupToScene(group, filename) {
+    group.traverse((child) => {
+      if (child.isMesh) {
+        const id = THREE.MathUtils.generateUUID();
+        const metadata = { name: child.name || filename || 'ImportedMesh' };
+        SceneGraphStore.addObject(id, child, metadata);
+      }
+    });
+    EventBus.emit('scene:updated', { type: 'import' });
   },
 
   /**

@@ -19,3 +19,33 @@ exports.protect = (req, res, next) => {
     return res.status(401).json({ message: "Not authorized, token invalid" });
   }
 };
+
+/**
+ * Role-based authorization middleware.
+ * Usage: authorize("admin") or authorize("admin", "seller")
+ */
+exports.authorize = (...roles) => {
+  return async (req, res, next) => {
+    try {
+      // req.userId must be set by protect middleware
+      if (!req.userId) return res.status(401).json({ message: "Not authorized" });
+
+      const User = require("../models/User");
+      const user = await User.findById(req.userId).select("role suspended").lean();
+      if (!user) return res.status(404).json({ message: "User not found" });
+
+      if (user.suspended) {
+        return res.status(403).json({ message: "Account suspended" });
+      }
+
+      if (!roles.includes(user.role)) {
+        return res.status(403).json({ message: `Access denied. Required role: ${roles.join(" or ")}` });
+      }
+
+      req.userRole = user.role;
+      next();
+    } catch (err) {
+      return res.status(500).json({ message: "Authorization error" });
+    }
+  };
+};

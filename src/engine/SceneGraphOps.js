@@ -457,6 +457,76 @@ export function objectCount() {
   return Object.keys(SceneGraphStore.objects).length;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   ALIGNMENT — align objects along an axis
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Align objects on the given axis to a reference edge/center.
+ * @param {THREE.Object3D[]} objects — at least 2 objects
+ * @param {"x"|"y"|"z"} axis
+ * @param {"min"|"center"|"max"} mode — align to leftmost/center/rightmost bound
+ */
+export function alignObjects(objects, axis = "x", mode = "min") {
+  if (!Array.isArray(objects) || objects.length < 2) return;
+
+  const bounds = objects.map((obj) => {
+    const box = new THREE.Box3().setFromObject(obj);
+    return { obj, box };
+  });
+
+  let ref;
+  if (mode === "min") {
+    ref = Math.min(...bounds.map((b) => b.box.min[axis]));
+  } else if (mode === "max") {
+    ref = Math.max(...bounds.map((b) => b.box.max[axis]));
+  } else {
+    // center — use average center
+    const centers = bounds.map((b) => (b.box.min[axis] + b.box.max[axis]) / 2);
+    ref = centers.reduce((a, b) => a + b, 0) / centers.length;
+  }
+
+  for (const { obj, box } of bounds) {
+    const objCenter = (box.min[axis] + box.max[axis]) / 2;
+    let delta;
+    if (mode === "min") delta = ref - box.min[axis];
+    else if (mode === "max") delta = ref - box.max[axis];
+    else delta = ref - objCenter;
+    obj.position[axis] += delta;
+  }
+
+  EventBus.emit("scene:updated", { type: "align", axis, mode });
+}
+
+/**
+ * Distribute objects evenly along an axis.
+ * @param {THREE.Object3D[]} objects — at least 3 objects
+ * @param {"x"|"y"|"z"} axis
+ */
+export function distributeObjects(objects, axis = "x") {
+  if (!Array.isArray(objects) || objects.length < 3) return;
+
+  const items = objects.map((obj) => {
+    const box = new THREE.Box3().setFromObject(obj);
+    const center = (box.min[axis] + box.max[axis]) / 2;
+    return { obj, box, center };
+  });
+
+  items.sort((a, b) => a.center - b.center);
+
+  const first = items[0].center;
+  const last = items[items.length - 1].center;
+  const step = (last - first) / (items.length - 1);
+
+  for (let i = 1; i < items.length - 1; i++) {
+    const target = first + step * i;
+    const delta = target - items[i].center;
+    items[i].obj.position[axis] += delta;
+  }
+
+  EventBus.emit("scene:updated", { type: "distribute", axis });
+}
+
 export default {
   groupObjects,
   ungroupObject,
@@ -475,4 +545,6 @@ export default {
   getLockedIds,
   getHiddenIds,
   objectCount,
+  alignObjects,
+  distributeObjects,
 };

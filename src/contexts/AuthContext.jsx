@@ -80,6 +80,26 @@ export function AuthProvider({ children }) {
     } catch (e) {}
   };
 
+  // ✅ Token refresh helper
+  const refreshAccessToken = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) return null;
+      const data = await parseRes(res);
+      if (data.token) {
+        persist(data.user || user, data.token);
+        return data.token;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
   // ✅ improved fetch helper: safe for absolute or relative URLs
   const authFetch = async (url, options = {}) => {
     try {
@@ -93,7 +113,16 @@ export function AuthProvider({ children }) {
       const res = await fetch(fullUrl, { ...options, headers, credentials: options.credentials || "include" });
       const data = await parseRes(res);
 
-      if (res.status === 401 && token) {
+      // Auto-refresh on 401 (expired access token)
+      if (res.status === 401 && token && !url.includes("/auth/refresh")) {
+        const refreshResult = await refreshAccessToken();
+        if (refreshResult) {
+          // Retry original request with new token
+          headers["Authorization"] = `Bearer ${refreshResult}`;
+          const retryRes = await fetch(fullUrl, { ...options, headers, credentials: options.credentials || "include" });
+          const retryData = await parseRes(retryRes);
+          return { ok: retryRes.ok, status: retryRes.status, data: retryData, res: retryRes };
+        }
         console.warn("[OBJEKTA] authFetch detected 401, clearing session", fullUrl);
         persist(null, null);
         notifySessionExpired({ url: fullUrl, status: res.status });
