@@ -1,6 +1,6 @@
 // src/components/PhysicsToolbar.jsx
 // Physics simulation controls — play/pause/reset, gravity presets, debug viz
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { GRAVITY_PRESETS } from "../hooks/usePhysics";
 
 const PRESET_LABELS = {
@@ -26,6 +26,23 @@ export default function PhysicsToolbar({
   onBakePhysics,
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [autoPlay, setAutoPlay] = useState(false);
+
+  // Space key shortcut for play/pause
+  useEffect(() => {
+    if (!physicsReady) return;
+    const onKey = (e) => {
+      const tag = e.target?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select" || e.target?.isContentEditable) return;
+      if (e.code === "Space") {
+        e.preventDefault();
+        if (physicsRunning) onPause?.();
+        else if ((bodies?.length ?? 0) > 0) onPlay?.();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [physicsReady, physicsRunning, bodies, onPlay, onPause]);
 
   if (!physicsReady) return null;
 
@@ -93,6 +110,19 @@ export default function PhysicsToolbar({
               onChange={(e) => onDebugToggle?.(e.target.checked)}
             />
             Show Collider Debug
+          </label>
+
+          {/* Auto-play toggle */}
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#a0aec0", cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={autoPlay}
+              onChange={(e) => {
+                setAutoPlay(e.target.checked);
+                if (e.target.checked && !physicsRunning && bodyCount > 0) onPlay?.();
+              }}
+            />
+            Auto-play on load
           </label>
 
           {/* Body count */}
@@ -210,8 +240,17 @@ export default function PhysicsToolbar({
         </button>
 
         {/* Status */}
-        <span style={{ fontSize: 10, color: physicsRunning ? "#68d391" : "#718096", minWidth: 40 }}>
-          {physicsRunning ? "LIVE" : bodyCount > 0 ? `${bodyCount} bod` : "OFF"}
+        <span style={{
+          fontSize: 10,
+          fontWeight: 700,
+          padding: "2px 8px",
+          borderRadius: 4,
+          background: physicsRunning ? "rgba(72,187,120,0.2)" : bodyCount > 0 ? "rgba(160,174,192,0.15)" : "transparent",
+          color: physicsRunning ? "#68d391" : bodyCount > 0 ? "#a0aec0" : "#718096",
+          minWidth: 54,
+          textAlign: "center",
+        }}>
+          {physicsRunning ? "PLAYING" : bodyCount > 0 ? "PAUSED" : "OFF"}
         </span>
       </div>
     </div>

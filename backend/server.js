@@ -31,6 +31,7 @@ const collaboratorsRoutes = require("./routes/collaborators");
 const aiRoutes = require("./routes/ai");
 const marketplaceRoutes = require("./routes/marketplace");
 const versionsRoutes = require("./routes/versions");
+const contactRoutes = require("./routes/contact");
 const app = express();
 app.disable("x-powered-by");
 
@@ -148,6 +149,7 @@ app.get("/api/docs.json", (req, res) => res.json(swaggerSpec));
 
 // ---------- API Routes ----------
 app.use("/api", apiLimiter);
+app.use("/api/contact", contactRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/uploads", uploadLimiter, uploadRoutes);

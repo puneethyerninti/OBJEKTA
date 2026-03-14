@@ -1,4 +1,6 @@
 .env
+.env.local
+.env.*.local
 node_modules
 dist/
 public/*.glb
@@ -11,3 +13,6 @@ tmp_test_thumb.png
 backend/ai_service/.venv/
 __pycache__/
 *.py[cod]
+playwright-report/
+test-results/
+coverage/

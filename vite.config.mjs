@@ -49,6 +49,37 @@ export default defineConfig({
     },
   },
   build: {
-    target: 'esnext'
+    target: 'esnext',
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return;
+
+          if (id.includes('/three/examples/') || id.includes('/three-stdlib')) {
+            return 'vendor-three-extras';
+          }
+          if (id.includes('/@react-three/')) {
+            return 'vendor-r3f';
+          }
+          if (id.includes('/postprocessing') || id.includes('/maath')) {
+            return 'vendor-postfx';
+          }
+          if (id.includes('/three/')) {
+            return 'vendor-three-core';
+          }
+          if (id.includes('/react') || id.includes('/react-dom') || id.includes('/react-router')) {
+            return 'vendor-react';
+          }
+          if (id.includes('/socket.io-client') || id.includes('/yjs') || id.includes('/y-websocket')) {
+            return 'vendor-collab';
+          }
+          if (id.includes('/rapier3d-compat')) {
+            return 'vendor-physics';
+          }
+
+          return 'vendor-misc';
+        },
+      },
+    },
   }
 });

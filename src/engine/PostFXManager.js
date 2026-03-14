@@ -61,6 +61,7 @@ const DEFAULT_OUTLINE = {
   thickness: 2.0,
   strength: 3.0,
   pulse: false,
+  pulseSpeed: 2.0,
 };
 
 const DEFAULT_CHROMATIC = {

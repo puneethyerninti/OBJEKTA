@@ -110,6 +110,7 @@ function EffectsTab({ config, pushToast }) {
       <EffectSection title="SSAO" effectKey="ssao" config={config.ssao}>
         <Slider label="Radius" value={config.ssao.radius} min={0.1} max={2} step={0.05} onChange={(v) => PostFXManager.updateEffect("ssao", { radius: v })} />
         <Slider label="Intensity" value={config.ssao.intensity} min={0} max={3} step={0.1} onChange={(v) => PostFXManager.updateEffect("ssao", { intensity: v })} />
+        <Slider label="Bias" value={config.ssao.bias} min={0} max={0.1} step={0.005} format={(v) => v.toFixed(3)} onChange={(v) => PostFXManager.updateEffect("ssao", { bias: v })} />
         <Slider label="Samples" value={config.ssao.samples} min={4} max={64} step={4} format={(v) => String(Math.round(v))} onChange={(v) => PostFXManager.updateEffect("ssao", { samples: Math.round(v) })} />
       </EffectSection>
 
@@ -117,6 +118,7 @@ function EffectsTab({ config, pushToast }) {
       <EffectSection title="Depth of Field" effectKey="dof" config={config.dof}>
         <Slider label="Focus Dist" value={config.dof.focusDistance} min={0.5} max={50} step={0.5} onChange={(v) => PostFXManager.updateEffect("dof", { focusDistance: v })} />
         <Slider label="Focal Length" value={config.dof.focalLength} min={10} max={200} step={5} format={(v) => `${Math.round(v)}mm`} onChange={(v) => PostFXManager.updateEffect("dof", { focalLength: v })} />
+        <Slider label="Aperture" value={config.dof.aperture} min={0.001} max={0.1} step={0.001} format={(v) => v.toFixed(3)} onChange={(v) => PostFXManager.updateEffect("dof", { aperture: v })} />
         <Slider label="Bokeh Scale" value={config.dof.bokehScale} min={0} max={10} step={0.5} onChange={(v) => PostFXManager.updateEffect("dof", { bokehScale: v })} />
       </EffectSection>
 
@@ -126,6 +128,9 @@ function EffectsTab({ config, pushToast }) {
         <Slider label="Thickness" value={config.outline.thickness} min={0.5} max={5} step={0.5} onChange={(v) => PostFXManager.updateEffect("outline", { thickness: v })} />
         <Slider label="Strength" value={config.outline.strength} min={0.5} max={10} step={0.5} onChange={(v) => PostFXManager.updateEffect("outline", { strength: v })} />
         <Toggle label="Pulse" value={config.outline.pulse} onChange={(v) => PostFXManager.updateEffect("outline", { pulse: v })} />
+        {config.outline.pulse && (
+          <Slider label="Pulse Speed" value={config.outline.pulseSpeed ?? 2.0} min={0.5} max={5} step={0.5} format={(v) => `${v.toFixed(1)}s`} onChange={(v) => PostFXManager.updateEffect("outline", { pulseSpeed: v })} />
+        )}
       </EffectSection>
 
       {/* Chromatic Aberration */}

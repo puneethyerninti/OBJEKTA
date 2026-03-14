@@ -21,7 +21,7 @@ import Palette from "../components/Palette";
 import Workspace from "../components/Workspace";
 import ObjectProperties from "../components/ObjectProperties";
 import Outliner from "../components/Outliner";
-const SculptToolbar = lazy(() => import("../components/SculptToolbar"));
+import SculptToolbar from "../components/SculptToolbar";
 import { loadInitialPanels, persistPanelStates } from "../utils/preferences";
 import { ensurePersistentStorage, logQuotaIfAny } from "../utils/storage";
 import Timeline from "../components/Timeline";
@@ -1382,10 +1382,19 @@ export default function Studio() {
 
   /* Sculpt toggle (unchanged) */
   const toggleSculpt = useCallback(() => {
-    const on = !!(workspaceRef.current?.isSculptMode?.() ?? false);
+    const api = workspaceRef.current;
+    const on = !!(api?.isSculptMode?.() ?? false);
     const next = !on;
     EventBus.emit?.('studio:toggle:sculpt', { enabled: next });
-    try { workspaceRef.current?.setSculptMode?.(next); } catch (e) {}
+    try {
+      if (typeof api?.setSculptEnabled === "function") {
+        api.setSculptEnabled(next);
+      } else if (next) {
+        api?.startSculpting?.();
+      } else {
+        api?.stopSculpting?.();
+      }
+    } catch (e) {}
     pushToast({ type: "info", message: `Sculpt ${next ? 'enabled' : 'disabled'}` });
   }, [pushToast]);
 

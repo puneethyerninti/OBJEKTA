@@ -78,9 +78,20 @@ export default function Contact() {
 
   const handleChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    try {
+      const API_BASE = import.meta.env.VITE_API_BASE || '';
+      await fetch(`${API_BASE}/api/contact`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+    } catch {
+      // Silently succeed — the form is a best-effort contact form
+    }
     setSubmitted(true);
+    setForm({ name: "", email: "", subject: "general", message: "" });
     setTimeout(() => setSubmitted(false), 5000);
   };
 

@@ -96,6 +96,48 @@ export default class AnimationEngine {
   removeTrack(id) { this.tracks.delete(id); this._recalcLength(); }
   listTracks() { return Array.from(this.tracks.values()); }
 
+  /** Deep-copy a track by id. Returns the cloned track data (without adding it). */
+  copyTrack(id) {
+    const track = this.tracks.get(id);
+    if (!track) return null;
+    return { ...track, id: undefined, times: track.times.slice(), values: track.values.slice() };
+  }
+
+  /** Paste a copied track onto a target object uuid. Returns new track id. */
+  pasteTrack(copiedTrack, targetUuid) {
+    if (!copiedTrack) return null;
+    return this.addTrack({ ...copiedTrack, uuid: targetUuid });
+  }
+
+  /** Batch delete keyframes by index set from a track */
+  deleteKeyframes(trackId, indices) {
+    const track = this.tracks.get(trackId);
+    if (!track || !indices || indices.length === 0) return;
+    const idxSet = new Set(indices);
+    const newTimes = [];
+    const newValues = [];
+    for (let i = 0; i < track.times.length; i++) {
+      if (!idxSet.has(i)) {
+        newTimes.push(track.times[i]);
+        for (let c = 0; c < track.size; c++) newValues.push(track.values[i * track.size + c]);
+      }
+    }
+    track.times = newTimes;
+    track.values = newValues;
+    this._recalcLength();
+  }
+
+  /** Shift keyframe times by delta for given indices */
+  shiftKeyframes(trackId, indices, timeDelta) {
+    const track = this.tracks.get(trackId);
+    if (!track || !indices || timeDelta === 0) return;
+    const idxSet = new Set(indices);
+    for (let i = 0; i < track.times.length; i++) {
+      if (idxSet.has(i)) track.times[i] = Math.max(0, track.times[i] + timeDelta);
+    }
+    this._recalcLength();
+  }
+
   snapshot() { return this.listTracks().map((t) => ({ ...t, times: t.times.slice(), values: t.values.slice() })); }
 
   loadSnapshot(tracks = []) {

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import "../styles/SculptToolbar.css";
+import EventBus from "../utils/EventBus";
 
 /**
  * SculptToolbar — Floating sculpt-mode toolbox.
@@ -23,6 +24,8 @@ const MODES = [
   { key: "grab",     icon: "✋", label: "Grab" },
   { key: "clay",     icon: "▧", label: "Clay" },
   { key: "crease",   icon: "⌄", label: "Crease" },
+  { key: "twist",    icon: "⟳", label: "Twist" },
+  { key: "contrast", icon: "◈", label: "Contrast" },
 ];
 
 export default function SculptToolbar({ workspaceRef }) {
@@ -59,18 +62,47 @@ export default function SculptToolbar({ workspaceRef }) {
   useEffect(() => { callApi("setSculptMode", mode); }, [mode, callApi]);
   useEffect(() => { callApi("setSculptSymmetry", symmetry); }, [symmetry, callApi]);
 
-  // ── Start / stop sculpting ──
-  const toggleActive = useCallback(() => {
-    if (!active) {
-      callApi("startSculpting");
+  const setEnabled = useCallback((nextEnabled) => {
+    const api = getApi();
+    const next = !!nextEnabled;
+    let applied = next;
+
+    if (api && typeof api.setSculptEnabled === "function") {
+      const result = api.setSculptEnabled(next);
+      if (typeof result === "boolean") applied = result;
+    } else if (next) {
+      const result = callApi("startSculpting");
       callApi("setControlsEnabled", false);
-      setActive(true);
+      if (typeof result === "boolean") applied = result;
     } else {
       callApi("stopSculpting");
       callApi("setControlsEnabled", true);
-      setActive(false);
+      applied = false;
     }
-  }, [active, callApi]);
+
+    setActive(applied);
+  }, [callApi, getApi]);
+
+  // ── Start / stop sculpting ──
+  const toggleActive = useCallback(() => {
+    setEnabled(!active);
+  }, [active, setEnabled]);
+
+  useEffect(() => {
+    try {
+      const isActive = !!callApi("isSculptMode");
+      setActive(isActive);
+    } catch (_) {}
+  }, [callApi]);
+
+  useEffect(() => {
+    const onToggle = (payload) => {
+      if (typeof payload?.enabled !== "boolean") return;
+      setEnabled(payload.enabled);
+    };
+    EventBus.on?.("studio:toggle:sculpt", onToggle);
+    return () => EventBus.off?.("studio:toggle:sculpt", onToggle);
+  }, [setEnabled]);
 
   const undo = () => callApi("undo");
   const redo = () => callApi("redo");
@@ -95,7 +127,7 @@ export default function SculptToolbar({ workspaceRef }) {
       if (tag === "input" || tag === "textarea" || tag === "select" || e.target?.isContentEditable) return;
 
       if (e.key === "b" || e.key === "B") { toggleActive(); return; }
-      const idx = parseInt(e.key, 10);
+      const idx = e.key === "0" ? 10 : parseInt(e.key, 10);
       if (!Number.isNaN(idx) && idx >= 1 && idx <= MODES.length) { setMode(MODES[idx - 1].key); return; }
       if (e.key === "+" || e.key === "=") { setRadius((r) => Math.min(5, +(r * 1.15).toFixed(3))); return; }
       if (e.key === "-") { setRadius((r) => Math.max(0.01, +(r / 1.15).toFixed(3))); return; }

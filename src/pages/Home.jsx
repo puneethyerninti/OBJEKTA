@@ -119,6 +119,8 @@ const TICKER_ITEMS = [
   "Collaborative", "Resumable Uploads", "Scene Presets",
 ];
 
+const HOME_PANEL_KEYS = ["hero", "features", "showcase"];
+
 const createPreviewLoader = () => {
   const manager = new THREE.LoadingManager();
 
@@ -165,10 +167,12 @@ export default function Home() {
   const [progressMap, setProgressMap] = useState({});
   const [activeModel, setActiveModel] = useState(null);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const [activePanelIndex, setActivePanelIndex] = useState(0);
   const prefetchedRef = useRef({});
   const parsedRef = useRef({});
   const progressRef = useRef({});
   const heroVisibleRef = useRef(true);
+  const wheelLockRef = useRef(false);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -339,6 +343,90 @@ export default function Home() {
     return () => observer.disconnect();
   }, []);
 
+  // Track active panel for 3D transition states and nav-dot highlight.
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return undefined;
+    const panels = Array.from(document.querySelectorAll("[data-home-panel]"));
+    if (!panels.length) return undefined;
+
+    const observer = new IntersectionObserver((entries) => {
+      let best = null;
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        if (!best || entry.intersectionRatio > best.intersectionRatio) {
+          best = entry;
+        }
+      });
+
+      if (!best) return;
+      const nextIndex = Number(best.target.getAttribute("data-home-panel-index"));
+      if (!Number.isNaN(nextIndex)) setActivePanelIndex(nextIndex);
+    }, {
+      threshold: [0.25, 0.45, 0.65],
+      rootMargin: "-12% 0px -12% 0px",
+    });
+
+    panels.forEach((panel) => observer.observe(panel));
+    return () => observer.disconnect();
+  }, []);
+
+  const scrollToPanel = useCallback((targetIndex) => {
+    if (targetIndex < 0 || targetIndex >= HOME_PANEL_KEYS.length) return;
+    const target = document.querySelector(`[data-home-panel-index=\"${targetIndex}\"]`);
+    if (!target) return;
+    target.scrollIntoView({
+      behavior: prefersReducedMotion ? "auto" : "smooth",
+      block: "start",
+    });
+    setActivePanelIndex(targetIndex);
+  }, [prefersReducedMotion]);
+
+  // Wheel and keyboard panel navigation on desktop.
+  useEffect(() => {
+    if (prefersReducedMotion) return undefined;
+    if (typeof window === "undefined") return undefined;
+    const isDesktop = window.matchMedia("(min-width: 1025px)").matches;
+    if (!isDesktop) return undefined;
+
+    const onWheel = (event) => {
+      if (Math.abs(event.deltaY) < 30 || wheelLockRef.current) return;
+      const direction = event.deltaY > 0 ? 1 : -1;
+      const nextIndex = Math.max(0, Math.min(HOME_PANEL_KEYS.length - 1, activePanelIndex + direction));
+      if (nextIndex === activePanelIndex) return;
+      wheelLockRef.current = true;
+      scrollToPanel(nextIndex);
+      window.setTimeout(() => {
+        wheelLockRef.current = false;
+      }, 850);
+    };
+
+    const onKeyDown = (event) => {
+      if (["ArrowDown", "PageDown"].includes(event.key)) {
+        event.preventDefault();
+        scrollToPanel(Math.min(HOME_PANEL_KEYS.length - 1, activePanelIndex + 1));
+      }
+      if (["ArrowUp", "PageUp"].includes(event.key)) {
+        event.preventDefault();
+        scrollToPanel(Math.max(0, activePanelIndex - 1));
+      }
+      if (event.key === "Home") {
+        event.preventDefault();
+        scrollToPanel(0);
+      }
+      if (event.key === "End") {
+        event.preventDefault();
+        scrollToPanel(HOME_PANEL_KEYS.length - 1);
+      }
+    };
+
+    window.addEventListener("wheel", onWheel, { passive: true });
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("wheel", onWheel);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [activePanelIndex, prefersReducedMotion, scrollToPanel]);
+
   // Track showcase cards for lazy Canvas mount
   useEffect(() => {
     if (typeof IntersectionObserver === "undefined") return undefined;
@@ -471,16 +559,39 @@ export default function Home() {
     setActiveModel(null);
   }, []);
 
+  const getPanelStateClass = (index) => {
+    if (index === activePanelIndex) return "is-active";
+    if (index < activePanelIndex) return "is-hidden-above";
+    return "is-hidden-below";
+  };
+
   return (
     <div className="home-screen">
       <div className="scene-background" aria-hidden="true">
         <Scene />
       </div>
       <main className="home-shell">
+        <div className="hp-panel-dots" aria-label="Home sections">
+          {HOME_PANEL_KEYS.map((key, index) => (
+            <button
+              key={key}
+              type="button"
+              className={`hp-panel-dot ${index === activePanelIndex ? "is-active" : ""}`}
+              onClick={() => scrollToPanel(index)}
+              aria-label={`Go to ${key} section`}
+              aria-current={index === activePanelIndex ? "true" : "false"}
+            />
+          ))}
+        </div>
 
         {/* ──── HERO ──── */}
-        <section className="hp-hero" style={{ position: "relative", overflow: "hidden" }}>
-          <div className="hp-hero-content">
+        <section
+          className={`hp-hero hp-panel ${getPanelStateClass(0)}`}
+          data-home-panel
+          data-home-panel-index="0"
+          style={{ position: "relative", overflow: "hidden" }}
+        >
+          <div className="hp-hero-content hp-fade-target">
             <span className="hp-badge">
               <span className="hp-badge-dot" aria-hidden />
               Web-Based 3D Studio
@@ -553,8 +664,13 @@ export default function Home() {
         </div>
 
         {/* ──── FEATURES ──── */}
-        <section id="features" className="hp-features">
-          <div className="hp-section-header">
+        <section
+          id="features"
+          className={`hp-features hp-panel ${getPanelStateClass(1)}`}
+          data-home-panel
+          data-home-panel-index="1"
+        >
+          <div className="hp-section-header hp-fade-target">
             <span className="hp-section-badge">Core Capabilities</span>
             <h2 className="hp-section-title">
               Built for <span className="hp-gradient">production teams</span>
@@ -569,7 +685,7 @@ export default function Home() {
             {FEATURE_ITEMS.map((item, idx) => (
               <article
                 key={item.title}
-                className="hp-feature-card"
+                className="hp-feature-card hp-roll-target"
                 data-tilt="6"
               >
                 <span className="hp-feature-number">{item.badge}</span>
@@ -582,8 +698,13 @@ export default function Home() {
         </section>
 
         {/* ──── SHOWCASE ──── */}
-        <section id="showcase" className="hp-showcase">
-          <div className="hp-section-header">
+        <section
+          id="showcase"
+          className={`hp-showcase hp-panel ${getPanelStateClass(2)}`}
+          data-home-panel
+          data-home-panel-index="2"
+        >
+          <div className="hp-section-header hp-fade-target">
             <span className="hp-section-badge">Live Viewport Gallery</span>
             <h2 className="hp-section-title">
               Project gallery &amp; <span className="hp-gradient">previews</span>
@@ -612,7 +733,7 @@ export default function Home() {
               return (
                 <article
                   key={model.title}
-                  className="hp-showcase-card showcase-card-v2"
+                  className="hp-showcase-card showcase-card-v2 hp-roll-target"
                   data-key={cardKey}
                   onClick={() => handleShowcaseOpen(resolvedModel)}
                   style={{ animationDelay: `${index * 0.12}s` }}

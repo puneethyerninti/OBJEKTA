@@ -25,6 +25,8 @@ import initGLBImporter from "../components/GLBImporter";
 import setupDefaultLighting from "../components/LightingSetup";
 import createMaterialEditor from "../components/MaterialEditor";
 import setupPostProcessing from "../components/PostProcessing";
+import * as PostFXManager from "../engine/PostFXManager.js";
+import * as SnapManager from "../engine/SnapManager.js";
 import AnimationScrubber from "../components/AnimationScrubber";
 import BloomTagPanel from "../components/BloomTagPanel";
 import AnimationKeyframeEditor from "../components/AnimationKeyframeEditor";
@@ -607,6 +609,25 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
           ox = grabLocal.x * w; oy = grabLocal.y * w; oz = grabLocal.z * w;
           break;
         }
+        case "twist": {
+          // Rodrigues' rotation: rotate vertex offset around brush normal
+          const angle = effectiveStr * w * 0.3;
+          const cosA = Math.cos(angle), sinA = Math.sin(angle);
+          const dotA = dx * nx + dy * ny + dz * nz;
+          const rx = dx * cosA + (ny * dz - nz * dy) * sinA + nx * dotA * (1 - cosA);
+          const ry = dy * cosA + (nz * dx - nx * dz) * sinA + ny * dotA * (1 - cosA);
+          const rz = dz * cosA + (nx * dy - ny * dx) * sinA + nz * dotA * (1 - cosA);
+          ox = rx - dx; oy = ry - dy; oz = rz - dz;
+          break;
+        }
+        case "contrast": {
+          // Amplify height variations: push vertices further along normal based on signed distance
+          const dotN = dx * nx + dy * ny + dz * nz;
+          ox = nx * dotN * s * w * 2.5;
+          oy = ny * dotN * s * w * 2.5;
+          oz = nz * dotN * s * w * 2.5;
+          break;
+        }
         case "smooth": break;
         default: break;
       }
@@ -903,8 +924,22 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
     if (cursor?.visible) cursor.scale.set(r, r, r);
   };
   const setSculptStrength = (s) => { sculptStateRef.current.strength = s; };
-  const setSculptMode = (m) => { sculptStateRef.current.mode = m; };
+  const setSculptMode = (m) => {
+    // Keep mode setter string-only; booleans should toggle sculpt on/off via setSculptEnabled.
+    if (typeof m === "string" && m) sculptStateRef.current.mode = m;
+  };
   const setSculptSymmetry = (s) => { sculptStateRef.current.symmetry = s; };
+  const isSculptMode = () => !!sculptStateRef.current.active;
+  const setSculptEnabled = (enabled, opts = {}) => {
+    const next = !!enabled;
+    if (next) {
+      const target = opts?.mesh || selectedInternal;
+      if (!target) return false;
+      return !!startSculptingInternal(target, opts);
+    }
+    stopSculptingInternal();
+    return false;
+  };
 
   // dispose helper
   const disposeObject = (obj) => {
@@ -1032,6 +1067,18 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
       } catch (err) {}
     });
     transform.addEventListener("change", () => {
+      // Optional surface snapping during translate
+      if (SnapManager.isEnabled() && SnapManager.isSurfaceSnap() && transform.mode === "translate") {
+        const obj = transform.object;
+        if (obj && sceneRef.current) {
+          const surfaces = [];
+          sceneRef.current.traverse((child) => {
+            if (child.isMesh && child !== obj) surfaces.push(child);
+          });
+          const result = SnapManager.snapToSurface(obj.position, surfaces);
+          if (result.hit) obj.position.copy(result.point);
+        }
+      }
       updateToolbarPosition();
       needsRenderRef.current = true;
     });
@@ -1044,13 +1091,52 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
         return;
       }
       try { obj.updateMatrixWorld(true); } catch (e) {}
+      // Capture pre-transform state for undo
+      transform.__beforePos = obj.position.clone();
+      transform.__beforeRot = obj.rotation.clone();
+      transform.__beforeScl = obj.scale.clone();
     });
     transform.addEventListener("mouseUp", () => {
       needsRenderRef.current = true;
       try {
         EventBus.emit && EventBus.emit("transform:commit", { object: transform.object });
       } catch (e) {}
-      cmdHistoryRef.current.push(new Cmd(() => {}, () => {}, "transform"));
+      const obj = transform.object;
+      if (obj && transform.__beforePos) {
+        const oldPos = transform.__beforePos;
+        const oldRot = transform.__beforeRot;
+        const oldScl = transform.__beforeScl;
+        const newPos = obj.position.clone();
+        const newRot = obj.rotation.clone();
+        const newScl = obj.scale.clone();
+        const uuid = obj.uuid;
+        cmdHistoryRef.current.push(new Cmd(
+          () => {
+            const scene = sceneRef.current;
+            if (!scene) return;
+            const target = scene.getObjectByProperty("uuid", uuid);
+            if (!target) return;
+            target.position.copy(newPos);
+            target.rotation.copy(newRot);
+            target.scale.copy(newScl);
+            needsRenderRef.current = true;
+          },
+          () => {
+            const scene = sceneRef.current;
+            if (!scene) return;
+            const target = scene.getObjectByProperty("uuid", uuid);
+            if (!target) return;
+            target.position.copy(oldPos);
+            target.rotation.copy(oldRot);
+            target.scale.copy(oldScl);
+            needsRenderRef.current = true;
+          },
+          "transform"
+        ));
+        transform.__beforePos = null;
+        transform.__beforeRot = null;
+        transform.__beforeScl = null;
+      }
     });
     safeAdd(editorGroup, transform, "_transform_controls");
     transformRef.current = transform;
@@ -1092,11 +1178,20 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
       });
       postfxApiRef.current = postfx;
       composerRef.current = postfx.composer;
+      // Apply initial tone mapping from PostFXManager
+      PostFXManager.applyToneMapping(renderer);
     } catch (e) {
       console.warn("Composer init failed", e);
       composerRef.current = null;
       postfxApiRef.current = null;
     }
+
+    // Subscribe to PostFXManager config changes
+    const unsubscribePostFX = PostFXManager.subscribe((cfg) => {
+      if (postfxApiRef.current?.updateEffects) {
+        postfxApiRef.current.updateEffects(cfg);
+      }
+    });
 
     // shared loaders
     try {
@@ -1817,6 +1912,7 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
 
     return () => {
       mounted = false;
+      unsubscribePostFX();
       clearInterval(autosaveInterval);
       window.removeEventListener("beforeunload", beforeUnload);
 
@@ -1931,6 +2027,7 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
     } catch (e) {}
     markSelectionVisual(obj, true);
     updateToolbarPosition();
+    try { postfxApiRef.current?.setOutlineObjects?.([obj]); } catch (e) {}
     needsRenderRef.current = true;
   };
 
@@ -1944,6 +2041,7 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
     setToolbarPos({ x: -999, y: -999 });
     const selBox = sceneRef.current?._editorGroup?.getObjectByName("_selection_box");
     if (selBox) selBox.visible = false;
+    try { postfxApiRef.current?.setOutlineObjects?.([]); } catch (e) {}
     needsRenderRef.current = true;
   };
 
@@ -3662,28 +3760,44 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
   // Uses extracted helpers from workspace/sceneSerializer for compact summaries.
   const serializeScene = () => {
     if (!sceneRef.current) return null;
-    const userGroup = getUserGroup();
-    const objs = userGroup ? Array.from(userGroup.children).filter((c) => c.userData?.__objekta) : [];
 
-    // full snap array (backwards compatible)
-    const snaps = objs.map((c) => c.toJSON());
+    // If multi-transform grouping is active, temporarily dissolve it so world-space edits
+    // are baked back into object locals before we snapshot/save.
+    const hadTransformGroup = !!transformGroupRef.current && selectedSetRef.current.size >= 2;
+    if (hadTransformGroup) {
+      try { dissolveTransformGroup(); } catch (e) {}
+    }
 
-    // compact object summaries via extracted helper
-    const objects = objs.map(summarizeObject);
+    try {
+      const userGroup = getUserGroup();
+      const objs = userGroup
+        ? Array.from(userGroup.children).filter((c) => c.userData?.__objekta)
+        : [];
 
-    // lights & cameras via extracted helpers
-    const lights  = collectLights(sceneRef.current);
-    const cameras = collectCameras(sceneRef.current);
+      // full snap array (backwards compatible)
+      const snaps = objs.map((c) => c.toJSON());
 
-    const meta = {
-      exportedAt: new Date().toISOString(),
-      objectCount: objects.length,
-      totalTris: objects.reduce((acc, o) => acc + (o.geometry?.tris || 0), 0),
-    };
+      // compact object summaries via extracted helper
+      const objects = objs.map(summarizeObject);
 
-    const animations = animationEngineRef.current?.snapshot ? animationEngineRef.current.snapshot() : [];
+      // lights & cameras via extracted helpers
+      const lights  = collectLights(sceneRef.current);
+      const cameras = collectCameras(sceneRef.current);
 
-    return { snaps, objects, lights, cameras, animations, meta };
+      const meta = {
+        exportedAt: new Date().toISOString(),
+        objectCount: objects.length,
+        totalTris: objects.reduce((acc, o) => acc + (o.geometry?.tris || 0), 0),
+      };
+
+      const animations = animationEngineRef.current?.snapshot ? animationEngineRef.current.snapshot() : [];
+
+      return { snaps, objects, lights, cameras, animations, meta };
+    } finally {
+      if (hadTransformGroup) {
+        try { createTransformGroupFromSet(); } catch (e) {}
+      }
+    }
   };
 
   const loadFromData = (data) => {
@@ -4036,6 +4150,8 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
     setSculptRadius,
     setSculptStrength,
     setSculptMode,
+    setSculptEnabled,
+    isSculptMode,
     setSculptSymmetry,
     sculptPointerDown: wrapperSculptPointerDown,
     sculptPointerMove: wrapperSculptPointerMove,
