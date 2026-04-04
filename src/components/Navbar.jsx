@@ -3,6 +3,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { Home, Info, Palette, Folder, Mail, Menu, X, Store } from 'lucide-react';
+import { assetUrl } from "../utils/assets";
 
 /**
  * Premium floating glass navbar with auth-awareness.
@@ -77,10 +78,12 @@ export default function Navbar(props) {
       <div className="nav-left">
         <h1 className="nav-logo" style={{ margin: 0 }}>
           <Link to="/" onClick={closeMenu} aria-label="OBJEKTA home" className="nav-logo-link" style={{ textDecoration: "none" }}>
-            <span className="nav-logo-mark" aria-hidden="true">
-              <span className="nav-logo-core" />
-              <span className="nav-logo-orbit" />
-            </span>
+            <img 
+              src={assetUrl('assets/objekta-icon.svg')} 
+              alt="" 
+              className="nav-logo-icon" 
+              aria-hidden="true"
+            />
             <span className="nav-logo-text">Objekta</span>
           </Link>
         </h1>

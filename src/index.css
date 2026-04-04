@@ -776,6 +776,11 @@ body::-webkit-scrollbar-thumb,
   50% { transform: scale(1.08); box-shadow: 0 0 24px rgba(0, 215, 255, 0.35); }
 }
 
+@keyframes logoIconPulse {
+  0%, 100% { transform: scale(1) rotateZ(0deg); filter: drop-shadow(0 0 8px rgba(127, 90, 240, 0.4)); }
+  50% { transform: scale(1.05) rotateZ(2deg); filter: drop-shadow(0 0 14px rgba(0, 215, 255, 0.6)); }
+}
+
 @keyframes floatY {
   0%, 100% { transform: translateY(0); }
   50%      { transform: translateY(-8px); }
@@ -7772,6 +7777,16 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
   border: 1px solid rgba(127, 90, 240, 0.5);
   background: radial-gradient(circle at 30% 30%, rgba(0, 215, 255, 0.22), rgba(127, 90, 240, 0.18));
   position: relative;
+}
+
+.navbar.hp-nav .nav-logo-icon {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 0 8px rgba(127, 90, 240, 0.4));
+  animation: logoIconPulse 3s ease-in-out infinite;
 }
 
 .navbar.hp-nav .nav-logo-core {
