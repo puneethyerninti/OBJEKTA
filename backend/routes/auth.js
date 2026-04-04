@@ -5,6 +5,7 @@ const {
   registerUser, loginUser, getMe, oauthLogin,
   refreshToken, verifyEmail, resendVerification,
   forgotPassword, resetPassword,
+  requestLoginOTP, verifyLoginOTP,
   setup2FA, verify2FA, disable2FA,
   adminListUsers, adminSetRole, adminSuspendUser, adminStats,
 } = require("../controllers/authController");
@@ -18,6 +19,10 @@ router.post("/refresh", refreshToken);
 router.get("/verify-email", verifyEmail);
 router.post("/forgot-password", forgotPassword);
 router.post("/reset-password", resetPassword);
+
+// OTP-based login (passwordless or as 2FA)
+router.post("/login/otp/request", requestLoginOTP);
+router.post("/login/otp/verify", verifyLoginOTP);
 
 // Protected
 router.get("/me", protect, getMe);

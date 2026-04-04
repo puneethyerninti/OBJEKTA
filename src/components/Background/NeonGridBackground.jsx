@@ -13,7 +13,13 @@ const isWebGLAvailable = () => {
   try {
     const canvas = document.createElement('canvas');
     const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-    return !!(window.WebGLRenderingContext && gl);
+    const available = !!(window.WebGLRenderingContext && gl);
+    // Release the test context to avoid leaking WebGL contexts
+    if (gl) {
+      const ext = gl.getExtension('WEBGL_lose_context');
+      if (ext) ext.loseContext();
+    }
+    return available;
   } catch (error) {
     return false;
   }

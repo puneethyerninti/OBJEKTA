@@ -2,7 +2,9 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { usePageTitle } from "../hooks/usePageTitle";
 import ModelViewerWrapper from "../components/ModelViewerWrapper";
+import "../styles/PremiumPages.css";
 
 const PROJECTS = [
   { name: "Black Dragon", status: "In Review", owner: "Art", summary: "High-poly dragon with idle animation.", progress: 88, team: 3, deadline: "3 days", glbUrl: "/models/black_dragon_with_idle_animation.glb" },
@@ -71,11 +73,13 @@ const TEMPLATE_ICONS = {
 };
 
 export default function Projects() {
+  usePageTitle("Projects");
   const { user } = useAuth();
   const navigate = useNavigate();
   const studioTarget = user ? "/dashboard" : "/login";
   const [selectedStatus, setSelectedStatus] = useState("All");
   const [sortBy, setSortBy] = useState("progress");
+  const [selectedProject, setSelectedProject] = useState(null);
   const cardsRef = useRef([]);
 
   useEffect(() => {
@@ -121,168 +125,249 @@ export default function Projects() {
   };
 
   return (
-    <div className="site-wrapper">
-      <main className="home-shell">
-        {/* Hero */}
-        <section className="text-center" style={{ animation: "fadeInUp 0.7s ease-out", marginBottom: "3.5rem" }}>
-          <span className="hero-badge-top">Project Hub</span>
-          <h1 className="hero-title" style={{ marginBottom: "1.5rem" }}>
-            Manage Your <span className="title-gradient">Creative Pipeline</span>
-          </h1>
-          <p className="hero-subtitle" style={{ maxWidth: "720px", margin: "0 auto 2rem" }}>
+    <div className="site-wrapper projects-page-premium">
+      <main className="projects-main-premium">
+        {/* Hero Section */}
+        <section className="projects-header-premium">
+          <h1>Manage Your <span className="gradient-text">Creative Pipeline</span></h1>
+          <p>
             Track active projects, coordinate across teams, and deliver production-ready 3D assets on schedule.
           </p>
-          <div className="hero-actions" style={{ justifyContent: "center" }}>
-            <button onClick={() => navigate(studioTarget)} className="cta-button cta-primary" data-magnetic="0.15">
-              {user ? "Open Dashboard" : "Get Started Free"}
-            </button>
-            <Link to="/gallery" className="cta-button cta-secondary" data-magnetic="0.1">
-              View Gallery
-            </Link>
-          </div>
         </section>
 
         {/* Workflow Steps */}
-        <section className="projects-workflow-grid" style={{ animation: "fadeInUp 0.8s ease-out" }}>
-          {WORKFLOW_STEPS.map((step) => (
-            <div key={step.title} className="projects-workflow-card panel-glass" data-tilt="4">
-              <span className="projects-step-num">{step.num}</span>
-              <h3 className="projects-step-title">{step.title}</h3>
-              <p className="projects-step-desc">{step.desc}</p>
-            </div>
-          ))}
-        </section>
-
-        {/* Stats */}
-        <section className="projects-stats-bar panel-glass" style={{ animation: "fadeInUp 0.85s ease-out" }}>
-          <div className="projects-stat">
-            <span className="projects-stat-value">{PROJECTS.length}</span>
-            <span className="projects-stat-label">Active Projects</span>
-          </div>
-          <div className="projects-stat">
-            <span className="projects-stat-value">{totalTeamMembers}</span>
-            <span className="projects-stat-label">Team Members</span>
-          </div>
-          <div className="projects-stat">
-            <span className="projects-stat-value">{avgProgress}%</span>
-            <span className="projects-stat-label">Avg Progress</span>
-          </div>
-          <div className="projects-stat">
-            <span className="projects-stat-value">{nearCompletion}</span>
-            <span className="projects-stat-label">Near Completion</span>
-          </div>
-        </section>
-
-        {/* Filter + Sort */}
-        <section className="projects-controls">
-          <div className="projects-controls-top">
-            <h2 className="section-title" style={{ margin: 0, fontSize: "1.6rem" }}>Active Boards</h2>
-            <div className="projects-controls-actions">
-              <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="projects-sort-select">
-                <option value="progress">Sort by Progress</option>
-                <option value="team">Sort by Team Size</option>
-              </select>
-              <button onClick={() => navigate(studioTarget)} className="cta-button cta-primary projects-new-btn">
-                + New Project
-              </button>
-            </div>
-          </div>
-          <div className="projects-filter-bar">
-            {statuses.map((status) => (
-              <button
-                key={status}
-                onClick={() => setSelectedStatus(status)}
-                className={`gallery-filter-btn${selectedStatus === status ? " active" : ""}`}
-                aria-pressed={selectedStatus === status}
-              >
-                {status}
-              </button>
+        <section style={{ marginTop: "3rem", marginBottom: "3rem" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "2rem" }}>
+            {WORKFLOW_STEPS.map((step, idx) => (
+              <div key={step.title} className="project-card-premium" style={{ animationDelay: `${idx * 0.1}s` }}>
+                <div style={{ fontSize: "2.5rem", fontWeight: 900, background: "var(--gradient-primary)", backgroundClip: "text", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", marginBottom: "1rem" }}>
+                  {step.num}
+                </div>
+                <h3 style={{ fontSize: "1.1rem", fontWeight: 700, color: "white", margin: "0 0 0.75rem 0" }}>{step.title}</h3>
+                <p style={{ fontSize: "0.95rem", color: "rgba(255,255,255,0.6)", margin: 0, lineHeight: "1.5" }}>{step.desc}</p>
+              </div>
             ))}
           </div>
         </section>
 
-        {/* Project Cards */}
-        <section className="projects-grid">
-          {sortedProjects.length === 0 && (
-            <article className="gallery-empty panel-glass">
-              <h3>No boards found</h3>
-              <p>Try a different status filter or create a new board.</p>
-              <button onClick={() => setSelectedStatus("All")} className="cta-button cta-secondary" data-magnetic="0.1">
-                Show All Boards
-              </button>
-            </article>
-          )}
-          {sortedProjects.map((project, idx) => (
-            <article
-              key={project.name}
-              ref={(el) => (cardsRef.current[idx] = el)}
-              className="projects-card panel-glass showcase-card"
-              data-tilt="4"
-            >
-              <div className="projects-card-preview" style={{ height: 220, position: 'relative', overflow: 'hidden', borderRadius: 8 }}>
-                {project.glbUrl ? (
-                  <ModelViewerWrapper
-                    src={project.glbUrl}
-                    poster={project.thumbnailUrl || undefined}
-                    autoRotate={true}
-                    cameraControls={true}
-                    className="projects-model-viewer"
-                    style={{ width: '100%', height: '100%' }}
-                  />
-                ) : (
-                  <div className="projects-card-graphic" style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {/* fallback graphic for non-GLB projects */}
-                    <svg width="120" height="80" viewBox="0 0 120 80" fill="none" aria-hidden>
-                      <rect x="2" y="2" width="116" height="76" rx="6" stroke="rgba(255,255,255,0.06)" fill="rgba(0,0,0,0.06)" />
-                    </svg>
-                  </div>
-                )}
-              </div>
-              <div className="projects-card-header">
-                <span className="projects-card-status" style={{ color: statusColor(project.status), borderColor: statusColor(project.status) }}>
-                  {project.status}
-                </span>
-                <span className="projects-card-owner">{project.owner}</span>
-              </div>
-              <h3 className="projects-card-name">{project.name}</h3>
-              <p className="projects-card-summary">{project.summary}</p>
-
-              {/* Progress */}
-              <div className="projects-progress-wrap">
-                <div className="projects-progress-top">
-                  <span className="projects-progress-label">Progress</span>
-                  <span className="projects-progress-pct" style={{ color: statusColor(project.status) }}>{project.progress}%</span>
-                </div>
-                <div className="projects-progress-track">
-                  <div className="projects-progress-fill" style={{ width: `${project.progress}%`, background: `linear-gradient(90deg, ${statusColor(project.status)}, var(--brand-teal))` }} />
-                </div>
-              </div>
-
-              {/* Meta */}
-              <div className="projects-card-meta">
-                <div className="projects-card-meta-left">
-                  <span>Team: {project.team}</span>
-                  <span>Due: {project.deadline}</span>
-                </div>
-                <button className="cta-button projects-details-btn" onClick={() => navigate('/studio', { state: { importUrl: project.glbUrl } })}>View</button>
-              </div>
-            </article>
+        {/* Stats */}
+        <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "2rem", marginBottom: "3rem" }}>
+          {[
+            { value: PROJECTS.length, label: "Active Projects" },
+            { value: totalTeamMembers, label: "Team Members" },
+            { value: `${avgProgress}%`, label: "Avg Progress" },
+            { value: nearCompletion, label: "Near Completion" },
+          ].map((stat, i) => (
+            <div key={i} className="stat-card" style={{ animationDelay: `${i * 0.1}s` }}>
+              <div className="stat-value">{stat.value}</div>
+              <div className="stat-label">{stat.label}</div>
+            </div>
           ))}
         </section>
 
-        {/* Templates */}
-        <section style={{ marginTop: "4rem" }}>
-          <div className="text-center" style={{ marginBottom: "2.5rem" }}>
-            <h2 className="section-title">Start with a Template</h2>
-            <p className="section-subtitle">Pre-configured project setups to accelerate your workflow</p>
+        {/* Main Content Area */}
+        <div style={{ display: "grid", gridTemplateColumns: selectedProject ? "1fr 400px" : "1fr", gap: "2rem", marginBottom: "2rem" }}>
+          {/* Left: Project List */}
+          <div>
+            {/* Filter + Sort */}
+            <section style={{ marginBottom: "2rem" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem", gap: "1rem", flexWrap: "wrap" }}>
+                <h2 style={{ fontSize: "1.6rem", fontWeight: 700, margin: 0, color: "white" }}>Active Projects</h2>
+                <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={{ padding: "0.75rem 1rem", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px", color: "white", cursor: "pointer" }}>
+                  <option value="progress">Sort by Progress</option>
+                  <option value="team">Sort by Team Size</option>
+                </select>
+              </div>
+              <div className="gallery-filter-bar">
+                {statuses.map((status) => (
+                  <button
+                    key={status}
+                    onClick={() => setSelectedStatus(status)}
+                    className={`gallery-filter-btn${selectedStatus === status ? " active" : ""}`}
+                    aria-pressed={selectedStatus === status}
+                  >
+                    {status}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            {/* Project Grid */}
+            <section>
+              {sortedProjects.length === 0 && (
+                <div style={{ textAlign: "center", padding: "3rem" }}>
+                  <h3 style={{ color: "white", marginBottom: "1rem" }}>No projects found</h3>
+                  <p style={{ color: "rgba(255,255,255,0.6)", marginBottom: "2rem" }}>Try a different status filter or create a new project.</p>
+                  <button onClick={() => setSelectedStatus("All")} className="btn btn-secondary">
+                    Show All Projects
+                  </button>
+                </div>
+              )}
+              <div style={{ display: "grid", gridTemplateColumns: selectedProject ? "1fr" : "repeat(auto-fill, minmax(280px, 1fr))", gap: "2rem" }}>
+                {sortedProjects.map((project, idx) => (
+                  <article
+                    key={project.name}
+                    ref={(el) => (cardsRef.current[idx] = el)}
+                    onClick={() => setSelectedProject(project)}
+                    style={{
+                      cursor: "pointer",
+                      animationDelay: `${idx * 0.08}s`,
+                      border: selectedProject?.name === project.name ? "2px solid #7f5af0" : "1px solid rgba(255,255,255,0.1)",
+                      transform: selectedProject?.name === project.name ? "scale(1.02)" : "scale(1)",
+                      transition: "all 0.3s ease",
+                    }}
+                    className="project-card-premium"
+                  >
+                    {/* Project Thumbnail/Model Preview */}
+                    <div style={{
+                      width: "100%",
+                      height: "200px",
+                      background: "linear-gradient(135deg, rgba(127,90,240,0.1), rgba(0,215,255,0.1))",
+                      borderRadius: "12px",
+                      overflow: "hidden",
+                      marginBottom: "1rem",
+                      position: "relative"
+                    }}>
+                      {project.glbUrl ? (
+                        <ModelViewerWrapper
+                          src={project.glbUrl}
+                          autoRotate={true}
+                          cameraControls={false}
+                          style={{ width: '100%', height: '100%' }}
+                        />
+                      ) : (
+                        <div style={{
+                          width: '100%',
+                          height: '100%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          color: 'rgba(255,255,255,0.3)'
+                        }}>
+                          No Model Available
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Card Content */}
+                    <div className="project-card-header-premium">
+                      <span className="project-card-status-premium" style={{ color: statusColor(project.status), borderColor: statusColor(project.status) }}>
+                        {project.status}
+                      </span>
+                      <span style={{ fontSize: "0.85rem", color: "rgba(255,255,255,0.6)" }}>{project.owner}</span>
+                    </div>
+                    <div className="project-card-body-premium">
+                      <h3 className="project-card-title-premium">{project.name}</h3>
+                      <p className="project-card-desc-premium">{project.summary}</p>
+
+                      <div className="project-progress-bar-premium" style={{ marginTop: "1rem" }}>
+                        <div className="project-progress-fill-premium" style={{ width: `${project.progress}%`, background: statusColor(project.status) }} />
+                      </div>
+                      <div style={{ fontSize: "0.85rem", color: "rgba(255,255,255,0.5)", marginTop: "0.5rem" }}>{project.progress}% complete</div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
           </div>
-          <div className="projects-template-grid">
-            {PROJECT_TEMPLATES.map((tmpl) => (
-              <article key={tmpl.name} className="projects-template-card panel-glass" data-tilt="5">
-                <div className="projects-template-icon">{TEMPLATE_ICONS[tmpl.icon]}</div>
-                <h3 className="projects-template-name">{tmpl.name}</h3>
-                <p className="projects-template-desc">{tmpl.desc}</p>
-                <button onClick={() => navigate(studioTarget)} className="cta-button cta-secondary projects-template-btn">
+
+          {/* Right: Selected Project Details */}
+          {selectedProject && (
+            <div style={{
+              position: "sticky",
+              top: "80px",
+              height: "fit-content",
+              background: "rgba(255,255,255,0.05)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              borderRadius: "16px",
+              padding: "1.5rem",
+              animation: "fadeInUp 0.3s ease-out"
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: "1.5rem" }}>
+                <h3 style={{ margin: 0, fontSize: "1.2rem", fontWeight: 700, color: "white" }}>Details</h3>
+                <button
+                  onClick={() => setSelectedProject(null)}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "rgba(255,255,255,0.6)",
+                    cursor: "pointer",
+                    fontSize: "1.5rem"
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+
+              {/* Project Info */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                <div>
+                  <div style={{ fontSize: "0.8rem", color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 600, marginBottom: "0.5rem" }}>Project Name</div>
+                  <div style={{ fontSize: "1rem", color: "white", fontWeight: 600 }}>{selectedProject.name}</div>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: "0.8rem", color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 600, marginBottom: "0.5rem" }}>Status</div>
+                  <span style={{ color: statusColor(selectedProject.status), background: `${statusColor(selectedProject.status)}20`, padding: "0.4rem 0.8rem", borderRadius: "6px", fontSize: "0.9rem", fontWeight: 600 }}>
+                    {selectedProject.status}
+                  </span>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: "0.8rem", color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 600, marginBottom: "0.5rem" }}>Progress</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+                    <div style={{ flex: 1, height: "6px", background: "rgba(255,255,255,0.1)", borderRadius: "3px", overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: `${selectedProject.progress}%`, background: statusColor(selectedProject.status) }} />
+                    </div>
+                    <span style={{ color: statusColor(selectedProject.status), fontWeight: 700, minWidth: "3rem" }}>{selectedProject.progress}%</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: "0.8rem", color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 600, marginBottom: "0.5rem" }}>Team Size</div>
+                  <div style={{ fontSize: "1rem", color: "white", fontWeight: 600 }}>{selectedProject.team} Members</div>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: "0.8rem", color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 600, marginBottom: "0.5rem" }}>Deadline</div>
+                  <div style={{ fontSize: "1rem", color: "white", fontWeight: 600 }}>{selectedProject.deadline}</div>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: "0.8rem", color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 600, marginBottom: "0.5rem" }}>Owner</div>
+                  <div style={{ fontSize: "1rem", color: "white", fontWeight: 600 }}>{selectedProject.owner}</div>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: "0.8rem", color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 600, marginBottom: "0.5rem" }}>Description</div>
+                  <p style={{ margin: 0, fontSize: "0.9rem", color: "rgba(255,255,255,0.7)", lineHeight: "1.5" }}>{selectedProject.summary}</p>
+                </div>
+
+                <button
+                  onClick={() => navigate('/studio')}
+                  className="btn btn-primary"
+                  style={{ marginTop: "1rem", width: "100%" }}
+                >
+                  Open in Studio
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Templates Section */}
+        <section style={{ marginTop: "4rem", marginBottom: "3rem" }}>
+          <div style={{ textAlign: "center", marginBottom: "2.5rem" }}>
+            <h2 style={{ fontSize: "2rem", fontWeight: 900, background: "var(--gradient-primary)", backgroundClip: "text", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", margin: "0 0 0.5rem 0" }}>Start with a Template</h2>
+            <p style={{ fontSize: "1.1rem", color: "rgba(255,255,255,0.6)", margin: 0 }}>Pre-configured project setups to accelerate your workflow</p>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "2rem" }}>
+            {PROJECT_TEMPLATES.map((tmpl, idx) => (
+              <article key={tmpl.name} className="project-card-premium" style={{ animationDelay: `${idx * 0.1}s` }}>
+                <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>{TEMPLATE_ICONS[tmpl.icon]}</div>
+                <h3 className="project-card-title-premium">{tmpl.name}</h3>
+                <p className="project-card-desc-premium">{tmpl.desc}</p>
+                <button onClick={() => navigate(studioTarget)} className="btn btn-primary" style={{ marginTop: "1rem", width: "100%" }}>
                   Use Template
                 </button>
               </article>
@@ -290,19 +375,15 @@ export default function Projects() {
           </div>
         </section>
 
-        {/* CTA */}
-        <section className="panel-glass neon-rim gallery-cta-panel" style={{ marginTop: "4rem" }}>
-          <h2 className="section-title" style={{ marginBottom: "1rem" }}>
-            Ready to Streamline Your Workflow?
-          </h2>
-          <p className="section-subtitle" style={{ marginBottom: "2rem", maxWidth: "600px", margin: "0 auto 2rem" }}>
-            Join teams using Objekta to manage complex 3D projects and deliver faster.
-          </p>
-          <div className="hero-actions" style={{ justifyContent: "center" }}>
-            <button onClick={() => navigate(studioTarget)} className="cta-button cta-primary" data-magnetic="0.18">
+        {/* CTA Section */}
+        <section className="about-cta">
+          <h2>Ready to Streamline Your Workflow?</h2>
+          <p>Join teams using Objekta to manage complex 3D projects and deliver faster.</p>
+          <div className="cta-actions">
+            <button onClick={() => navigate(studioTarget)} className="btn btn-primary btn-lg">
               {user ? "Create Project" : "Get Started"}
             </button>
-            <Link to="/contact" className="cta-button cta-secondary" data-magnetic="0.1">
+            <Link to="/contact" className="btn btn-secondary btn-lg">
               Talk to Sales
             </Link>
           </div>

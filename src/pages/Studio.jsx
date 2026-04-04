@@ -3,6 +3,7 @@ import React, { useRef, useState, useEffect, useCallback, lazy, Suspense } from 
 import { createPortal } from "react-dom";
 // Static pako import keeps compression available even if dynamic import fails
 import { deflate } from "pako";
+import { usePageTitle } from "../hooks/usePageTitle";
 import * as THREE from "three";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { DndProvider } from "react-dnd";
@@ -61,12 +62,77 @@ const OptimizationPanel = lazy(() => import("../components/OptimizationPanel"));
 const ProceduralPanel = lazy(() => import("../components/ProceduralPanel"));
 const MaterialLibraryPanel = lazy(() => import("../components/MaterialLibraryPanel"));
 const PostFXPanel = lazy(() => import("../components/PostFXPanel"));
+const ViewportControls = lazy(() => import("../components/ViewportControls"));
+const ViewportLabsPanel = lazy(() => import("../components/ViewportLabsPanel"));
+const QuickAddMenu = lazy(() => import("../components/QuickAddMenu"));
+const MeasurementTools = lazy(() => import("../components/MeasurementTools"));
+const SnapIndicator = lazy(() => import("../components/SnapIndicator"));
 
 /* ---------------------------
    Main Studio component
    --------------------------- */
 
+const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+const DEFAULT_REFERENCE_OVERLAY = {
+  enabled: false,
+  opacity: 0.45,
+  wipe: 100,
+  image: null,
+};
+
+const DEFAULT_ECHO_SETTINGS = {
+  enabled: false,
+  count: 8,
+  opacity: 0.35,
+  color: "#7f5af0",
+};
+
+const readBlobAsDataUrl = (blob) => new Promise((resolve, reject) => {
+  if (!blob) {
+    resolve(null);
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => resolve(reader.result);
+  reader.onerror = () => reject(reader.error || new Error("Failed to read blob"));
+  reader.readAsDataURL(blob);
+});
+
+const resizeDataUrl = (dataUrl, maxEdge = 1600, quality = 0.82) => new Promise((resolve) => {
+  if (!dataUrl || typeof document === "undefined") {
+    resolve(dataUrl);
+    return;
+  }
+  const img = new Image();
+  img.onload = () => {
+    const maxDim = Math.max(img.width || 0, img.height || 0);
+    if (!maxDim || maxDim <= maxEdge) {
+      resolve(dataUrl);
+      return;
+    }
+    const scale = maxEdge / maxDim;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(img.width * scale));
+    canvas.height = Math.max(1, Math.round(img.height * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      resolve(dataUrl);
+      return;
+    }
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    try {
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    } catch (e) {
+      resolve(dataUrl);
+    }
+  };
+  img.onerror = () => resolve(dataUrl);
+  img.src = dataUrl;
+});
+
 export default function Studio() {
+  usePageTitle("Studio");
   const navigate = useNavigate();
   const location = useLocation();
   const { logout, user: authUser, authFetch } = useAuth() || {};
@@ -294,6 +360,98 @@ export default function Studio() {
   const offsetRef = useRef({ x: 0, y: 0 });
   const [activeMode, setActiveMode] = useState("translate");
   const [viewMode, setViewMode] = useState("rendered");
+
+  // Quick add menu state
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
+  // Measurement tools state
+  const [showMeasureTools, setShowMeasureTools] = useState(false);
+
+  // Viewport Labs: reference overlay + echo trails
+  const [referenceOverlay, setReferenceOverlay] = useState(() => {
+    if (typeof window === "undefined") return DEFAULT_REFERENCE_OVERLAY;
+    try {
+      const raw = localStorage.getItem("objekta_reference_overlay");
+      if (!raw) return DEFAULT_REFERENCE_OVERLAY;
+      const parsed = JSON.parse(raw) || {};
+      const opacity = Number(parsed.opacity);
+      const wipe = Number(parsed.wipe);
+      return {
+        ...DEFAULT_REFERENCE_OVERLAY,
+        ...parsed,
+        enabled: !!parsed.enabled,
+        opacity: Number.isFinite(opacity) ? clamp(opacity, 0, 1) : DEFAULT_REFERENCE_OVERLAY.opacity,
+        wipe: Number.isFinite(wipe) ? clamp(wipe, 0, 100) : DEFAULT_REFERENCE_OVERLAY.wipe,
+        image: typeof parsed.image === "string" ? parsed.image : null,
+      };
+    } catch (e) {
+      return DEFAULT_REFERENCE_OVERLAY;
+    }
+  });
+  const referencePersistWarnedRef = useRef(false);
+
+  const [echoSettings, setEchoSettings] = useState(() => {
+    if (typeof window === "undefined") return DEFAULT_ECHO_SETTINGS;
+    try {
+      const raw = localStorage.getItem("objekta_echo_settings");
+      if (!raw) return DEFAULT_ECHO_SETTINGS;
+      const parsed = JSON.parse(raw) || {};
+      const count = parseInt(parsed.count, 10);
+      const opacity = parseFloat(parsed.opacity);
+      return {
+        ...DEFAULT_ECHO_SETTINGS,
+        ...parsed,
+        enabled: !!parsed.enabled,
+        count: Number.isFinite(count) ? clamp(count, 1, 20) : DEFAULT_ECHO_SETTINGS.count,
+        opacity: Number.isFinite(opacity) ? clamp(opacity, 0.05, 1) : DEFAULT_ECHO_SETTINGS.opacity,
+        color: typeof parsed.color === "string" ? parsed.color : DEFAULT_ECHO_SETTINGS.color,
+      };
+    } catch (e) {
+      return DEFAULT_ECHO_SETTINGS;
+    }
+  });
+  const echoGroupRef = useRef(null);
+  const echoItemsRef = useRef([]);
+  const echoLastRef = useRef({ uuid: null, ts: 0 });
+  const echoPersistWarnedRef = useRef(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem("objekta_reference_overlay", JSON.stringify(referenceOverlay));
+      referencePersistWarnedRef.current = false;
+    } catch (e) {
+      if (!referencePersistWarnedRef.current) {
+        referencePersistWarnedRef.current = true;
+        pushToast({
+          type: "warn",
+          message: "Reference overlay could not be stored. Try clearing or using a smaller capture.",
+        }, 6000);
+      }
+      try {
+        localStorage.setItem("objekta_reference_overlay", JSON.stringify({ ...referenceOverlay, image: null }));
+      } catch (err) {}
+    }
+  }, [referenceOverlay, pushToast]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem("objekta_echo_settings", JSON.stringify(echoSettings));
+      echoPersistWarnedRef.current = false;
+    } catch (e) {
+      if (!echoPersistWarnedRef.current) {
+        echoPersistWarnedRef.current = true;
+        pushToast({ type: "warn", message: "Echo settings could not be stored." }, 4000);
+      }
+    }
+  }, [echoSettings, pushToast]);
+
+  // Listen for quick add menu event from Workspace
+  useEffect(() => {
+    const onQuickAdd = () => setShowQuickAdd(true);
+    EventBus.on?.("studio:quickadd:open", onQuickAdd);
+    return () => EventBus.off?.("studio:quickadd:open", onQuickAdd);
+  }, []);
 
   // snapping
   const [snapEnabled, setSnapEnabled] = useState(false);
@@ -674,6 +832,199 @@ export default function Studio() {
       return null;
     }
   }, [probeWorkspace]);
+
+  const updateReferenceOverlay = useCallback((patch) => {
+    setReferenceOverlay((prev) => ({ ...prev, ...patch }));
+  }, []);
+
+  const setReferenceEnabled = useCallback((enabled) => {
+    setReferenceOverlay((prev) => {
+      const nextEnabled = typeof enabled === "boolean" ? enabled : !prev.enabled;
+      if (nextEnabled && !prev.image) {
+        pushToast({ type: "warn", message: "Capture or import a reference first." }, 4000);
+        return { ...prev, enabled: false };
+      }
+      return { ...prev, enabled: nextEnabled };
+    });
+  }, [pushToast]);
+
+  const toggleReferenceOverlay = useCallback(() => {
+    setReferenceEnabled();
+  }, [setReferenceEnabled]);
+
+  const clearReferenceOverlay = useCallback(() => {
+    setReferenceOverlay((prev) => ({ ...prev, enabled: false, image: null }));
+  }, []);
+
+  const captureReferenceOverlay = useCallback(async () => {
+    try {
+      const blob = await captureThumbnailAsync({ quality: 0.85, mime: "image/jpeg" });
+      if (!blob) {
+        pushToast({ type: "error", message: "Reference capture failed." }, 4000);
+        return;
+      }
+      const dataUrl = await readBlobAsDataUrl(blob);
+      if (!dataUrl) {
+        pushToast({ type: "error", message: "Reference capture failed." }, 4000);
+        return;
+      }
+      const scaled = await resizeDataUrl(dataUrl, 1600, 0.82);
+      setReferenceOverlay((prev) => ({ ...prev, image: scaled, enabled: true, wipe: 100 }));
+      pushToast({ type: "info", message: "Reference captured." }, 3000);
+    } catch (e) {
+      pushToast({ type: "error", message: "Reference capture failed." }, 4000);
+    }
+  }, [captureThumbnailAsync, pushToast]);
+
+  const importReferenceOverlay = useCallback(async (file) => {
+    if (!file) return;
+    try {
+      const dataUrl = await readBlobAsDataUrl(file);
+      if (!dataUrl) {
+        pushToast({ type: "error", message: "Reference import failed." }, 4000);
+        return;
+      }
+      const scaled = await resizeDataUrl(dataUrl, 1600, 0.82);
+      setReferenceOverlay((prev) => ({ ...prev, image: scaled, enabled: true, wipe: 100 }));
+      pushToast({ type: "info", message: "Reference imported." }, 3000);
+    } catch (e) {
+      pushToast({ type: "error", message: "Reference import failed." }, 4000);
+    }
+  }, [pushToast]);
+
+  const setEchoEnabled = useCallback((enabled) => {
+    setEchoSettings((prev) => ({ ...prev, enabled: typeof enabled === "boolean" ? enabled : !prev.enabled }));
+  }, []);
+
+  const toggleEchoEnabled = useCallback(() => {
+    setEchoEnabled();
+  }, [setEchoEnabled]);
+
+  const setEchoCount = useCallback((count) => {
+    setEchoSettings((prev) => ({ ...prev, count: clamp(count, 1, 20) }));
+  }, []);
+
+  const setEchoOpacity = useCallback((opacity) => {
+    setEchoSettings((prev) => ({ ...prev, opacity: clamp(opacity, 0.05, 1) }));
+  }, []);
+
+  const setEchoColor = useCallback((color) => {
+    setEchoSettings((prev) => ({ ...prev, color }));
+  }, []);
+
+  const disposeEchoHelper = useCallback((helper) => {
+    if (!helper) return;
+    try { helper.parent?.remove(helper); } catch (e) {}
+    try { helper.geometry?.dispose?.(); } catch (e) {}
+    try {
+      const mats = Array.isArray(helper.material) ? helper.material : [helper.material];
+      mats.forEach((m) => m?.dispose?.());
+    } catch (e) {}
+  }, []);
+
+  const ensureEchoGroup = useCallback(() => {
+    const { scene } = probeWorkspace();
+    if (!scene) return null;
+    if (!echoGroupRef.current) {
+      const group = new THREE.Group();
+      group.name = "_echoTrails";
+      group.userData.__objekta = false;
+      group.userData.__helper = true;
+      echoGroupRef.current = group;
+      scene.add(group);
+    } else if (!echoGroupRef.current.parent) {
+      scene.add(echoGroupRef.current);
+    }
+    return echoGroupRef.current;
+  }, [probeWorkspace]);
+
+  const clearEchoes = useCallback(() => {
+    const group = echoGroupRef.current;
+    if (group) {
+      while (group.children.length) {
+        disposeEchoHelper(group.children[0]);
+      }
+      try { group.parent?.remove(group); } catch (e) {}
+    }
+    echoGroupRef.current = null;
+    echoItemsRef.current = [];
+    workspaceRef.current?.markDirty?.();
+  }, [disposeEchoHelper]);
+
+  const applyEchoStyles = useCallback(() => {
+    const items = echoItemsRef.current;
+    const total = items.length || 1;
+    const baseOpacity = clamp(echoSettings.opacity, 0.05, 1);
+    const color = echoSettings.color || DEFAULT_ECHO_SETTINGS.color;
+    items.forEach((helper, idx) => {
+      const t = total <= 1 ? 1 : (idx + 1) / total;
+      const fade = 0.2 + 0.8 * t;
+      const mats = Array.isArray(helper.material) ? helper.material : [helper.material];
+      mats.forEach((m) => {
+        if (!m) return;
+        if (m.color) m.color.set(color);
+        m.transparent = true;
+        m.opacity = baseOpacity * fade;
+        m.depthTest = false;
+        m.depthWrite = false;
+        m.needsUpdate = true;
+      });
+      helper.renderOrder = 999;
+    });
+    workspaceRef.current?.markDirty?.();
+  }, [echoSettings.opacity, echoSettings.color]);
+
+  const addEchoFromObject = useCallback((obj) => {
+    if (!obj || !echoSettings.enabled) return;
+    const group = ensureEchoGroup();
+    if (!group) return;
+    const box = new THREE.Box3().setFromObject(obj);
+    if (box.isEmpty()) return;
+    const helper = new THREE.Box3Helper(box, new THREE.Color(echoSettings.color || DEFAULT_ECHO_SETTINGS.color));
+    helper.name = "_echoTrail";
+    helper.userData.__objekta = false;
+    helper.userData.__helper = true;
+    group.add(helper);
+    echoItemsRef.current.push(helper);
+    const maxCount = clamp(echoSettings.count, 1, 20);
+    while (echoItemsRef.current.length > maxCount) {
+      const old = echoItemsRef.current.shift();
+      disposeEchoHelper(old);
+    }
+    applyEchoStyles();
+  }, [echoSettings.enabled, echoSettings.count, echoSettings.color, ensureEchoGroup, disposeEchoHelper, applyEchoStyles]);
+
+  // Keyboard shortcut for Shift+A (Quick Add) at Studio level
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = e.target?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select" || e.target?.isContentEditable) return;
+      // Shift+A opens Quick Add menu
+      if (!e.ctrlKey && !e.metaKey && e.shiftKey && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        setShowQuickAdd(true);
+      }
+      // M key toggles measurement tools
+      if (!e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "m") {
+        e.preventDefault();
+        setShowMeasureTools((v) => !v);
+      }
+      if (!e.ctrlKey && !e.metaKey && e.altKey && e.shiftKey && e.key.toLowerCase() === "r") {
+        e.preventDefault();
+        captureReferenceOverlay();
+      }
+      if (!e.ctrlKey && !e.metaKey && e.altKey && e.shiftKey && e.key.toLowerCase() === "o") {
+        e.preventDefault();
+        toggleReferenceOverlay();
+      }
+      if (!e.ctrlKey && !e.metaKey && e.altKey && e.shiftKey && e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        toggleEchoEnabled();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [captureReferenceOverlay, toggleReferenceOverlay, toggleEchoEnabled]);
 
   /* Transform mode & snapping sync */
   useEffect(() => {
@@ -1363,8 +1714,44 @@ export default function Studio() {
   }, [refreshLightListFromScene, resolveSelectedObject, handleWorkspaceSelect, pushObjectUpdate]);
 
   useEffect(() => {
+    if (!echoSettings.enabled) return;
+    const onTransformCommitEcho = (payload) => {
+      try {
+        const obj = payload?.object;
+        if (!obj?.uuid) return;
+        if (selected?.uuid && selected.uuid !== obj.uuid) return;
+        const now = Date.now();
+        if (echoLastRef.current.uuid === obj.uuid && now - echoLastRef.current.ts < 80) return;
+        echoLastRef.current = { uuid: obj.uuid, ts: now };
+        addEchoFromObject(obj);
+      } catch (e) {}
+    };
+    EventBus.on?.("transform:commit", onTransformCommitEcho);
+    return () => EventBus.off?.("transform:commit", onTransformCommitEcho);
+  }, [echoSettings.enabled, selected, addEchoFromObject]);
+
+  useEffect(() => {
+    if (!echoSettings.enabled) {
+      clearEchoes();
+      return;
+    }
+    const maxCount = clamp(echoSettings.count, 1, 20);
+    while (echoItemsRef.current.length > maxCount) {
+      const old = echoItemsRef.current.shift();
+      disposeEchoHelper(old);
+    }
+    applyEchoStyles();
+  }, [echoSettings.enabled, echoSettings.count, echoSettings.opacity, echoSettings.color, applyEchoStyles, clearEchoes, disposeEchoHelper]);
+
+  useEffect(() => () => { clearEchoes(); }, [clearEchoes]);
+
+  useEffect(() => {
     refreshLightListFromScene();
   }, [refreshLightListFromScene]);
+
+  useEffect(() => {
+    clearEchoes();
+  }, [projectId, clearEchoes]);
 
   const handleOutlinerSelect = useCallback((obj) => {
     try {
@@ -2584,7 +2971,13 @@ export default function Studio() {
 
   return (
     <DndProvider backend={HTML5Backend}>
-      <div ref={containerRef} className="studio-container" role="region" aria-label="3D Studio">
+      <div
+        ref={containerRef}
+        className="studio-container"
+        role="region"
+        aria-label="3D Studio"
+        style={{ "--props-panel-width": `${propsWidth}px` }}
+      >
         <StudioToast toasts={toasts} onDismiss={removeToast} />
           <Loader active={loading || collabLoading} message={loading ? `Importing model...` : (collabLoading ? "Connecting to collab..." : "")} progress={loadProgress} />
         <ConfirmModal
@@ -2884,6 +3277,76 @@ export default function Studio() {
 
           <Suspense fallback={null}>
             <SculptToolbar workspaceRef={workspaceRef} />
+          </Suspense>
+
+          {/* Quick Add Menu (Shift+A) */}
+          {showQuickAdd && (
+            <Suspense fallback={null}>
+              <QuickAddMenu
+                workspaceRef={workspaceRef}
+                onClose={() => setShowQuickAdd(false)}
+              />
+            </Suspense>
+          )}
+
+          {/* Measurement Tools */}
+          <Suspense fallback={null}>
+            <MeasurementTools
+              workspaceRef={workspaceRef}
+              visible={showMeasureTools}
+              onClose={() => setShowMeasureTools(false)}
+            />
+          </Suspense>
+
+          {/* Viewport Controls */}
+          <Suspense fallback={null}>
+            <ViewportControls
+              workspaceRef={workspaceRef}
+              transformMode={activeMode}
+              onTransformModeChange={(mode) => {
+                setActiveMode(mode);
+                workspaceRef.current?.setTransformMode?.(mode);
+              }}
+              shadingMode={viewMode}
+              onShadingModeChange={(mode) => {
+                setViewMode(mode);
+                workspaceRef.current?.setViewportShading?.(mode);
+              }}
+              snapEnabled={snapEnabled}
+              onSnapToggle={(enabled) => {
+                setSnapEnabled(enabled);
+                workspaceRef.current?.toggleSnap?.();
+              }}
+              snapSize={snapSize}
+              onSnapSizeChange={setSnapSize}
+            />
+          </Suspense>
+
+          {/* Snap Indicator for smart snapping visual feedback */}
+          <Suspense fallback={null}>
+            <SnapIndicator
+              camera={workspaceRef.current?.getCamera?.()}
+              renderer={workspaceRef.current?.getRenderer?.()}
+            />
+          </Suspense>
+
+          {/* Viewport Labs: reference overlay + echo trails */}
+          <Suspense fallback={null}>
+            <ViewportLabsPanel
+              reference={referenceOverlay}
+              onReferenceToggle={setReferenceEnabled}
+              onReferenceCapture={captureReferenceOverlay}
+              onReferenceImport={importReferenceOverlay}
+              onReferenceClear={clearReferenceOverlay}
+              onReferenceOpacityChange={(value) => updateReferenceOverlay({ opacity: clamp(value, 0, 1) })}
+              onReferenceWipeChange={(value) => updateReferenceOverlay({ wipe: clamp(value, 0, 100) })}
+              echo={echoSettings}
+              onEchoToggle={setEchoEnabled}
+              onEchoCountChange={setEchoCount}
+              onEchoOpacityChange={setEchoOpacity}
+              onEchoColorChange={setEchoColor}
+              onEchoClear={clearEchoes}
+            />
           </Suspense>
 
           <Workspace

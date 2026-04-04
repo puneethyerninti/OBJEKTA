@@ -185,12 +185,12 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
   const fileAssetsRef = useRef(new Map());
   const isBulkImportRef = useRef(false);
 
-  // mini preview refs
+  // mini preview refs - DISABLED by default to save WebGL context
   const miniRendererRef = useRef(null);
   const miniCameraRef = useRef(null);
   const miniOrbitRef = useRef(null);
   const miniCanvasRef = useRef(null);
-  const miniDisabledRef = useRef(false);
+  const miniDisabledRef = useRef(true);
   const cameraBookmarksRef = useRef(new Map());
   const cameraAnimRef = useRef(null);
   // camera view toggle (Blender-like 'Look Through') state
@@ -208,11 +208,15 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
   const [selectedInternal, setSelectedInternal] = useState(null);
   const [toolbarPos, setToolbarPos] = useState({ x: -999, y: -999 });
   const [transformMode, setTransformModeState] = useState("translate"); // translate | rotate | scale
+  const [transformSpace, setTransformSpaceState] = useState("world"); // world | local
+  const [viewportShading, setViewportShadingState] = useState("rendered"); // solid | wireframe | material | rendered
   const [loading, setLoading] = useState(false);
+  const [webglError, setWebglError] = useState(null);
   const [bookmarkUiVersion, setBookmarkUiVersion] = useState(0);
   const [cameraType, setCameraType] = useState("perspective"); // perspective | orthographic
   const orthoCameraRef = useRef(null);
   const [hover, setHover] = useState({ name: "", x: -999, y: -999 });
+  const wireframeMaterialsRef = useRef(new Map()); // Store original materials when in wireframe mode
 
   // render/scene tracking
   const needsRenderRef = useRef(true);
@@ -986,7 +990,26 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
 
   // ---------- Init Scene & Renderer ----------
   useEffect(() => {
-    if (!canvasRef.current) return;
+    if (!containerRef.current) return;
+    setWebglError(null);
+
+    // Create a fresh canvas element dynamically to avoid stale WebGL context issues
+    // (especially in React Strict Mode which re-runs effects)
+    const canvas = document.createElement("canvas");
+    canvas.className = "w-full h-full";
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
+    canvas.style.display = "block";
+    
+    // Replace any existing canvas or add the new one
+    const existingCanvas = canvasRef.current;
+    if (existingCanvas && existingCanvas.parentNode === containerRef.current) {
+      containerRef.current.replaceChild(canvas, existingCanvas);
+    } else {
+      // Insert canvas as first child
+      containerRef.current.insertBefore(canvas, containerRef.current.firstChild);
+    }
+    canvasRef.current = canvas;
 
     // Scene
     const scene = new THREE.Scene();
@@ -1008,15 +1031,56 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
     cameraRef.current = camera;
 
     // Renderer (preserveDrawingBuffer disabled; use ephemeral renderer for captures)
-    const renderer = new THREE.WebGLRenderer({
-      antialias: false,
-      stencil: false,
-      alpha: false,
-      depth: true,
-      powerPreference: "high-performance",
-      preserveDrawingBuffer: false,
-      canvas: canvasRef.current,
-    });
+    let renderer = null;
+    
+    try {
+      // Create WebGL renderer with context options
+      renderer = new THREE.WebGLRenderer({
+        antialias: false,
+        stencil: false,
+        alpha: false,
+        depth: true,
+        powerPreference: "high-performance",
+        preserveDrawingBuffer: false,
+        canvas,
+        failIfMajorPerformanceCaveat: false,
+      });
+      
+      // Verify the WebGL context was actually created and is usable
+      const gl = renderer.getContext();
+      if (!gl) {
+        throw new Error("WebGL context is null after renderer creation");
+      }
+      
+      // Verify the context is not lost
+      if (gl.isContextLost && gl.isContextLost()) {
+        throw new Error("WebGL context was immediately lost");
+      }
+      
+      // Verify we can actually use the context by checking a parameter
+      // This catches the case where gl exists but is in a bad state
+      try {
+        const testParam = gl.getParameter(gl.VERSION);
+        if (!testParam) {
+          throw new Error("WebGL context appears to be in an invalid state");
+        }
+      } catch (paramErr) {
+        throw new Error("WebGL context validation failed: " + paramErr.message);
+      }
+    } catch (err) {
+      console.warn("[Workspace] WebGLRenderer init failed", err);
+      // Clean up any partial renderer
+      if (renderer) {
+        try {
+          renderer.dispose();
+        } catch (disposeErr) {
+          // ignore dispose errors
+        }
+        renderer = null;
+      }
+      setWebglError("WebGL init failed. Try reload or close other WebGL tabs.");
+      return;
+    }
     renderer.setPixelRatio(window.devicePixelRatio || 1);
     renderer.shadowMap.enabled = true;
     // Prefer physically correct lighting & modern tone mapping for realistic PBR appearance.
@@ -1060,23 +1124,56 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
 
     // Transform controls
     const transform = new TransformControls(camera, renderer.domElement);
+    // Apply snap settings to transform controls
+    SnapManager.applyToTransformControls(transform);
     transform.addEventListener("dragging-changed", (e) => {
       orbitRef.current && (orbitRef.current.enabled = !e.value);
+      // Clear snap cache when drag starts/ends for fresh calculations
+      if (e.value) SnapManager.clearCache();
       try {
         EventBus.emit && EventBus.emit("transform:dragging", { active: e.value });
       } catch (err) {}
     });
     transform.addEventListener("change", () => {
-      // Optional surface snapping during translate
-      if (SnapManager.isEnabled() && SnapManager.isSurfaceSnap() && transform.mode === "translate") {
+      // Smart snapping during translate
+      if (SnapManager.isEnabled() && transform.mode === "translate") {
         const obj = transform.object;
         if (obj && sceneRef.current) {
-          const surfaces = [];
+          // Get all potential snap targets
+          const targets = [];
           sceneRef.current.traverse((child) => {
-            if (child.isMesh && child !== obj) surfaces.push(child);
+            if ((child.isMesh || child.isGroup) && child !== obj && !child.userData?.__helper) {
+              targets.push(child);
+            }
           });
-          const result = SnapManager.snapToSurface(obj.position, surfaces);
-          if (result.hit) obj.position.copy(result.point);
+          
+          // Try smart snap (vertex/edge/center) first
+          const smartSnapTarget = SnapManager.snapToGeometry(obj, targets, cameraRef.current);
+          if (smartSnapTarget) {
+            obj.position.copy(smartSnapTarget.position);
+            // Emit event for visual indicator
+            try {
+              EventBus.emit && EventBus.emit("snap:indicator", {
+                type: smartSnapTarget.type,
+                position: smartSnapTarget.position.clone(),
+                show: true
+              });
+            } catch (e) {}
+          } else if (SnapManager.isSurfaceSnap()) {
+            // Fall back to surface snap
+            const surfaces = targets.filter(t => t.isMesh);
+            const result = SnapManager.snapToSurface(obj.position, surfaces);
+            if (result.hit) obj.position.copy(result.point);
+            // Clear indicator
+            try {
+              EventBus.emit && EventBus.emit("snap:indicator", { show: false });
+            } catch (e) {}
+          } else {
+            // Clear indicator when no snap
+            try {
+              EventBus.emit && EventBus.emit("snap:indicator", { show: false });
+            } catch (e) {}
+          }
         }
       }
       updateToolbarPosition();
@@ -1140,6 +1237,18 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
     });
     safeAdd(editorGroup, transform, "_transform_controls");
     transformRef.current = transform;
+
+    // Subscribe to snap setting changes
+    const handleSnapSettingsChanged = () => {
+      if (transformRef.current) {
+        SnapManager.applyToTransformControls(transformRef.current);
+        needsRenderRef.current = true;
+      }
+    };
+    EventBus.on("snap:enabled", handleSnapSettingsChanged);
+    EventBus.on("snap:grid:size", handleSnapSettingsChanged);
+    EventBus.on("snap:angle:change", handleSnapSettingsChanged);
+    EventBus.on("snap:settings:changed", handleSnapSettingsChanged);
 
     // editor lights & helpers
     const amb = new THREE.AmbientLight(0xffffff, 0.45);
@@ -1550,6 +1659,7 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
     const onContextLost = (e) => {
       try { e.preventDefault(); } catch (err) {}
       console.warn("[Workspace] WebGL context lost");
+      setWebglError("WebGL context lost. Reload to continue.");
       disableMiniRenderer();
       disablePostFX();
       needsRenderRef.current = false;
@@ -1594,6 +1704,7 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
             }
           });
         } catch (e) {}
+        setWebglError(null);
         needsRenderRef.current = true;
       } catch (err) {
         console.warn("[Workspace] postfx reinit failed after context restore", err);
@@ -1830,55 +1941,195 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
       const tag = (e.target?.tagName || "").toLowerCase();
       if (tag === "input" || tag === "textarea" || e.target?.isContentEditable) return;
       const key = e.key.toLowerCase();
+      
+      // Undo/Redo
       if (cmd && key === "z") {
         e.preventDefault();
         e.shiftKey ? redo() : undo();
       } else if (cmd && key === "y") {
         e.preventDefault();
         redo();
-      } else if (cmd && key === "d") {
+      }
+      // Duplicate (Ctrl+D or Shift+D like Blender)
+      else if ((cmd && key === "d") || (!cmd && e.shiftKey && key === "d")) {
         e.preventDefault();
         duplicateSelected();
-      } else if (cmd && e.shiftKey && ["1", "2", "3", "4"].includes(key)) {
+      }
+      // Camera bookmarks
+      else if (cmd && e.shiftKey && ["1", "2", "3", "4"].includes(key)) {
         e.preventDefault();
         saveCameraBookmark(key);
       } else if (cmd && ["1", "2", "3", "4"].includes(key)) {
         e.preventDefault();
         loadCameraBookmark(key);
-      } else if (!cmd && e.shiftKey && key === "f") {
+      }
+      // Frame selection (. like Blender numpad period, or Shift+F)
+      else if ((!cmd && !e.altKey && key === ".") || (!cmd && e.shiftKey && key === "f")) {
         e.preventDefault();
         frameSelection();
-      } else if (!cmd && e.shiftKey && key === "a") {
+      }
+      // Frame all (Home key or Shift+A not conflicting)
+      else if (key === "home" || (!cmd && e.shiftKey && key === "a" && !e.altKey)) {
         e.preventDefault();
         frameAll();
-      } else if (!cmd && e.shiftKey && key === "h") {
+      }
+      // Frame hierarchy
+      else if (!cmd && e.shiftKey && key === "h") {
         e.preventDefault();
         frameHierarchy();
-      } else if (!cmd && e.altKey && ["1", "2", "3", "4"].includes(key)) {
+      }
+      // View presets with Alt+numbers
+      else if (!cmd && e.altKey && ["1", "2", "3", "4", "5", "6", "7", "8"].includes(key)) {
         e.preventDefault();
         if (key === "1") applyViewPreset("front");
         else if (key === "2") applyViewPreset("right");
         else if (key === "3") applyViewPreset("top");
-        else applyViewPreset("iso");
-      } else if (cmd && key === "a") {
+        else if (key === "4") applyViewPreset("iso");
+        else if (key === "5") applyViewPreset("back");
+        else if (key === "6") applyViewPreset("left");
+        else if (key === "7") applyViewPreset("bottom");
+      }
+      // Select all (Ctrl/Cmd + A)
+      else if (cmd && key === "a") {
         e.preventDefault();
         selectAllObjects();
-      } else if (key === "escape") {
+      }
+      // Deselect all (Alt + A like Blender)
+      else if (!cmd && e.altKey && key === "a") {
+        e.preventDefault();
         clearMultiSelectionIfAny();
         clearSelection();
-      } else if (key === "numpad5" || (!cmd && !e.altKey && !e.shiftKey && key === "5")) {
+      }
+      // Escape - clear selection
+      else if (key === "escape") {
+        clearMultiSelectionIfAny();
+        clearSelection();
+        // Also exit sculpt mode if active
+        if (sculptStateRef.current?.active) {
+          stopSculptingInternal();
+        }
+      }
+      // G = Grab/Move (Blender style)
+      else if (!cmd && !e.altKey && !e.shiftKey && key === "g") {
+        e.preventDefault();
+        setTransformModeState("translate");
+        if (transformRef.current) transformRef.current.setMode("translate");
+        EventBus?.emit?.("transform:mode:change", { mode: "translate" });
+      }
+      // R = Rotate (Blender style)
+      else if (!cmd && !e.altKey && !e.shiftKey && key === "r") {
+        e.preventDefault();
+        setTransformModeState("rotate");
+        if (transformRef.current) transformRef.current.setMode("rotate");
+        EventBus?.emit?.("transform:mode:change", { mode: "rotate" });
+      }
+      // S = Scale (Blender style) - but not Ctrl+S (save)
+      else if (!cmd && !e.altKey && !e.shiftKey && key === "s") {
+        e.preventDefault();
+        setTransformModeState("scale");
+        if (transformRef.current) transformRef.current.setMode("scale");
+        EventBus?.emit?.("transform:mode:change", { mode: "scale" });
+      }
+      // X = Delete (Blender style) or axis constraint
+      else if (!cmd && !e.altKey && !e.shiftKey && key === "x") {
+        // If transform is active, constrain to X axis
+        if (transformRef.current?.dragging) {
+          e.preventDefault();
+          SnapManager.setAxisConstraint(SnapManager.getAxisConstraint() === "x" ? null : "x");
+          EventBus?.emit?.("snap:axis:change", { axis: SnapManager.getAxisConstraint() });
+        } else {
+          // Otherwise delete selected (with confirmation handled by caller)
+          e.preventDefault();
+          deleteSelected();
+        }
+      }
+      // Y/Z axis constraints during transform
+      else if (!cmd && !e.altKey && !e.shiftKey && (key === "y" || key === "z")) {
+        if (transformRef.current?.dragging) {
+          e.preventDefault();
+          SnapManager.setAxisConstraint(SnapManager.getAxisConstraint() === key ? null : key);
+          EventBus?.emit?.("snap:axis:change", { axis: SnapManager.getAxisConstraint() });
+        }
+      }
+      // H = Hide selected (Blender style)
+      else if (!cmd && !e.altKey && !e.shiftKey && key === "h") {
+        e.preventDefault();
+        if (selectedInternal) {
+          selectedInternal.visible = false;
+          bumpSceneVersion("hide-object");
+          needsRenderRef.current = true;
+          EventBus?.emit?.("object:visibility:change", { object: selectedInternal, visible: false });
+        }
+      }
+      // Alt+H = Unhide all
+      else if (!cmd && e.altKey && key === "h") {
+        e.preventDefault();
+        const ug = getUserGroup();
+        if (ug) {
+          ug.traverse((obj) => {
+            if (!obj.userData.__helper && obj.visible === false) {
+              obj.visible = true;
+            }
+          });
+          bumpSceneVersion("unhide-all");
+          needsRenderRef.current = true;
+          EventBus?.emit?.("objects:unhide:all");
+        }
+      }
+      // Toggle camera type with Numpad 5 or regular 5
+      else if (key === "numpad5" || (!cmd && !e.altKey && !e.shiftKey && key === "5")) {
         e.preventDefault();
         toggleCameraType();
-      } else if (key === "numpad1" || (!cmd && !e.altKey && !e.shiftKey && key === "numpad1")) {
+      }
+      // Numpad view presets
+      else if (key === "numpad1" || (e.ctrlKey && key === "numpad1")) {
         e.preventDefault();
-        applyViewPreset("front");
-      } else if (key === "numpad3") {
+        applyViewPreset(e.ctrlKey ? "back" : "front");
+      } else if (key === "numpad3" || (e.ctrlKey && key === "numpad3")) {
         e.preventDefault();
-        applyViewPreset("right");
-      } else if (key === "numpad7") {
+        applyViewPreset(e.ctrlKey ? "left" : "right");
+      } else if (key === "numpad7" || (e.ctrlKey && key === "numpad7")) {
         e.preventDefault();
-        applyViewPreset("top");
-      } else if (e.key === "Delete") deleteSelected();
+        applyViewPreset(e.ctrlKey ? "bottom" : "top");
+      } else if (key === "numpad9") {
+        e.preventDefault();
+        applyViewPreset("iso");
+      } else if (key === "numpad0") {
+        // Numpad 0 = Camera view (if there's a camera in scene)
+        e.preventDefault();
+        const ug = getUserGroup();
+        if (ug) {
+          let sceneCamera = null;
+          ug.traverse((obj) => {
+            if (!sceneCamera && obj.isCamera) sceneCamera = obj;
+          });
+          if (sceneCamera) {
+            applyCameraState({
+              position: sceneCamera.position.clone(),
+              quaternion: sceneCamera.quaternion.clone(),
+              target: new THREE.Vector3().setFromMatrixPosition(sceneCamera.matrixWorld).add(
+                new THREE.Vector3(0, 0, -5).applyQuaternion(sceneCamera.quaternion)
+              ),
+            });
+          }
+        }
+      }
+      // Delete key
+      else if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        deleteSelected();
+      }
+      // Tab = Toggle local/world space
+      else if (!cmd && !e.altKey && !e.shiftKey && key === "tab") {
+        // Note: Don't prevent default to allow normal tab behavior when needed
+        // This is handled by ViewportControls component
+      }
+      // Shift+A = Quick Add menu (handled by Studio.jsx)
+      // This event is emitted for the parent to handle
+      else if (!cmd && e.shiftKey && key === "a") {
+        e.preventDefault();
+        EventBus?.emit?.("studio:quickadd:open");
+      }
     };
     window.addEventListener("keydown", onKeyDown);
 
@@ -1934,6 +2185,10 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
       window.removeEventListener("keydown", onKeyDown);
 
       try {
+        disableMiniRenderer();
+      } catch (e) {}
+
+      try {
         transformRef.current?.dispose?.();
       } catch (e) {}
       try {
@@ -1944,6 +2199,20 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
       } catch (e) {}
       try {
         rendererRef.current?.dispose?.();
+      } catch (e) {}
+      try {
+        rendererRef.current?.forceContextLoss?.();
+      } catch (e) {}
+      try {
+        rendererRef.current = null;
+      } catch (e) {}
+
+      // Remove the dynamically created canvas
+      try {
+        if (canvasRef.current && canvasRef.current.parentNode) {
+          canvasRef.current.parentNode.removeChild(canvasRef.current);
+        }
+        canvasRef.current = null;
       } catch (e) {}
 
       try {
@@ -2010,6 +2279,97 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
       } catch (e) {}
     }
   }, [transformMode]);
+
+  // Keep transform space in sync (world/local)
+  useEffect(() => {
+    if (transformRef.current) {
+      try {
+        transformRef.current.setSpace(transformSpace);
+      } catch (e) {}
+    }
+  }, [transformSpace]);
+
+  // Set transform space (world or local)
+  const setTransformSpace = useCallback((space) => {
+    if (space !== "world" && space !== "local") return;
+    setTransformSpaceState(space);
+    if (transformRef.current) {
+      try {
+        transformRef.current.setSpace(space);
+      } catch (e) {}
+    }
+    needsRenderRef.current = true;
+    EventBus?.emit?.("transform:space:change", { space });
+  }, []);
+
+  // Toggle transform space
+  const toggleTransformSpace = useCallback(() => {
+    const newSpace = transformSpace === "world" ? "local" : "world";
+    setTransformSpace(newSpace);
+    return newSpace;
+  }, [transformSpace, setTransformSpace]);
+
+  // Set viewport shading mode
+  const setViewportShading = useCallback((mode) => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+
+    const validModes = ["solid", "wireframe", "material", "rendered"];
+    if (!validModes.includes(mode)) return;
+
+    const previousMode = viewportShading;
+    setViewportShadingState(mode);
+
+    // Restore materials if coming from wireframe
+    if (previousMode === "wireframe" && mode !== "wireframe") {
+      wireframeMaterialsRef.current.forEach((originalMaterial, mesh) => {
+        if (mesh && !mesh.userData.__disposed) {
+          mesh.material = originalMaterial;
+        }
+      });
+      wireframeMaterialsRef.current.clear();
+    }
+
+    const userGroup = scene.getObjectByName("__userGroup");
+    if (!userGroup) return;
+
+    userGroup.traverse((obj) => {
+      if (!obj.isMesh || obj.userData.__helper) return;
+
+      if (mode === "wireframe") {
+        // Store original material and apply wireframe
+        if (!wireframeMaterialsRef.current.has(obj)) {
+          wireframeMaterialsRef.current.set(obj, obj.material);
+        }
+        const wireframeMat = new THREE.MeshBasicMaterial({
+          color: 0x444444,
+          wireframe: true,
+          transparent: true,
+          opacity: 0.8,
+        });
+        obj.material = wireframeMat;
+      } else if (mode === "solid") {
+        // Basic lambert shading without textures
+        const color = obj.userData.__originalColor || 
+          (obj.material?.color ? obj.material.color.getHex() : 0x888888);
+        obj.userData.__originalColor = color;
+        // Keep material but reduce complexity for solid view
+        if (obj.material?.isMeshStandardMaterial) {
+          obj.material.envMapIntensity = 0;
+          obj.material.roughness = 0.8;
+          obj.material.metalness = 0;
+        }
+      } else if (mode === "material" || mode === "rendered") {
+        // Full material preview / rendered
+        if (obj.material?.isMeshStandardMaterial) {
+          obj.material.envMapIntensity = mode === "rendered" ? 1 : 0.5;
+        }
+      }
+    });
+
+    needsRenderRef.current = true;
+    EventBus?.emit?.("viewport:shading:change", { mode, previous: previousMode });
+  }, [viewportShading]);
 
   // ---------- Selection ----------
   const selectObject = (obj) => {
@@ -4117,6 +4477,11 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
     redo,
     deleteSelected,
     setTransformMode: (mode) => setTransformModeState(mode),
+    setTransformSpace,
+    toggleTransformSpace,
+    setViewportShading,
+    getTransformSpace: () => transformSpace,
+    getViewportShading: () => viewportShading,
     serializeScene,
     loadFromData,
     resetScene,
@@ -4959,8 +5324,44 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
   // ---------- Render ----------
   return (
     <div ref={setContainerNode} className="relative flex-1 w-full h-full overflow-hidden" data-objekta-root>
-      {/* main canvas */}
-      <canvas ref={canvasRef} className="w-full h-full" />
+      {/* canvas is created dynamically in useEffect to avoid stale WebGL context issues */}
+
+      {webglError && (
+        <div
+          role="alert"
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "rgba(0,0,0,0.65)",
+            zIndex: 200,
+          }}
+        >
+          <div
+            style={{
+              background: "rgba(20,20,20,0.92)",
+              color: "#eee",
+              padding: 16,
+              borderRadius: 10,
+              border: "1px solid rgba(255,255,255,0.15)",
+              maxWidth: 420,
+              textAlign: "center",
+            }}
+          >
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>WebGL unavailable</div>
+            <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 12 }}>{webglError}</div>
+            <button
+              className="studio-btn"
+              style={{ padding: "6px 10px", minHeight: 28 }}
+              onClick={() => window.location.reload()}
+            >
+              Reload
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* GPU / performance panel removed */}
       {/* Resolution controls removed — viewport scale forced to 100% */}

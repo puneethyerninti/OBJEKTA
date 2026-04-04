@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { usePageTitle } from '../hooks/usePageTitle';
+import '../styles/PremiumPages.css';
 
 export default function Login() {
+  usePageTitle("Login");
   const { login } = useAuth() || {};
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

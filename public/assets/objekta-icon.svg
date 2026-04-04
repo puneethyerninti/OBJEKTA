@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="iconGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7f5af0"/>
+      <stop offset="50%" stop-color="#ff47a3"/>
+      <stop offset="100%" stop-color="#00d7ff"/>
+    </linearGradient>
+    <filter id="iconGlow">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Main 3D shapes representing objects -->
+  <!-- Left pyramid -->
+  <polygon points="20,50 30,25 40,50 30,60" fill="url(#iconGradient)" opacity="0.9" filter="url(#iconGlow)"/>
+
+  <!-- Center cube -->
+  <g filter="url(#iconGlow)">
+    <polygon points="45,30 60,30 65,45 50,45" fill="url(#iconGradient)" opacity="1"/>
+    <polygon points="50,45 65,45 60,60 45,60" fill="url(#iconGradient)" opacity="0.75"/>
+    <polygon points="45,30 50,45 45,60 30,45" fill="url(#iconGradient)" opacity="0.6"/>
+  </g>
+
+  <!-- Right sphere-like shape -->
+  <circle cx="75" cy="50" r="15" fill="url(#iconGradient)" opacity="0.85" filter="url(#iconGlow)"/>
+  <circle cx="72" cy="47" r="5" fill="#00d7ff" opacity="0.4"/>
+
+  <!-- Connecting lines suggesting connectivity -->
+  <line x1="40" y1="50" x2="45" y2="45" stroke="url(#iconGradient)" stroke-width="1.5" opacity="0.5"/>
+  <line x1="65" y1="45" x2="60" y2="50" stroke="url(#iconGradient)" stroke-width="1.5" opacity="0.5"/>
+</svg>

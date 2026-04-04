@@ -1,6 +1,7 @@
 // src/pages/marketplace/SellerDashboard.jsx
 import React, { useEffect, useState } from "react";
 import { Navigate, Link } from "react-router-dom";
+import { usePageTitle } from "../../hooks/usePageTitle";
 import { useAuth } from "../../contexts/AuthContext";
 import { useMarketplaceStore } from "../../store/MarketplaceStore";
 import Breadcrumbs from "../../components/marketplace/Breadcrumbs";
@@ -22,6 +23,7 @@ const CATEGORIES = [
 ];
 
 export default function SellerDashboard() {
+  usePageTitle("Seller Dashboard");
   const { user } = useAuth();
   const {
     sellerProducts,

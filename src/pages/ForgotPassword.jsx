@@ -1,11 +1,14 @@
 // src/pages/ForgotPassword.jsx
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
+import { usePageTitle } from "../hooks/usePageTitle";
 import { API_BASE } from "../utils/api";
+import "../styles/PremiumPages.css";
 
 const API_URL = API_BASE;
 
 export default function ForgotPassword() {
+  usePageTitle("Forgot Password");
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);

@@ -6,6 +6,7 @@ import Modal from "../components/Modal/Modal";
 import Toasts from "../components/Toasts";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { usePageTitle } from "../hooks/usePageTitle";
 import "../styles/dashboard.css";
 import { API_BASE, apiUrl } from "../utils/api";
 import {
@@ -35,6 +36,7 @@ if (typeof document !== 'undefined') {
 }
 
 export default function Dashboard() {
+  usePageTitle("Dashboard");
   const { user, logout, authFetch } = useAuth() || {};
   const navigate = useNavigate();
 
@@ -341,30 +343,38 @@ export default function Dashboard() {
   }, [fetchDashboard]);
 
   // Scenes
-  const fetchScenes = useCallback(async () => {
+  const fetchScenes = useCallback(async (signal) => {
+    if (!user) return;
     setScenesLoading(true);
     try {
-      const res = await doFetch("/api/scenes");
+      const res = await doFetch("/api/scenes", { signal });
+      if (res?.aborted) return;
       if (!res.ok) throw new Error("scenes fetch failed");
       const data = res.data;
       setScenes(Array.isArray(data) ? data : []);
     } catch (err) {
+      if (err?.name === "AbortError" || signal?.aborted) return;
       console.warn("fetchScenes failed", err);
       setScenes([]);
     } finally {
-      setScenesLoading(false);
+      if (!signal?.aborted) setScenesLoading(false);
     }
-  }, [doFetch]);
+  }, [doFetch, user]);
 
   useEffect(() => {
+    if (!user) {
+      setScenes([]);
+      setScenesLoading(false);
+      return;
+    }
+    const ac = new AbortController();
     (async () => {
       try {
-        await fetchScenes();
+        await fetchScenes(ac.signal);
       } catch (e) {}
     })();
-    // run once on mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    return () => ac.abort();
+  }, [user, fetchScenes]);
 
   // Socket init & handlers (dynamic import)
   useEffect(() => {

@@ -6,6 +6,7 @@ import { PerspectiveCamera } from '@react-three/drei';
 import Effects from './Effects';
 import VolumetricTunnel from './Background/VolumetricTunnel';
 import GalaxyBackground from './Background/GalaxyBackground';
+import { useLocation } from 'react-router-dom';
 
 export default function Scene() {
   const [effectsEnabled, setEffectsEnabled] = useState(false);
@@ -13,7 +14,12 @@ export default function Scene() {
   const [useGalaxyBackground, setUseGalaxyBackground] = useState(true);
   const [ready, setReady] = useState(false);
   const wrapRef = useRef(null);
+  const glRef = useRef(null);
   const safeDpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
+  
+  // Don't render the WebGL canvas on studio page to avoid context conflicts
+  const location = useLocation();
+  const isStudioPage = location.pathname.startsWith('/studio');
 
   useEffect(() => {
     const tunnelEnabled =
@@ -32,13 +38,36 @@ export default function Scene() {
         (typeof window !== 'undefined' && !!window.__OBJEKTA_DISABLE_POSTFX) ||
         (typeof import.meta !== 'undefined' && import.meta.env && String(import.meta.env.VITE_DISABLE_POSTFX) === 'true');
       setEffectsEnabled(!!gl2 && !disable);
+      // Release the test context to avoid leaking WebGL contexts
+      if (gl2) {
+        const ext = gl2.getExtension('WEBGL_lose_context');
+        if (ext) ext.loseContext();
+      }
     } catch (_) {
       setEffectsEnabled(false);
     }
   }, []);
+  
+  // Cleanup WebGL context on unmount to free resources for other canvases
+  useEffect(() => {
+    return () => {
+      if (glRef.current) {
+        try {
+          glRef.current.dispose?.();
+          glRef.current.forceContextLoss?.();
+        } catch (e) {
+          console.debug('[Scene] Cleanup error', e);
+        }
+        glRef.current = null;
+      }
+    };
+  }, []);
 
   // Smooth fade-in after first render frame
   const handleCreated = useCallback(({ gl }) => {
+    // Store reference for cleanup
+    glRef.current = gl;
+    
     try {
       gl.setClearColor(0x000000, 0);
     } catch (e) {
@@ -77,6 +106,9 @@ export default function Scene() {
       requestAnimationFrame(() => setReady(true));
     });
   }, []);
+  
+  // Don't render on studio page - return after all hooks
+  if (isStudioPage) return null;
 
   return (
     <div

@@ -1,0 +1,246 @@
+/* OTP Login Modal Styles */
+
+.otp-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  animation: fadeInOTP 0.2s ease-out;
+}
+
+@keyframes fadeInOTP {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.otp-modal-content {
+  background: linear-gradient(135deg, #0a0814 0%, #1a0f2e 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 40px;
+  max-width: 420px;
+  width: 90%;
+  position: relative;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  animation: slideInOTP 0.3s ease-out;
+}
+
+@keyframes slideInOTP {
+  from {
+    transform: scale(0.95) translateY(10px);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+}
+
+.otp-modal-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.otp-modal-close:hover {
+  background: rgba(127, 90, 240, 0.2);
+  color: #7f5af0;
+}
+
+.otp-step {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.otp-step h2 {
+  font-size: 24px;
+  font-weight: 700;
+  color: #fff;
+  margin: 0;
+  background: linear-gradient(135deg, #7f5af0, #ff47a3);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.otp-subtitle {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 14px;
+  margin: 0;
+}
+
+.otp-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.otp-input {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-size: 16px;
+  color: #fff;
+  transition: all 0.2s ease;
+}
+
+.otp-input::placeholder {
+  color: rgba(255, 255, 255, 0.3);
+}
+
+.otp-input:focus {
+  outline: none;
+  border-color: #7f5af0;
+  background: rgba(127, 90, 240, 0.1);
+}
+
+.otp-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.otp-code-input {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 8px;
+  text-align: center;
+  font-family: 'Courier New', monospace;
+}
+
+.otp-timer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: rgba(0, 215, 255, 0.1);
+  border: 1px solid rgba(0, 215, 255, 0.3);
+  border-radius: 8px;
+  color: #00d7ff;
+  font-size: 14px;
+  font-weight: 500;
+  animation: pulse 1s infinite;
+}
+
+.otp-timer.warning {
+  background: rgba(255, 152, 62, 0.1);
+  border-color: rgba(255, 152, 62, 0.3);
+  color: #ff9a3e;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.otp-dev-hint {
+  padding: 10px 12px;
+  background: rgba(180, 255, 58, 0.1);
+  border: 1px solid rgba(180, 255, 58, 0.3);
+  border-radius: 6px;
+  color: #b4ff3a;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  font-family: 'Courier New', monospace;
+}
+
+.otp-button {
+  background: linear-gradient(135deg, #7f5af0, #ff47a3);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 12px 24px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.otp-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(127, 90, 240, 0.4);
+}
+
+.otp-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.otp-error {
+  padding: 10px 12px;
+  background: rgba(255, 71, 163, 0.1);
+  border: 1px solid rgba(255, 71, 163, 0.3);
+  border-radius: 6px;
+  color: #ff47a3;
+  font-size: 13px;
+  animation: slideInOTP 0.2s ease-out;
+}
+
+.otp-help {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  margin: 0;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.otp-back-btn {
+  background: transparent;
+  color: #7f5af0;
+  border: 1px solid rgba(127, 90, 240, 0.3);
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-weight: 500;
+}
+
+.otp-back-btn:hover {
+  background: rgba(127, 90, 240, 0.1);
+  border-color: #7f5af0;
+}
+
+.otp-success {
+  text-align: center;
+  gap: 16px;
+}
+
+.otp-success-icon {
+  width: 48px;
+  height: 48px;
+  color: #b4ff3a;
+  animation: slideInOTP 0.4s ease-out;
+}
+
+.otp-success h2 {
+  background: linear-gradient(135deg, #b4ff3a, #00d7ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}

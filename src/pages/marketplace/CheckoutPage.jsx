@@ -1,5 +1,6 @@
 // src/pages/marketplace/CheckoutPage.jsx
 import React, { useEffect } from "react";
+import { usePageTitle } from "../../hooks/usePageTitle";
 import { useMarketplaceStore } from "../../store/MarketplaceStore";
 import Breadcrumbs from "../../components/marketplace/Breadcrumbs";
 import CheckoutForm from "../../components/marketplace/CheckoutForm";
@@ -9,6 +10,7 @@ import { Lock } from "lucide-react";
 import "../../styles/marketplace.css";
 
 export default function CheckoutPage() {
+  usePageTitle("Checkout");
   const { user } = useAuth();
   const { cart, fetchCart } = useMarketplaceStore();
 

@@ -1,11 +1,14 @@
 // src/pages/VerifyEmail.jsx
 import React, { useEffect, useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
+import { usePageTitle } from "../hooks/usePageTitle";
 import { API_BASE } from "../utils/api";
+import "../styles/PremiumPages.css";
 
 const API_URL = API_BASE;
 
 export default function VerifyEmail() {
+  usePageTitle("Verify Email");
   const [params] = useSearchParams();
   const token = params.get("token");
   const [status, setStatus] = useState("verifying"); // verifying | success | error

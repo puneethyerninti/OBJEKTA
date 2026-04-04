@@ -1,5 +1,5 @@
 // src/App.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
@@ -159,11 +159,24 @@ function AppInit() {
   // runs inside Router and AuthProvider
   const { authWithProvider } = useAuth();
   const navigate = useNavigate();
+  const gsiInitRef = useRef(false);
 
   useEffect(() => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || window.__GOOGLE_CLIENT_ID__;
     if (!clientId) return;
     if (!window.google || !window.google.accounts) return;
+
+    const renderButtonOnce = () => {
+      const placeholder = document.getElementById('g_id_signin');
+      if (!placeholder) return;
+      if (placeholder.dataset.gsiRendered === 'true') return;
+      try {
+        window.google.accounts.id.renderButton(placeholder, { theme: 'outline', size: 'large' });
+        placeholder.dataset.gsiRendered = 'true';
+      } catch (e) {
+        console.debug('Google ID button render skipped', e);
+      }
+    };
 
     const handleCredentialResponse = async (response) => {
       const idToken = response?.credential;
@@ -176,17 +189,19 @@ function AppInit() {
       }
     };
 
+    if (window.__OBJEKTA_GSI_INITIALIZED || gsiInitRef.current) {
+      renderButtonOnce();
+      return;
+    }
+
     try {
       window.google.accounts.id.initialize({
         client_id: clientId,
         callback: handleCredentialResponse,
       });
-
-      // render a default button into any placeholder with id 'g_id_signin'
-      const placeholder = document.getElementById('g_id_signin');
-      if (placeholder) {
-        window.google.accounts.id.renderButton(placeholder, { theme: 'outline', size: 'large' });
-      }
+      window.__OBJEKTA_GSI_INITIALIZED = true;
+      gsiInitRef.current = true;
+      renderButtonOnce();
     } catch (e) {
       console.debug('Google ID initialization skipped', e);
     }

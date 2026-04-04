@@ -1120,3 +1120,107 @@ canvas, model-viewer { position: relative; z-index: 1; }
   background: rgba(127,90,240,0.35);
 }
 .floating-fab:active { transform: scale(0.95); }
+
+/* ── Viewport Labs ────────────────────────────────────── */
+.viewport-labs {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: calc(var(--z-panel) + 80);
+}
+.reference-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+.reference-overlay__image {
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  mix-blend-mode: screen;
+}
+.viewport-labs-panel {
+  position: absolute;
+  left: 12px;
+  top: 46px;
+  width: 240px;
+  background: rgba(12,10,18,0.9);
+  border: 1px solid rgba(127,90,240,0.2);
+  border-radius: 8px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: auto;
+  z-index: 2;
+  box-shadow: 0 10px 24px rgba(0,0,0,0.45);
+}
+.viewport-labs-panel.is-collapsed {
+  width: auto;
+  padding: 6px 8px;
+}
+.viewport-labs-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.viewport-labs-panel__title {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+.viewport-labs-panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.labs-section {
+  background: rgba(0,0,0,0.25);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 6px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.labs-section__title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-light);
+}
+.labs-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.labs-row--slider label,
+.labs-row--color label {
+  width: 54px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.labs-row--slider input[type="range"] {
+  flex: 1 1 auto;
+}
+.labs-row--color input[type="color"] {
+  width: 28px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+.labs-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.viewport-labs-panel__meta {
+  font-size: 10px;
+  color: var(--text-muted);
+}

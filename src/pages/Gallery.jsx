@@ -2,6 +2,8 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { usePageTitle } from "../hooks/usePageTitle";
+import "../styles/PremiumPages.css";
 
 const GALLERY_ITEMS = [
   {
@@ -80,6 +82,7 @@ const GALLERY_FILTERS = [
 ];
 
 export default function Gallery() {
+  usePageTitle("Gallery");
   const [selectedFilter, setSelectedFilter] = useState("All");
   const cardsRef = useRef([]);
   const { user } = useAuth();
@@ -108,36 +111,20 @@ export default function Gallery() {
       : GALLERY_ITEMS.filter((item) => item.tag === selectedFilter);
 
   return (
-    <div className="site-wrapper">
-      <main className="home-shell">
-        {/* Hero */}
-        <section className="text-center" style={{ animation: "fadeInUp 0.7s ease-out" }}>
-          <span className="hero-badge-top">Scene Gallery</span>
-          <h1 className="hero-title" style={{ marginTop: "1.5rem", marginBottom: "1.5rem" }}>
-            Creative <span className="title-gradient">Showcase</span>
-          </h1>
-          <p className="hero-subtitle" style={{ maxWidth: "700px", margin: "0 auto 2rem" }}>
+    <div className="site-wrapper gallery-page-premium">
+      <main className="gallery-main-premium">
+        {/* Hero Section */}
+        <section className="gallery-header-premium">
+          <h1>Creative <span className="gradient-text">Showcase</span></h1>
+          <p>
             Browse curated 3D scenes built and reviewed in Objekta — from product visualization and
             automotive design to character rigs and immersive environments.
           </p>
-          <div className="hero-actions" style={{ justifyContent: "center" }}>
-            <button
-              onClick={() => navigate(user ? "/dashboard" : "/login")}
-              className="cta-button cta-primary"
-              data-magnetic="0.15"
-            >
-              {user ? "Upload Your Work" : "Start Creating"}
-            </button>
-            <Link to="/projects" className="cta-button cta-secondary" data-magnetic="0.1">
-              View Projects
-            </Link>
-          </div>
         </section>
 
         {/* Filter Bar */}
         <section
           className="gallery-filter-bar"
-          style={{ animation: "fadeInUp 0.85s ease-out" }}
           aria-label="Filter by category"
         >
           {GALLERY_FILTERS.map((filter) => (
@@ -153,7 +140,7 @@ export default function Gallery() {
         </section>
 
         {/* Gallery Grid */}
-        <section className="gallery-grid">
+        <section className="gallery-grid-premium">
           <p className="sr-only" aria-live="polite">
             Showing {filteredItems.length} gallery {filteredItems.length === 1 ? "item" : "items"}.
           </p>
@@ -161,35 +148,31 @@ export default function Gallery() {
             <article
               key={item.title}
               ref={(el) => (cardsRef.current[idx] = el)}
-              className={`gallery-card panel-glass showcase-card gallery-accent-${item.accent}`}
-              data-tilt="4"
+              className="gallery-card-premium"
             >
               {/* Thumbnail */}
               <div
-                className="gallery-card-thumb"
+                className="gallery-card-image-premium"
                 style={{
                   backgroundImage: item.poster ? `url(${item.poster})` : item.gradient,
-                  backgroundSize: "cover",
-                  backgroundPosition: "center",
                 }}
               />
 
               {/* Card Body */}
-              <div className="gallery-card-body">
-                <span className="gallery-card-tag">{item.tag}</span>
-                <h3 className="gallery-card-title">{item.title}</h3>
-                <p className="gallery-card-desc">{item.desc}</p>
+              <div className="gallery-card-content-premium">
+                <span className="gallery-card-tag-premium">{item.tag}</span>
+                <h3 className="gallery-card-title-premium">{item.title}</h3>
+                <p className="gallery-card-desc-premium">{item.desc}</p>
               </div>
             </article>
           ))}
           {filteredItems.length === 0 && (
-            <article className="gallery-empty panel-glass">
-              <h3>No scenes in this category</h3>
-              <p>Try a different filter or upload a new scene from the studio.</p>
+            <article style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '3rem' }}>
+              <h3 style={{ color: 'white', marginBottom: '1rem' }}>No scenes in this category</h3>
+              <p style={{ color: 'rgba(255,255,255,0.6)', marginBottom: '2rem' }}>Try a different filter or upload a new scene from the studio.</p>
               <button
                 onClick={() => setSelectedFilter("All")}
-                className="cta-button cta-secondary"
-                data-magnetic="0.1"
+                className="btn btn-secondary"
               >
                 View All Scenes
               </button>
@@ -197,25 +180,22 @@ export default function Gallery() {
           )}
         </section>
 
-        {/* CTA */}
-        <section className="panel-glass neon-rim gallery-cta-panel">
-          <h2 className="section-title" style={{ marginBottom: "1rem" }}>
-            Want to feature your work?
-          </h2>
-          <p className="section-subtitle" style={{ marginBottom: "2rem", maxWidth: "600px", margin: "0 auto 2rem" }}>
+        {/* CTA Section */}
+        <section className="about-cta" style={{ marginTop: '4rem' }}>
+          <h2>Want to feature your work?</h2>
+          <p>
             Build a scene in Objekta and share it with the community — the best submissions are featured here.
           </p>
-          <div className="hero-actions" style={{ justifyContent: "center" }}>
+          <div className="cta-actions">
             <button
               onClick={() => navigate(user ? "/dashboard" : "/login")}
-              className="cta-button cta-primary"
-              data-magnetic="0.18"
+              className="btn btn-primary btn-lg"
             >
               {user ? "Open Studio" : "Join Now"}
             </button>
-            <Link to="/projects" className="cta-button cta-secondary" data-magnetic="0.1">
+            <a href="/projects" className="btn btn-secondary btn-lg">
               View All Projects
-            </Link>
+            </a>
           </div>
         </section>
       </main>

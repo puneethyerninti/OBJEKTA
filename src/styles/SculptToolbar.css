@@ -6,7 +6,7 @@
 .sculpt-toolbar {
   position: fixed;
   z-index: var(--z-toolbar, 300);
-  right: 16px;
+  right: calc(var(--props-panel-width, 300px) + 16px);
   top: 72px;
   width: 260px;
   background: var(--panel-bg, rgba(10, 6, 18, 0.65));

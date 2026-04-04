@@ -248,7 +248,31 @@ async def _anthropic_chat(messages: list[dict], *, model: str = "", max_tokens: 
     return {"text": text, "provider": "anthropic", "model": model}
 
 
+async def _ollama_chat(messages: list[dict], *, model: str = "", max_tokens: int = 1024, temperature: float = 0.7) -> dict:
+    model = model or os.getenv("AI_MODEL", "gpt-oss:20b")
+    host = (os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434") or "http://127.0.0.1:11434").rstrip("/")
+
+    body = {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+        "options": {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+        },
+    }
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.post(f"{host}/api/chat", json=body)
+        r.raise_for_status()
+        data = r.json()
+
+    text = ((data.get("message") or {}).get("content")) or data.get("response", "")
+    return {"text": text, "provider": "ollama", "model": model}
+
+
 PROVIDER_MAP = {
+    "ollama": _ollama_chat,
     "groq": _groq_chat,
     "gemini": _gemini_chat,
     "openai": _openai_chat,
@@ -256,6 +280,7 @@ PROVIDER_MAP = {
 }
 
 PROVIDER_KEY_MAP = {
+    "ollama": None,
     "groq": "GROQ_API_KEY",
     "gemini": "GEMINI_API_KEY",
     "openai": "OPENAI_API_KEY",
@@ -264,7 +289,15 @@ PROVIDER_KEY_MAP = {
 
 
 def _available_providers() -> list[str]:
-    return [name for name, env in PROVIDER_KEY_MAP.items() if os.getenv(env)]
+    available = []
+    if os.getenv("AI_PROVIDER", "").lower() == "ollama" or os.getenv("OLLAMA_HOST"):
+        available.append("ollama")
+    for name, env in PROVIDER_KEY_MAP.items():
+        if not env:
+            continue
+        if os.getenv(env):
+            available.append(name)
+    return available
 
 
 async def _chat_with_fallback(
@@ -280,11 +313,15 @@ async def _chat_with_fallback(
     if forced and forced in PROVIDER_MAP:
         return await PROVIDER_MAP[forced](messages, model=model, max_tokens=max_tokens, temperature=temperature)
 
-    order = ["groq", "gemini", "openai", "anthropic"]
+    order = ["ollama", "groq", "gemini", "openai", "anthropic"]
     errors = []
     for name in order:
-        if not os.getenv(PROVIDER_KEY_MAP.get(name, "")):
-            continue
+        if name == "ollama":
+            if os.getenv("AI_PROVIDER", "").lower() != "ollama" and not os.getenv("OLLAMA_HOST"):
+                continue
+        else:
+            if not os.getenv(PROVIDER_KEY_MAP.get(name, "")):
+                continue
         try:
             return await PROVIDER_MAP[name](messages, model=model, max_tokens=max_tokens, temperature=temperature)
         except Exception as e:
@@ -292,7 +329,7 @@ async def _chat_with_fallback(
 
     if errors:
         raise HTTPException(status_code=502, detail=f"All AI providers failed:\n" + "\n".join(errors))
-    raise HTTPException(status_code=503, detail="No AI provider configured. Set GROQ_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY.")
+    raise HTTPException(status_code=503, detail="No AI provider configured. Set AI_PROVIDER=ollama (or OLLAMA_HOST) for local Ollama, or configure cloud API keys.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

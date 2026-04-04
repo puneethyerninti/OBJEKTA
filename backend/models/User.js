@@ -20,6 +20,11 @@ const userSchema = new mongoose.Schema({
   resetPasswordToken: { type: String, default: null },
   resetPasswordExpires: { type: Date, default: null },
 
+  // OTP for passwordless/2FA login (6 digits, 30 sec expiry)
+  loginOTP: { type: String, default: null },
+  loginOTPExpires: { type: Date, default: null },
+  otpAttempts: { type: Number, default: 0 }, // Rate limiting
+
   // Refresh tokens (store hashed tokens for rotation)
   refreshTokens: [{ token: String, expiresAt: Date, createdAt: { type: Date, default: Date.now } }],
 
@@ -112,6 +117,33 @@ userSchema.methods.verifyBackupCode = function (code) {
   if (idx === -1) return false;
   this.twoFactorBackupCodes.splice(idx, 1); // consume the code
   return true;
+};
+
+// Generate OTP (6 digits, 30 second expiry)
+userSchema.methods.generateLoginOTP = function () {
+  const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6 digits
+  this.loginOTP = crypto.createHash("sha256").update(otp).digest("hex");
+  this.loginOTPExpires = new Date(Date.now() + 30 * 1000); // 30 seconds
+  this.otpAttempts = 0;
+  return otp; // Return plaintext OTP to send via email/SMS
+};
+
+// Verify OTP
+userSchema.methods.verifyLoginOTP = function (otp) {
+  if (!this.loginOTP || !this.loginOTPExpires) return false;
+  if (this.loginOTPExpires < new Date()) return false; // Expired
+  if (this.otpAttempts >= 5) return false; // Rate limit
+
+  const hashed = crypto.createHash("sha256").update(otp).digest("hex");
+  this.otpAttempts += 1;
+
+  if (hashed === this.loginOTP) {
+    this.loginOTP = null;
+    this.loginOTPExpires = null;
+    this.otpAttempts = 0;
+    return true;
+  }
+  return false;
 };
 
 module.exports = mongoose.model("User", userSchema);

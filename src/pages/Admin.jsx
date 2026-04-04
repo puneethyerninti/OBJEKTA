@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
+import { usePageTitle } from "../hooks/usePageTitle";
 
 const ROLES = ["buyer", "seller", "admin"];
 
@@ -18,6 +19,7 @@ function StatCard({ label, value, color = "#7f5af0" }) {
 }
 
 export default function Admin() {
+  usePageTitle("Admin");
   const { user, authFetch } = useAuth();
   const navigate = useNavigate();
   const [stats, setStats] = useState(null);

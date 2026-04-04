@@ -1,6 +1,7 @@
 // src/pages/marketplace/OrderTracking.jsx
 import React, { useEffect } from "react";
 import { useParams, Link, Navigate } from "react-router-dom";
+import { usePageTitle } from "../../hooks/usePageTitle";
 import { useMarketplaceStore } from "../../store/MarketplaceStore";
 import { useAuth } from "../../contexts/AuthContext";
 import Breadcrumbs from "../../components/marketplace/Breadcrumbs";
@@ -9,6 +10,7 @@ import { Package, Download, ArrowLeft } from "lucide-react";
 import "../../styles/marketplace.css";
 
 export default function OrderTracking() {
+  usePageTitle("Order Tracking");
   const { orderId } = useParams();
   const { user } = useAuth();
   const { currentOrder, fetchOrderDetail, ordersLoading } = useMarketplaceStore();

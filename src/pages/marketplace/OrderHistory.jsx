@@ -1,6 +1,7 @@
 // src/pages/marketplace/OrderHistory.jsx
 import React, { useEffect, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
+import { usePageTitle } from "../../hooks/usePageTitle";
 import { useMarketplaceStore } from "../../store/MarketplaceStore";
 import { useAuth } from "../../contexts/AuthContext";
 import Breadcrumbs from "../../components/marketplace/Breadcrumbs";
@@ -17,6 +18,7 @@ const STATUS_ICON = {
 };
 
 export default function OrderHistory() {
+  usePageTitle("Order History");
   const { user, authFetch } = useAuth();
   const { orders, ordersLoading, fetchOrders } = useMarketplaceStore();
   const [expandedOrder, setExpandedOrder] = useState(null);

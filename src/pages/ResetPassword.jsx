@@ -1,11 +1,14 @@
 // src/pages/ResetPassword.jsx
 import React, { useState } from "react";
 import { useSearchParams, Link, useNavigate } from "react-router-dom";
+import { usePageTitle } from "../hooks/usePageTitle";
 import { API_BASE } from "../utils/api";
+import "../styles/PremiumPages.css";
 
 const API_URL = API_BASE;
 
 export default function ResetPassword() {
+  usePageTitle("Reset Password");
   const [params] = useSearchParams();
   const token = params.get("token");
   const navigate = useNavigate();

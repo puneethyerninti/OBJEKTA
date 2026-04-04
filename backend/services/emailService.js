@@ -84,4 +84,25 @@ function resetPasswordEmail(name, resetUrl) {
   };
 }
 
-module.exports = { sendEmail, verificationEmail, resetPasswordEmail };
+/**
+ * Build an OTP login email.
+ */
+function otpEmail(name, otp) {
+  return {
+    subject: "Your OBJEKTA Login Code",
+    html: `
+      <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px;">
+        <h2 style="color:#7f5af0;">Login Code for OBJEKTA</h2>
+        <p>Hi ${name}, your one-time password is:</p>
+        <div style="background:#f5f5f5;padding:20px;border-radius:8px;text-align:center;margin:16px 0;">
+          <span style="font-family:'Courier New',monospace;font-size:32px;font-weight:700;letter-spacing:4px;color:#7f5af0;">${otp}</span>
+        </div>
+        <p style="text-align:center;color:#888;">This code expires in 30 seconds</p>
+        <p style="margin-top:16px;color:#888;font-size:12px;">If you didn't request this, ignore this email. Never share your code with anyone.</p>
+      </div>
+    `,
+    text: `Your OBJEKTA login code is: ${otp} (expires in 30 seconds)`,
+  };
+}
+
+module.exports = { sendEmail, verificationEmail, resetPasswordEmail, otpEmail };

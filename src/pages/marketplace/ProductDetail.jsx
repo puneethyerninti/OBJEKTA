@@ -1,6 +1,7 @@
 // src/pages/marketplace/ProductDetail.jsx
 import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
+import { usePageTitle } from "../../hooks/usePageTitle";
 import { useMarketplaceStore } from "../../store/MarketplaceStore";
 import Breadcrumbs from "../../components/marketplace/Breadcrumbs";
 import StarRating from "../../components/marketplace/StarRating";
@@ -21,6 +22,7 @@ import ModelPreview3D from "../../components/marketplace/ModelPreview3D";
 import "../../styles/marketplace.css";
 
 export default function ProductDetail() {
+  usePageTitle("Product");
   const { idOrSlug } = useParams();
   const { productDetail, productsLoading, fetchProductDetail, addToCart, cart } =
     useMarketplaceStore();

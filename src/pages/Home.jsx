@@ -2,6 +2,7 @@
 // PREMIUM: Figma-grade landing page with glassmorphism, micro-interactions, 3D showcase
 import React, { useCallback, useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { usePageTitle } from "../hooks/usePageTitle";
 import HologramModal from "../components/HologramModal";
 import PreviewGLTF from "../components/PreviewGLTF";
 import Scene from "../components/Scene";
@@ -12,6 +13,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { useAuth } from "../contexts/AuthContext";
 import { assetUrl } from "../utils/assets";
+import "../styles/PremiumPages.css";
 import "../index.css";
 
 const FEATURE_ITEMS = [
@@ -155,6 +157,7 @@ const createPreviewLoader = () => {
 
 
 export default function Home() {
+  usePageTitle();
   const navigate = useNavigate();
   const { user } = useAuth();
   const [saveData, setSaveData] = useState(false);

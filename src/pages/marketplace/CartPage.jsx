@@ -1,12 +1,14 @@
 // src/pages/marketplace/CartPage.jsx
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { usePageTitle } from "../../hooks/usePageTitle";
 import { useMarketplaceStore } from "../../store/MarketplaceStore";
 import Breadcrumbs from "../../components/marketplace/Breadcrumbs";
 import { ShoppingBag, Trash2, Minus, Plus } from "lucide-react";
 import "../../styles/marketplace.css";
 
 export default function CartPage() {
+  usePageTitle("Shopping Cart");
   const { cart, fetchCart, removeFromCart, updateCartItem, clearCart, cartLoading } =
     useMarketplaceStore();
 

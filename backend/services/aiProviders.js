@@ -4,10 +4,11 @@
 // a messages array [{role, content}] and returns { text, provider, model }.
 //
 // Supported (in priority order):
-//   1. Groq          — free tier, fast (Llama 3 / Mixtral)
-//   2. Google Gemini  — free tier (gemini-1.5-flash)
-//   3. OpenAI         — paid (gpt-4o-mini / gpt-4o)
-//   4. Anthropic      — paid (claude-3.5-sonnet)
+//   1. Ollama        — local models (no API key)
+//   2. Groq          — free tier, fast (Llama 3 / Mixtral)
+//   3. Google Gemini — free tier
+//   4. OpenAI        — paid (gpt-4o-mini / gpt-4o)
+//   5. Anthropic     — paid (claude-sonnet)
 //
 // Configuration via env vars:
 //   GROQ_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY
@@ -63,6 +64,31 @@ function jsonPost(url, headers, body, timeout = 30000) {
 // ═══════════════════════════════════════════════════════════════════════
 //  Provider adapters
 // ═══════════════════════════════════════════════════════════════════════
+
+/** Ollama (local) */
+async function ollamaChat(messages, opts = {}) {
+  const host = (process.env.OLLAMA_HOST || "http://127.0.0.1:11434").replace(/\/$/, "");
+  const model = opts.model || process.env.AI_MODEL || "gpt-oss:20b";
+
+  const { status, data } = await jsonPost(
+    `${host}/api/chat`,
+    {},
+    {
+      model,
+      messages,
+      stream: false,
+      options: {
+        temperature: opts.temperature ?? 0.7,
+        num_predict: opts.maxTokens || 1024,
+      },
+    },
+    120000
+  );
+
+  if (status !== 200) throw new Error(`Ollama ${status}: ${JSON.stringify(data)}`);
+  const text = data?.message?.content || data?.response || "";
+  return { text, provider: "ollama", model };
+}
 
 /** Groq (free tier — Llama 3 70B / Mixtral) */
 async function groqChat(messages, opts = {}) {
@@ -178,6 +204,7 @@ async function anthropicChat(messages, opts = {}) {
 // ═══════════════════════════════════════════════════════════════════════
 
 const PROVIDERS = {
+  ollama: ollamaChat,
   groq: groqChat,
   gemini: geminiChat,
   openai: openaiChat,
@@ -190,6 +217,9 @@ const PROVIDERS = {
  */
 function availableProviders() {
   const available = [];
+  if (process.env.AI_PROVIDER === "ollama" || process.env.OLLAMA_HOST) {
+    available.push("ollama");
+  }
   if (process.env.GROQ_API_KEY) available.push("groq");
   if (process.env.GEMINI_API_KEY) available.push("gemini");
   if (process.env.OPENAI_API_KEY) available.push("openai");
@@ -210,19 +240,25 @@ async function chat(messages, opts = {}) {
     return PROVIDERS[forced](messages, opts);
   }
 
-  // Try in priority order: groq → gemini → openai → anthropic
-  const order = ["groq", "gemini", "openai", "anthropic"];
+  // Try in priority order: ollama → groq → gemini → openai → anthropic
+  const order = ["ollama", "groq", "gemini", "openai", "anthropic"];
   const errors = [];
 
   for (const name of order) {
     const fn = PROVIDERS[name];
     const keyMap = {
+      ollama: null,
       groq: "GROQ_API_KEY",
       gemini: "GEMINI_API_KEY",
       openai: "OPENAI_API_KEY",
       anthropic: "ANTHROPIC_API_KEY",
     };
-    if (!process.env[keyMap[name]]) continue; // skip unconfigured
+    if (name === "ollama") {
+      // Ollama is local and can be used without any API key.
+      if (process.env.AI_PROVIDER !== "ollama" && !process.env.OLLAMA_HOST) continue;
+    } else if (!process.env[keyMap[name]]) {
+      continue; // skip unconfigured cloud providers
+    }
 
     try {
       return await fn(messages, opts);
@@ -234,7 +270,7 @@ async function chat(messages, opts = {}) {
   throw new Error(
     errors.length > 0
       ? `All AI providers failed:\n${errors.join("\n")}`
-      : "No AI provider configured. Set at least one API key: GROQ_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY."
+      : "No AI provider configured. Set AI_PROVIDER=ollama (or OLLAMA_HOST) for local Ollama, or configure a cloud API key."
   );
 }
 

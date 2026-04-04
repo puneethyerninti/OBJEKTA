@@ -6,12 +6,16 @@ const { sendEmail, verificationEmail, resetPasswordEmail } = require("../service
 
 const FRONTEND_URL = process.env.FRONTEND_URL || process.env.FRONTEND_ORIGIN?.split(",")[0] || "http://localhost:5173";
 
+// Environment-aware token expiration (longer in dev mode)
+const ACCESS_TOKEN_EXPIRY = process.env.NODE_ENV === "production" ? "15m" : (process.env.ACCESS_TOKEN_EXPIRY || "7d");
+const REFRESH_TOKEN_EXPIRY = process.env.NODE_ENV === "production" ? "7d" : (process.env.REFRESH_TOKEN_EXPIRY || "30d");
+
 const generateAccessToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: "15m" });
+  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: ACCESS_TOKEN_EXPIRY });
 };
 
-const generateLongToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || "7d" });
+const generateRefreshToken = (id) => {
+  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: REFRESH_TOKEN_EXPIRY });
 };
 
 // Set refresh token as httpOnly cookie
@@ -414,6 +418,100 @@ exports.disable2FA = async (req, res) => {
     res.json({ message: "2FA disabled" });
   } catch (err) {
     console.error("disable2FA error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// POST /api/auth/login/otp/request — send OTP to email
+exports.requestLoginOTP = async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ message: "Email required" });
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      // Don't reveal if email exists (security)
+      return res.json({ message: "If email exists, OTP has been sent", success: true });
+    }
+
+    if (user.suspended) {
+      return res.status(403).json({ message: "Account suspended" });
+    }
+
+    // Generate 6-digit OTP
+    const otp = user.generateLoginOTP();
+    await user.save({ validateBeforeSave: false });
+
+    // Send OTP via email (with simple fallback for dev)
+    const { sendEmail, otpEmail } = require("../services/emailService");
+    try {
+      const emailContent = otpEmail(user.name, otp);
+      await sendEmail({ to: email, ...emailContent });
+    } catch (emailErr) {
+      console.warn("[DEV] Email service failed, OTP:", otp);
+      // In dev, still succeed but log OTP
+    }
+
+    res.json({
+      message: "OTP sent to email",
+      success: true,
+      // For development/testing only - remove in production
+      ...(process.env.NODE_ENV !== "production" && { otp })
+    });
+  } catch (err) {
+    console.error("requestLoginOTP error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// POST /api/auth/login/otp/verify — verify OTP and login
+exports.verifyLoginOTP = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    if (!email || !otp) return res.status(400).json({ message: "Email and OTP required" });
+
+    const user = await User.findOne({ email });
+    if (!user) return res.status(401).json({ message: "Invalid credentials" });
+
+    if (user.suspended) {
+      return res.status(403).json({ message: "Account suspended" });
+    }
+
+    // Verify OTP
+    if (!user.verifyLoginOTP(otp)) {
+      const remaining = 5 - user.otpAttempts;
+      if (remaining <= 0) {
+        return res.status(429).json({
+          message: "Too many attempts. Request new OTP.",
+          locked: true
+        });
+      }
+      return res.status(401).json({
+        message: "Invalid OTP",
+        attemptsRemaining: remaining
+      });
+    }
+
+    // Generate tokens
+    const accessToken = generateAccessToken(user._id);
+    const { token: refreshToken, expiresAt } = user.generateRefreshToken();
+    await user.save({ validateBeforeSave: false });
+
+    setRefreshCookie(res, refreshToken, expiresAt);
+
+    res.json({
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        emailVerified: user.emailVerified,
+      },
+      token: accessToken,
+      message: "Logged in successfully",
+    });
+  } catch (err) {
+    console.error("verifyLoginOTP error:", err);
     res.status(500).json({ message: "Server error" });
   }
 };
