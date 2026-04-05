@@ -2,9 +2,11 @@
 FROM node:20-alpine AS frontend-build
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm install --include=optional --ignore-scripts=false \
+RUN npm install --package-lock=false --include=optional --ignore-scripts=false --no-audit \
   && node -e "require('esbuild'); console.log('esbuild binary resolved')" \
-  && node -e "require('lightningcss'); console.log('lightningcss binary resolved')"
+  && node -e "require('lightningcss'); console.log('lightningcss binary resolved')" \
+  && node -e "require('@tailwindcss/oxide'); console.log('tailwind oxide binary resolved')" \
+  && node -e "require('rollup'); console.log('rollup binary resolved')"
 COPY . .
 RUN npm run build
 
