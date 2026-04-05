@@ -1,4 +1,5 @@
 const express = require("express");
+const { sendEmail } = require("../services/emailService");
 
 const router = express.Router();
 
@@ -12,9 +13,32 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ error: "Invalid form data" });
     }
 
-    // TODO: Send email or store to database
-    // For now, log to console
-    console.log(`[Contact Form] ${name} (${email}) - ${subject}:\n${message}\n`);
+    const receiver = process.env.CONTACT_RECEIVER || process.env.SMTP_FROM || null;
+    const subjectLine = subject ? `Contact: ${subject}` : "Contact form submission";
+
+    if (receiver) {
+      const result = await sendEmail({
+        to: receiver,
+        subject: subjectLine,
+        replyTo: email,
+        html: `
+          <div style="font-family:sans-serif;max-width:640px;margin:0 auto;padding:20px;">
+            <h2 style="margin:0 0 8px;">New contact message</h2>
+            <p><strong>Name:</strong> ${name || "(not provided)"}</p>
+            <p><strong>Email:</strong> ${email}</p>
+            <p><strong>Subject:</strong> ${subject || "(none)"}</p>
+            <pre style="white-space:pre-wrap;background:#f5f5f5;padding:12px;border-radius:8px;">${message}</pre>
+          </div>
+        `,
+        text: `New contact message\nName: ${name || "(not provided)"}\nEmail: ${email}\nSubject: ${subject || "(none)"}\n\n${message}`,
+      });
+
+      if (!result.success) {
+        return res.status(502).json({ error: "Failed to deliver message" });
+      }
+    } else {
+      console.log(`[Contact Form] ${name} (${email}) - ${subject}:\n${message}\n`);
+    }
 
     res.json({ success: true });
   } catch (err) {

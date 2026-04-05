@@ -6,6 +6,14 @@ const { sendEmail, verificationEmail, resetPasswordEmail } = require("../service
 
 const FRONTEND_URL = process.env.FRONTEND_URL || process.env.FRONTEND_ORIGIN?.split(",")[0] || "http://localhost:5173";
 
+const COOKIE_SECURE = process.env.COOKIE_SECURE
+  ? process.env.COOKIE_SECURE === "true"
+  : process.env.NODE_ENV === "production";
+
+const rawSameSite = (process.env.COOKIE_SAMESITE || (COOKIE_SECURE ? "none" : "lax")).toLowerCase();
+const COOKIE_SAMESITE = ["lax", "strict", "none"].includes(rawSameSite) ? rawSameSite : "lax";
+const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined;
+
 // Environment-aware token expiration (longer in dev mode)
 const ACCESS_TOKEN_EXPIRY = process.env.NODE_ENV === "production" ? "15m" : (process.env.ACCESS_TOKEN_EXPIRY || "7d");
 const REFRESH_TOKEN_EXPIRY = process.env.NODE_ENV === "production" ? "7d" : (process.env.REFRESH_TOKEN_EXPIRY || "30d");
@@ -20,12 +28,14 @@ const generateRefreshToken = (id) => {
 
 // Set refresh token as httpOnly cookie
 const setRefreshCookie = (res, token, expiresAt) => {
+  const sameSite = COOKIE_SAMESITE === "none" && !COOKIE_SECURE ? "lax" : COOKIE_SAMESITE;
   res.cookie("refreshToken", token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    secure: COOKIE_SECURE,
+    sameSite,
     expires: expiresAt,
     path: "/api/auth/refresh",
+    ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
   });
 };
 

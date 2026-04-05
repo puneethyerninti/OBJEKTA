@@ -7,6 +7,7 @@
 const express = require("express");
 const router = express.Router();
 const http = require("http");
+const https = require("https");
 const { chat, availableProviders } = require("../services/aiProviders");
 
 // Python AI service URL (default: localhost:8100)
@@ -16,8 +17,9 @@ const AI_SERVICE_URL = process.env.AI_SERVICE_URL || "http://127.0.0.1:8100";
 function proxyToPython(path, body, timeout = 45000) {
   return new Promise((resolve, reject) => {
     const url = new URL(path, AI_SERVICE_URL);
+    const lib = url.protocol === "https:" ? https : http;
     const postData = JSON.stringify(body);
-    const req = http.request(
+    const req = lib.request(
       {
         hostname: url.hostname,
         port: url.port,

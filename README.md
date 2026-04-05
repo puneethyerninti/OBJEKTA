@@ -177,6 +177,7 @@ objekta/
 ├── Dockerfile                    # Multi-stage build (frontend + backend)
 ├── docker-compose.yml            # Dev: MongoDB + Backend + Frontend
 ├── docker-compose.staging.yml    # Staging: MongoDB + Backend (serves static frontend)
+├── docker-compose.prod.yml       # Production: MongoDB + Backend + AI service
 ├── render.yaml                   # Render.com deployment blueprint
 ├── vercel.json                   # Vercel SPA config
 ├── vite.config.js                # Vite config with chunk splitting
@@ -273,6 +274,8 @@ Navigate to `http://localhost:5173`. The Vite dev server proxies `/api` and `/so
 | `JWT_SECRET` | JWT signing secret | *(required)* |
 | `JWT_EXPIRES_IN` | Long-lived token expiry | `7d` |
 | `FRONTEND_ORIGIN` | Allowed CORS origins (comma-separated) | `http://localhost:5173` |
+| `FRONTEND_URL` | Public frontend URL (email links) | |
+| `BACKEND_URL` | Public backend URL (signed downloads) | |
 | **AWS S3** | | |
 | `AWS_REGION` | AWS region | `ap-south-1` |
 | `AWS_ACCESS_KEY_ID` | AWS access key | |
@@ -299,10 +302,16 @@ Navigate to `http://localhost:5173`. The Vite dev server proxies `/api` and `/so
 | `SMTP_USER` | SMTP username | |
 | `SMTP_PASS` | SMTP password | |
 | `SMTP_FROM` | From email address | |
+| `CONTACT_RECEIVER` | Contact form inbox | |
 | **Security** | | |
 | `RATE_LIMIT_MAX` | API rate limit (per 15 min) | `300` |
 | `UPLOAD_RATE_LIMIT_MAX` | Upload rate limit (per 15 min) | `120` |
 | `DOWNLOAD_SECRET` | HMAC secret for download tokens | |
+| `EXTRA_CORS_ORIGINS` | Extra CORS origins (comma-separated) | |
+| `TRUST_PROXY` | Trust reverse proxy headers | `false` |
+| `COOKIE_SECURE` | Force secure cookies | `production` |
+| `COOKIE_SAMESITE` | Cookie SameSite policy | `none` (prod), `lax` (dev) |
+| `COOKIE_DOMAIN` | Cookie domain for subdomains | |
 | `GOOGLE_CLIENT_ID` | Google OAuth client ID | |
 
 ---
@@ -327,6 +336,15 @@ docker-compose -f docker-compose.staging.yml up
 ```
 
 Builds the frontend into static files and serves them from the Express backend (single service + MongoDB).
+
+### Production (single host)
+
+```bash
+cp .env.production.example .env.production
+docker-compose -f docker-compose.prod.yml up -d --build
+```
+
+This runs MongoDB, the backend (serving the built frontend), and the Python AI service. For HTTPS, place a reverse proxy (Caddy/Nginx) in front and keep `TRUST_PROXY=true` with `FRONTEND_ORIGIN`/`BACKEND_URL` set to your domain.
 
 ### Standalone image
 

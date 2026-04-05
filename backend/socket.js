@@ -22,16 +22,25 @@ function emitPresence(projectId) {
 function initSocket(server) {
   if (io) return io;
 
-  const envOrigins = (process.env.FRONTEND_ORIGIN || "")
-    .split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean);
+  const parseOrigins = (value) =>
+    (value || "")
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean);
+
+  const envOrigins = parseOrigins(process.env.FRONTEND_ORIGIN);
+  const extraOrigins = parseOrigins(process.env.EXTRA_CORS_ORIGINS);
+  const allowLocalhost = process.env.NODE_ENV !== "production";
+  const allowedOrigins = new Set([...envOrigins, ...extraOrigins]);
+  const isLocalOrigin = (origin) => {
+    if (!origin) return false;
+    return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+  };
 
   const isAllowedOrigin = (origin) => {
     if (!origin) return true;
-    if (envOrigins.includes(origin)) return true;
-    if (/^https?:\/\/localhost(:\d+)?$/i.test(origin)) return true;
-    if (/^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(origin)) return true;
+    if (allowedOrigins.has(origin)) return true;
+    if (allowLocalhost && isLocalOrigin(origin)) return true;
     return false;
   };
 

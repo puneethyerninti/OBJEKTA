@@ -28,7 +28,7 @@ EXPOSE 5000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-  CMD wget -qO- http://localhost:5000/ || exit 1
+  CMD wget -qO- http://localhost:5000/health || exit 1
 
 # Start backend (which also serves static /dist if configured)
 ENV NODE_ENV=production

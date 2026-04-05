@@ -6,11 +6,12 @@ const PROVIDER = process.env.EMAIL_PROVIDER || "console";
 
 /**
  * Send an email.
- * @param {{ to: string, subject: string, html: string, text?: string }} opts
+ * @param {{ to: string, subject: string, html: string, text?: string, replyTo?: string }} opts
  */
-async function sendEmail({ to, subject, html, text }) {
+async function sendEmail({ to, subject, html, text, replyTo }) {
   if (PROVIDER === "console" || !process.env.SMTP_HOST) {
     console.log(`\n📧 EMAIL [${subject}] → ${to}`);
+    if (replyTo) console.log(`↳ reply-to: ${replyTo}`);
     console.log(text || html);
     console.log("---\n");
     return { success: true, provider: "console" };
@@ -32,6 +33,7 @@ async function sendEmail({ to, subject, html, text }) {
     await transporter.sendMail({
       from: process.env.SMTP_FROM || `"OBJEKTA" <noreply@objekta.io>`,
       to,
+      ...(replyTo ? { replyTo } : {}),
       subject,
       html,
       text: text || html.replace(/<[^>]*>/g, ""),

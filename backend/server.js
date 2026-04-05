@@ -5,12 +5,14 @@ const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
 const helmet = require("helmet");
+const compression = require("compression");
 const rateLimit = require("express-rate-limit");
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
 const multer = require("multer");
 const crypto = require("crypto");
+const mongoose = require("mongoose");
 const connectDB = require("./config/db");
 const { initSocket } = require("./socket");
 const { initYjs } = require("./yjs");
@@ -35,6 +37,21 @@ const contactRoutes = require("./routes/contact");
 const app = express();
 app.disable("x-powered-by");
 
+const parseOrigins = (value) =>
+  (value || "")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+
+const envOrigins = parseOrigins(process.env.FRONTEND_ORIGIN);
+const extraOrigins = parseOrigins(process.env.EXTRA_CORS_ORIGINS);
+const allowLocalhost = process.env.NODE_ENV !== "production";
+const allowedOrigins = new Set([...envOrigins, ...extraOrigins]);
+const isLocalOrigin = (origin) => {
+  if (!origin) return false;
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+};
+
 // ---------- Connect MongoDB ----------
 connectDB();
 
@@ -51,27 +68,23 @@ app.use((req, res, next) => {
 morgan.token("id", (req) => req.id || "-");
 app.use(morgan(":id :method :url :status :response-time ms"));
 
-app.use(express.json({ limit: "200mb" }));
+app.use(compression());
+
+const rawBodySaver = (req, _res, buf) => {
+  if (req.originalUrl === "/api/marketplace/payments/webhook") {
+    req.rawBody = buf;
+  }
+};
+
+app.use(express.json({ limit: "200mb", verify: rawBodySaver }));
 app.use(express.urlencoded({ limit: "200mb", extended: true }));
 app.use(cookieParser());
 
-// CORS: allow configured origins (comma-separated), common production frontends, and localhost
-const envOrigins = (process.env.FRONTEND_ORIGIN || "")
-  .split(",")
-  .map((o) => o.trim())
-  .filter(Boolean);
-const defaultProdOrigins = [
-  "https://objekta-frontend.onrender.com",
-  "https://objekta5465.vercel.app",
-  "https://objekta-wy7g.vercel.app",
-];
-
+// CORS: allow configured origins (comma-separated), optional extras, and localhost in non-prod
 const isAllowedOrigin = (origin) => {
   if (!origin) return true; // allow curl/postman
-  if (envOrigins.includes(origin)) return true;
-  if (defaultProdOrigins.includes(origin)) return true;
-  if (/^https?:\/\/localhost(:\d+)?$/i.test(origin)) return true;
-  if (/^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(origin)) return true;
+  if (allowedOrigins.has(origin)) return true;
+  if (allowLocalhost && isLocalOrigin(origin)) return true;
   return false;
 };
 
@@ -117,6 +130,9 @@ const uploadLimiter = rateLimit({
 const uploadDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
+const distDir = path.resolve(__dirname, "..", "dist");
+const serveFrontend = process.env.SERVE_FRONTEND !== "false" && fs.existsSync(distDir);
+
 // ---------- Multer Storage ----------
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
@@ -142,6 +158,25 @@ const upload = multer({
 
 // ---------- Static Files ----------
 app.use("/uploads", express.static(uploadDir));
+
+if (serveFrontend) {
+  app.use(
+    express.static(distDir, {
+      fallthrough: true,
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith(".html")) {
+          res.setHeader("Cache-Control", "no-store");
+          return;
+        }
+        if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+          return;
+        }
+        res.setHeader("Cache-Control", "public, max-age=3600");
+      },
+    })
+  );
+}
 
 // ---------- API Documentation ----------
 app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, { customSiteTitle: "OBJEKTA API Docs" }));
@@ -176,6 +211,20 @@ try {
   console.warn("⚠️ tus server not mounted:", e.message);
 }
 
+if (serveFrontend) {
+  app.get("*", (req, res, next) => {
+    if (
+      req.path.startsWith("/api") ||
+      req.path.startsWith("/uploads") ||
+      req.path.startsWith("/socket.io") ||
+      req.path.startsWith("/health")
+    ) {
+      return next();
+    }
+    return res.sendFile(path.join(distDir, "index.html"));
+  });
+}
+
 // ✅ Direct .glb upload endpoint (for quick uploads/testing)
 app.post("/api/upload-glb", protect, (req, res, _next) => {
   upload.single("file")(req, res, function (err) {
@@ -204,12 +253,13 @@ app.post("/api/upload-glb", protect, (req, res, _next) => {
 });
 
 // ---------- Health Check ----------
-app.get("/", (req, res) => res.send("🧠 OBJEKTA backend is running 🚀"));
+if (!serveFrontend) {
+  app.get("/", (req, res) => res.send("🧠 OBJEKTA backend is running 🚀"));
+}
 app.get("/api/test", (req, res) => res.json({ message: "Backend OK ✅" }));
 app.get("/health", async (req, res) => {
   const checks = { status: "ok", uptime: process.uptime(), timestamp: new Date().toISOString() };
   try {
-    const mongoose = require("mongoose");
     const dbState = mongoose.connection.readyState;
     checks.database = dbState === 1 ? "connected" : dbState === 2 ? "connecting" : "disconnected";
     if (dbState !== 1) checks.status = "degraded";
@@ -232,11 +282,11 @@ app.use((err, req, res, _next) => {
     });
   }
 
-  res.status(500).json({
-    success: false,
-    message: "Server error",
-    error: err.message,
-  });
+  const payload = { success: false, message: "Server error" };
+  if (process.env.NODE_ENV !== "production") {
+    payload.error = err.message;
+  }
+  res.status(500).json(payload);
 });
 
 // ---------- Create HTTP + WebSocket Server ----------
@@ -249,3 +299,14 @@ const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`🚀 OBJEKTA server + WebSockets running on port ${PORT}`);
 });
+
+const shutdown = (signal) => {
+  console.log(`Received ${signal}. Shutting down gracefully...`);
+  server.close(() => {
+    mongoose.connection.close(false).finally(() => process.exit(0));
+  });
+  setTimeout(() => process.exit(1), 10000).unref();
+};
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

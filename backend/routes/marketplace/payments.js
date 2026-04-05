@@ -67,17 +67,17 @@ router.post("/refund", protect, async (req, res) => {
 });
 
 // POST /api/marketplace/payments/webhook — Stripe webhook handler
-// Must receive raw body for signature verification
+// Raw body is captured in server.js (req.rawBody)
 router.post(
   "/webhook",
-  express.raw({ type: "application/json" }),
   async (req, res) => {
     if (PROVIDER !== "stripe") {
       return res.status(200).json({ received: true, note: "Mock mode — webhook ignored" });
     }
     try {
       const sig = req.headers["stripe-signature"];
-      const event = verifyStripeWebhook(req.body, sig);
+      const payload = req.rawBody || req.body;
+      const event = verifyStripeWebhook(payload, sig);
 
       switch (event.type) {
         case "payment_intent.succeeded": {
