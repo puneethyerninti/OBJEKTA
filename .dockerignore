@@ -1,0 +1,32 @@
+# Dependency directories (must not override container installs)
+node_modules
+backend/node_modules
+
+# Local env/secrets
+.env
+.env.*
+backend/.env
+backend/.env.*
+
+# VCS/editor/history
+.git
+.gitignore
+.vscode
+.idea
+.history
+
+# Local Python virtual environments
+.venv
+backend/ai_service/.venv
+
+# Build/test/cache artifacts
+dist
+coverage
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS noise
+.DS_Store
+Thumbs.db
