@@ -100,6 +100,27 @@ app.use(
 
 app.use(
   helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        "script-src": ["'self'", "https://accounts.google.com"],
+        "frame-src": ["'self'", "https://accounts.google.com"],
+        "connect-src": [
+          "'self'",
+          "https://accounts.google.com",
+          "https://oauth2.googleapis.com",
+          "https://www.googleapis.com",
+          "https://*.gstatic.com",
+          "https://*.googleusercontent.com",
+          "ws:",
+          "wss:",
+        ],
+        "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        "font-src": ["'self'", "https://fonts.gstatic.com", "data:"],
+        "img-src": ["'self'", "data:", "blob:", "https:"],
+        "worker-src": ["'self'", "blob:"],
+      },
+    },
     // Allow cross-origin resource loading for model assets
     crossOriginResourcePolicy: { policy: "cross-origin" },
     // Do NOT enforce Cross-Origin-Opener-Policy here — some identity providers

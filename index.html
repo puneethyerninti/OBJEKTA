@@ -37,15 +37,6 @@
     <div id="root" role="application"></div>
     <!-- Google Identity Services (used for One-tap / button sign-in) -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <!-- Runtime globals (optional overrides for local/dev debugging) -->
-    <script>
-      // Default asset base to current origin for local dev (prevents CDN placeholder resolution errors)
-      window.__OBJEKTA_ASSET_BASE = window.__OBJEKTA_ASSET_BASE || window.location.origin;
-      // NOTE:
-      // - Set window.__GOOGLE_CLIENT_ID__ manually in dev tools only if needed.
-      // - Set window.__OBJEKTA_API_BASE manually only for temporary local overrides.
-      // Otherwise, app config falls back to VITE_* env vars and built-in defaults.
-    </script>
     <!-- React entry file -->
     <script type="module" src="/src/main.jsx"></script>
 

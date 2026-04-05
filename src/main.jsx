@@ -9,6 +9,11 @@ if (typeof window !== "undefined") {
   window.__OBJEKTA_API_BASE = window.__OBJEKTA_API_BASE
     || import.meta.env.VITE_API_BASE
     || import.meta.env.VITE_API_URL;
+
+  // Keep asset-base fallback in JS module scope to avoid inline-script CSP exceptions.
+  window.__OBJEKTA_ASSET_BASE = window.__OBJEKTA_ASSET_BASE
+    || import.meta.env.VITE_ASSET_BASE
+    || window.location.origin;
 }
 
 // Ensure touch/wheel listeners remain cancelable when we need preventDefault
