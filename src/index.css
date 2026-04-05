@@ -4773,6 +4773,12 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
 
 /* Overlay UI */
 .overlay-ui {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  pointer-events: none;
+  font-family: var(--font-mono);
+}
 
 .rich-loader {
   gap: 0.5rem;
@@ -4900,12 +4906,6 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
 @keyframes loader-shimmer {
   0% { transform: translateX(-120%); }
   100% { transform: translateX(120%); }
-}
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-overlay);
-  pointer-events: none;
-  font-family: var(--font-mono);
 }
 
 .overlay-ui * {

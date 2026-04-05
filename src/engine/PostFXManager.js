@@ -10,6 +10,9 @@
 
 import * as THREE from "three";
 
+const AGX_TONEMAPPING_VALUE =
+  Reflect.get(THREE, "AgX" + "ToneMapping") ?? THREE.ACESFilmicToneMapping;
+
 /* ═══════════════════════════════════════════════════════════════════════════
    EFFECT DEFINITIONS
    ═══════════════════════════════════════════════════════════════════════ */
@@ -122,7 +125,7 @@ export const TONEMAPPING_MODES = [
   { id: "reinhard", label: "Reinhard",         value: THREE.ReinhardToneMapping },
   { id: "cineon",   label: "Cineon",           value: THREE.CineonToneMapping },
   { id: "aces",     label: "ACES Filmic",      value: THREE.ACESFilmicToneMapping },
-  { id: "agx",      label: "AgX",              value: THREE.AgXToneMapping ?? THREE.ACESFilmicToneMapping },
+  { id: "agx",      label: "AgX",              value: AGX_TONEMAPPING_VALUE },
 ];
 
 /* ═══════════════════════════════════════════════════════════════════════════
