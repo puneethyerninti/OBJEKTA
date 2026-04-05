@@ -2,9 +2,9 @@
 FROM node:20-alpine AS frontend-build
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci --include=optional --ignore-scripts=false \
-  && npm rebuild esbuild \
-  && node -e "require('esbuild'); console.log('esbuild binary resolved')"
+RUN npm install --include=optional --ignore-scripts=false \
+  && node -e "require('esbuild'); console.log('esbuild binary resolved')" \
+  && node -e "require('lightningcss'); console.log('lightningcss binary resolved')"
 COPY . .
 RUN npm run build
 
