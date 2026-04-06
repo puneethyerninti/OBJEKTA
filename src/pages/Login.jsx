@@ -13,9 +13,32 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const [gisAvailable, setGisAvailable] = useState(false);
+  const hasGoogleClientId = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID || window.__GOOGLE_CLIENT_ID__);
 
   useEffect(() => {
-    setGisAvailable(Boolean(window.google && window.google.accounts && window.google.accounts.id));
+    const syncAvailability = () => {
+      const ready = Boolean(window.google && window.google.accounts && window.google.accounts.id);
+      setGisAvailable(ready);
+      return ready;
+    };
+
+    syncAvailability();
+
+    const onGsiReady = () => {
+      syncAvailability();
+    };
+    window.addEventListener('objekta:gsi-ready', onGsiReady);
+
+    const intervalId = window.setInterval(() => {
+      if (syncAvailability()) {
+        window.clearInterval(intervalId);
+      }
+    }, 600);
+
+    return () => {
+      window.removeEventListener('objekta:gsi-ready', onGsiReady);
+      window.clearInterval(intervalId);
+    };
   }, []);
 
   const handleSubmit = async (e) => {
@@ -90,7 +113,12 @@ export default function Login() {
           {/* Placeholder for Google's rendered button (AppInit will render into this if present) */}
           <div className="auth-google-placeholder" style={{ marginTop: 12 }}>
             <div id="g_id_signin" />
-            {!gisAvailable && (
+            {!hasGoogleClientId && (
+              <div className="auth-error" role="status" style={{ marginTop: 10 }}>
+                Google Sign-in is not configured for this environment.
+              </div>
+            )}
+            {hasGoogleClientId && !gisAvailable && (
               <button
                 type="button"
                 className="auth-button auth-google-fallback"

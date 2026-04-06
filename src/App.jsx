@@ -1,5 +1,5 @@
 // src/App.jsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
@@ -159,24 +159,60 @@ function AppInit() {
   // runs inside Router and AuthProvider
   const { authWithProvider } = useAuth();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const gsiInitRef = useRef(false);
+  const [googleClientId, setGoogleClientId] = useState(
+    () => (import.meta.env.VITE_GOOGLE_CLIENT_ID || window.__GOOGLE_CLIENT_ID__ || "").trim()
+  );
+
+  const renderButtonOnce = useCallback(() => {
+    const placeholder = document.getElementById("g_id_signin");
+    if (!placeholder) return;
+    if (!window.google || !window.google.accounts || !window.google.accounts.id) return;
+    if (placeholder.dataset.gsiRendered === "true") return;
+
+    try {
+      window.google.accounts.id.renderButton(placeholder, { theme: "outline", size: "large" });
+      placeholder.dataset.gsiRendered = "true";
+    } catch (e) {
+      console.debug("Google ID button render skipped", e);
+    }
+  }, []);
 
   useEffect(() => {
-    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || window.__GOOGLE_CLIENT_ID__;
-    if (!clientId) return;
-    if (!window.google || !window.google.accounts) return;
+    if (googleClientId) return;
+    let disposed = false;
 
-    const renderButtonOnce = () => {
-      const placeholder = document.getElementById('g_id_signin');
-      if (!placeholder) return;
-      if (placeholder.dataset.gsiRendered === 'true') return;
+    const fetchRuntimeClientId = async () => {
       try {
-        window.google.accounts.id.renderButton(placeholder, { theme: 'outline', size: 'large' });
-        placeholder.dataset.gsiRendered = 'true';
+        const apiBase = (window.__OBJEKTA_API_BASE || import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
+        const runtimeConfigUrl = apiBase ? `${apiBase}/api/runtime-config` : "/api/runtime-config";
+        const res = await fetch(runtimeConfigUrl, {
+          cache: "no-store",
+          credentials: "include",
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const runtimeClientId = (data?.googleClientId || "").trim();
+        if (!runtimeClientId || disposed) return;
+        window.__GOOGLE_CLIENT_ID__ = runtimeClientId;
+        setGoogleClientId(runtimeClientId);
       } catch (e) {
-        console.debug('Google ID button render skipped', e);
+        console.debug("Runtime Google client id fetch skipped", e);
       }
     };
+
+    fetchRuntimeClientId();
+    return () => {
+      disposed = true;
+    };
+  }, [googleClientId]);
+
+  useEffect(() => {
+    if (!googleClientId) return;
+    let disposed = false;
+    let pollId = null;
+    let script = null;
 
     const handleCredentialResponse = async (response) => {
       const idToken = response?.credential;
@@ -189,23 +225,78 @@ function AppInit() {
       }
     };
 
-    if (window.__OBJEKTA_GSI_INITIALIZED || gsiInitRef.current) {
-      renderButtonOnce();
-      return;
+    const initializeGsi = () => {
+      if (disposed) return false;
+      if (!window.google || !window.google.accounts || !window.google.accounts.id) return false;
+
+      try {
+        if (!window.__OBJEKTA_GSI_INITIALIZED && !gsiInitRef.current) {
+          window.google.accounts.id.initialize({
+            client_id: googleClientId,
+            callback: handleCredentialResponse,
+          });
+          window.__OBJEKTA_GSI_INITIALIZED = true;
+          gsiInitRef.current = true;
+          window.dispatchEvent(new Event("objekta:gsi-ready"));
+        }
+        renderButtonOnce();
+        return true;
+      } catch (e) {
+        console.debug('Google ID initialization skipped', e);
+        return false;
+      }
+    };
+
+    if (initializeGsi()) {
+      return () => {
+        disposed = true;
+      };
     }
 
-    try {
-      window.google.accounts.id.initialize({
-        client_id: clientId,
-        callback: handleCredentialResponse,
-      });
-      window.__OBJEKTA_GSI_INITIALIZED = true;
-      gsiInitRef.current = true;
-      renderButtonOnce();
-    } catch (e) {
-      console.debug('Google ID initialization skipped', e);
+    script = document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
+    if (!script) {
+      script = document.createElement('script');
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
     }
-  }, [authWithProvider, navigate]);
+
+    const onLoad = () => {
+      initializeGsi();
+    };
+    const onError = () => {
+      console.warn('Google Identity Services failed to load');
+    };
+
+    script.addEventListener('load', onLoad);
+    script.addEventListener('error', onError);
+
+    pollId = window.setInterval(() => {
+      if (initializeGsi()) {
+        window.clearInterval(pollId);
+        pollId = null;
+      }
+    }, 500);
+
+    return () => {
+      disposed = true;
+      if (script) {
+        script.removeEventListener('load', onLoad);
+        script.removeEventListener('error', onError);
+      }
+      if (pollId) {
+        window.clearInterval(pollId);
+      }
+    };
+  }, [authWithProvider, googleClientId, navigate, renderButtonOnce]);
+
+  useEffect(() => {
+    if (!window.__OBJEKTA_GSI_INITIALIZED && !gsiInitRef.current) {
+      return;
+    }
+    renderButtonOnce();
+  }, [pathname, renderButtonOnce]);
 
   return null;
 }

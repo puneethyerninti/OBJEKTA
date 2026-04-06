@@ -205,6 +205,12 @@ app.get("/api/docs.json", (req, res) => res.json(swaggerSpec));
 
 // ---------- API Routes ----------
 app.use("/api", apiLimiter);
+app.get("/api/runtime-config", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    googleClientId: process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || "",
+  });
+});
 app.use("/api/contact", contactRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/projects", projectRoutes);
