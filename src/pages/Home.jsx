@@ -53,14 +53,6 @@ const FEATURE_ITEMS = [
 
 const SHOWCASE_MODELS = [
   {
-    src: "models/cyberpunk_desk.glb",
-    title: "Command Desk",
-    desc: "Multi-screen control deck for layout, approvals, and lighting passes.",
-    accent: "violet",
-    poster: "assets/desk-poster.webp",
-    fullscreenTarget: [0, 1.0, 0],
-  },
-  {
     src: "models/laptop_free.glb",
     title: "Portable Rig",
     desc: "Travel-ready laptop kit showing shader tweaks and annotation overlays.",
@@ -70,6 +62,14 @@ const SHOWCASE_MODELS = [
     fullscreenPosition: [0, 0.75, 0],
     fullscreenFitSize: 4.2,
     fullscreenTarget: [0, 0.85, 0],
+  },
+  {
+    src: "models/cyberpunk_desk.glb",
+    title: "Command Desk",
+    desc: "Multi-screen control deck for layout, approvals, and lighting passes.",
+    accent: "violet",
+    poster: "assets/desk-poster.webp",
+    fullscreenTarget: [0, 1.0, 0],
   },
   {
     src: "models/porsche.glb",
@@ -168,12 +168,14 @@ export default function Home() {
   const [prefetched, setPrefetched] = useState({});
   const [parsedPrefetch, setParsedPrefetch] = useState({});
   const [progressMap, setProgressMap] = useState({});
+  const [previewLoadedMap, setPreviewLoadedMap] = useState({});
   const [activeModel, setActiveModel] = useState(null);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [activePanelIndex, setActivePanelIndex] = useState(0);
   const prefetchedRef = useRef({});
   const parsedRef = useRef({});
   const progressRef = useRef({});
+  const previewLoadedRef = useRef({});
   const heroVisibleRef = useRef(true);
   const wheelLockRef = useRef(false);
 
@@ -206,6 +208,12 @@ export default function Home() {
     return () => document.removeEventListener("visibilitychange", updateInteractions);
   }, [prefersReducedMotion]);
 
+  const markPreviewLoaded = useCallback((src) => {
+    if (!src || previewLoadedRef.current[src]) return;
+    previewLoadedRef.current[src] = true;
+    setPreviewLoadedMap({ ...previewLoadedRef.current });
+  }, []);
+
 
   // Prefetch showcase GLTFs so they appear quickly
   useEffect(() => {
@@ -220,11 +228,13 @@ export default function Home() {
     };
 
     const modelsToPrefetch = SHOWCASE_MODELS.map((m) => assetUrl(m.src));
-    const eager = modelsToPrefetch.slice(0, 3);
-    const deferred = modelsToPrefetch.slice(3);
+    const eagerParsed = modelsToPrefetch.slice(0, 1);
+    const eagerFetched = modelsToPrefetch.slice(1, 2);
+    const deferred = modelsToPrefetch.slice(2);
+    const preloadTargets = [...eagerParsed, ...eagerFetched];
 
     if (typeof document !== "undefined") {
-      eager.forEach((href) => {
+      preloadTargets.forEach((href) => {
         if (document.querySelector(`link[rel="preload"][href="${href}"]`)) return;
         const link = document.createElement("link");
         link.rel = "preload";
@@ -237,11 +247,15 @@ export default function Home() {
 
     const loader = createPreviewLoader();
 
-    const fetchWithProgress = async (src) => {
+    const fetchWithProgress = async (src, eagerFetch = false) => {
       updateProgress(src, 5);
       const controller = new AbortController();
       controllers.push(controller);
-      const res = await fetch(src, { cache: "force-cache", priority: "high", signal: controller.signal });
+      const res = await fetch(src, {
+        cache: "force-cache",
+        priority: eagerFetch ? "high" : "low",
+        signal: controller.signal,
+      });
       const total = Number(res.headers.get('content-length') || 0);
       if (!res.body) {
         const arr = await res.arrayBuffer();
@@ -272,17 +286,22 @@ export default function Home() {
       return combined.buffer;
     };
 
-    const loadModel = async (src) => {
+    const loadModel = async (src, options = {}) => {
+      const { eagerFetch = false, parseScene = true } = options;
       if (prefetchedRef.current[src] && parsedRef.current[src]) {
         updateProgress(src, 100);
         return;
       }
       try {
-        const arr = prefetchedRef.current[src] || await fetchWithProgress(src);
+        const arr = prefetchedRef.current[src] || await fetchWithProgress(src, eagerFetch);
         if (!arr || !mounted) return;
         if (!prefetchedRef.current[src]) {
           prefetchedRef.current[src] = arr;
           setPrefetched({ ...prefetchedRef.current });
+        }
+        if (!parseScene) {
+          updateProgress(src, 100);
+          return;
         }
         if (parsedRef.current[src]) {
           updateProgress(src, 100);
@@ -302,14 +321,36 @@ export default function Home() {
       }
     };
 
-    // Load ALL models eagerly for instant display
-    modelsToPrefetch.forEach((src) => {
-      if (prefetchedRef.current[src] && parsedRef.current[src]) {
-        updateProgress(src, 100);
-        return;
+    const requestIdle =
+      typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function'
+        ? window.requestIdleCallback.bind(window)
+        : (cb) => window.setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 0 }), 220);
+
+    const queueDeferred = () => {
+      let nextIndex = 0;
+      const processNext = () => {
+        if (!mounted || nextIndex >= deferred.length) return;
+        const src = deferred[nextIndex++];
+        loadModel(src, { eagerFetch: false, parseScene: false }).finally(() => {
+          if (!mounted) return;
+          requestIdle(processNext);
+        });
+      };
+      requestIdle(processNext);
+    };
+
+    (async () => {
+      for (const src of eagerParsed) {
+        if (!mounted) return;
+        await loadModel(src, { eagerFetch: true });
       }
-      loadModel(src);
-    });
+      for (const src of eagerFetched) {
+        if (!mounted) return;
+        await loadModel(src, { eagerFetch: true, parseScene: false });
+      }
+      if (!mounted) return;
+      queueDeferred();
+    })();
 
     return () => {
       mounted = false;
@@ -441,7 +482,7 @@ export default function Home() {
         entries.forEach((entry) => {
           const key = entry.target.dataset.key;
           if (!key) return;
-          next[key] = entry.isIntersecting;
+          next[key] = prev[key] || entry.isIntersecting;
         });
         return next;
       });
@@ -723,11 +764,12 @@ export default function Home() {
               const modelSrc = assetUrl(model.src);
               const posterSrc = assetUrl(model.poster);
               const resolvedModel = { ...model, src: modelSrc, poster: posterSrc };
-              const previewReady = Boolean(parsedPrefetch[modelSrc] || prefetched[modelSrc]);
+              const previewSource = parsedPrefetch[modelSrc] || prefetched[modelSrc] || undefined;
+              const previewLoaded = Boolean(previewLoadedMap[modelSrc]);
               const progress = progressMap[modelSrc] ?? 0;
               const cardKey = model.title;
               const isVisible = visibleCards[cardKey];
-              const shouldRenderPreview = Boolean(isVisible && (parsedPrefetch[modelSrc] || prefetched[modelSrc]));
+              const shouldRenderPreview = Boolean(isVisible);
               const dprCap = deviceTier === "full" ? 1.5 : deviceTier === "medium" ? 1.1 : 1;
               const devicePixelRatio = typeof window !== "undefined" ? (window.devicePixelRatio || 1) : 1;
               const ambientIntensity = deviceTier === "full" ? 1.1 : deviceTier === "medium" ? 0.95 : 0.75;
@@ -744,7 +786,14 @@ export default function Home() {
                   <div className="hp-preview">
                     <div className={`hp-preview-poster hp-preview-${model.accent}`}>
                       <div className="hp-preview-canvas">
-                        {!previewReady && (
+                        <img
+                          src={posterSrc}
+                          alt={`${model.title} preview`}
+                          className={`hp-preview-poster-img ${previewLoaded ? 'is-hidden' : ''}`}
+                          loading={index < 2 ? 'eager' : 'lazy'}
+                          decoding="async"
+                        />
+                        {!previewLoaded && (
                           <div className="hp-loader">
                             <svg className="hp-loader-ring" viewBox="0 0 80 80" fill="none">
                               <circle cx="40" cy="40" r="35" stroke="rgba(127,90,240,0.1)" strokeWidth="2" />
@@ -791,12 +840,13 @@ export default function Home() {
                               <directionalLight intensity={dirIntensity} position={[5, 5, 5]} />
                               <directionalLight intensity={0.3} position={[-3, 2, -3]} />
                               <PreviewGLTF
-                                gltf={parsedPrefetch[modelSrc] || prefetched[modelSrc]}
+                                gltf={previewSource}
                                 src={modelSrc}
                                 fitSize={4.5}
                                 fitAxis="max"
                                 position={model.previewPosition || [0, 0, 0]}
                                 rotation={model.previewRotation || [0, 0, 0]}
+                                onReady={() => markPreviewLoaded(modelSrc)}
                               />
                             </Canvas>
                           </div>

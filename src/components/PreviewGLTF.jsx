@@ -65,7 +65,7 @@ void main() {
 
 // PreviewGLTF: shows a static, non-animated preview of a GLTF model.
 // Accepts either a preloaded `gltf` prop or a `src` URL to load immediately.
-export default function PreviewGLTF({ src, gltf, fitSize = 3, fitAxis = 'max', position = [0,0,0], rotation = [0,0,0] }) {
+export default function PreviewGLTF({ src, gltf, fitSize = 3, fitAxis = 'max', position = [0,0,0], rotation = [0,0,0], onReady }) {
   const [local, setLocal] = useState(gltf || null);
   const mixerRef = useRef(null);
 
@@ -261,6 +261,11 @@ export default function PreviewGLTF({ src, gltf, fitSize = 3, fitAxis = 'max', p
     }
     return cloned;
   }, [local, fitSize, fitAxis, hologramMaterial]);
+
+  useEffect(() => {
+    if (!scene || typeof onReady !== 'function') return;
+    onReady();
+  }, [scene, onReady]);
 
   useEffect(() => {
     if (scene && local && local.animations && local.animations.length > 0) {

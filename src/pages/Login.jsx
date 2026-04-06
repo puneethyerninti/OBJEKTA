@@ -14,6 +14,7 @@ export default function Login() {
   const navigate = useNavigate();
   const [gisAvailable, setGisAvailable] = useState(false);
   const hasGoogleClientId = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID || window.__GOOGLE_CLIENT_ID__);
+  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
 
   useEffect(() => {
     const syncAvailability = () => {
@@ -113,6 +114,14 @@ export default function Login() {
           {/* Placeholder for Google's rendered button (AppInit will render into this if present) */}
           <div className="auth-google-placeholder" style={{ marginTop: 12 }}>
             <div id="g_id_signin" />
+            {hasGoogleClientId && (
+              <div
+                role="note"
+                style={{ marginTop: 10, fontSize: '0.78rem', color: 'rgba(255,255,255,0.72)', lineHeight: 1.4 }}
+              >
+                If Google shows <strong>origin_mismatch</strong>, add <strong>{currentOrigin}</strong> in Google Cloud Console under OAuth client Authorized JavaScript origins.
+              </div>
+            )}
             {!hasGoogleClientId && (
               <div className="auth-error" role="status" style={{ marginTop: 10 }}>
                 Google Sign-in is not configured for this environment.
