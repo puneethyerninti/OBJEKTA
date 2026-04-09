@@ -7,14 +7,16 @@ import Toasts from "../components/Toasts";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { usePageTitle } from "../hooks/usePageTitle";
-import "../styles/dashboard.css";
+import "../styles/dashboard-new.css";
 import { API_BASE, apiUrl } from "../utils/api";
 import {
-  FiArrowLeft, FiPlus, FiSearch, FiGrid, FiList, FiLayout,
+  FiPlus, FiSearch, FiGrid, FiList, FiLayout,
   FiClock, FiFolder, FiUploadCloud, FiHardDrive, FiStar,
-  FiMoreHorizontal, FiTrendingUp, FiZap, FiUsers, FiGlobe,
+  FiTrendingUp, FiZap, FiUsers, FiGlobe,
   FiDownload, FiExternalLink, FiCopy, FiEdit3, FiTrash2,
-  FiShare2, FiFile, FiCommand, FiChevronRight
+  FiShare2, FiFile, FiCommand, FiChevronRight,
+  FiActivity, FiTarget, FiPlay, FiPause, FiRotateCw,
+  FiSliders, FiBarChart2, FiX
 } from "react-icons/fi";
 
 // Global socket guard
@@ -34,6 +36,10 @@ if (typeof window !== 'undefined') {
 if (typeof document !== 'undefined') {
   try { document.documentElement.dataset.apiBase = API_BASE || ''; } catch (_) {}
 }
+
+const DASHBOARD_STARRED_KEY = "objekta_dashboard_starred";
+const DEFAULT_FOCUS_SECONDS = 25 * 60;
+const FOCUS_PRESETS = [15, 25, 45];
 
 export default function Dashboard() {
   usePageTitle("Dashboard");
@@ -74,11 +80,32 @@ export default function Dashboard() {
   const [q, setQ] = useState("");
   const searchDebounceRef = useRef(null);
   const [sortBy, setSortBy] = useState("recent"); // recent | name | progress
+  const [projectFilter, setProjectFilter] = useState("all"); // all | starred | active
+
+  const [starredIds, setStarredIds] = useState(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const raw = window.localStorage.getItem(DASHBOARD_STARRED_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const [isCommandOpen, setIsCommandOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
+  const commandInputRef = useRef(null);
+
+  const [focusDuration, setFocusDuration] = useState(DEFAULT_FOCUS_SECONDS);
+  const [focusRemaining, setFocusRemaining] = useState(DEFAULT_FOCUS_SECONDS);
+  const [focusRunning, setFocusRunning] = useState(false);
 
   // Socket & presence/progress tracking
   const socketRef = useRef(null);
   const [presenceMap, setPresenceMap] = useState({});
   const [saveProgressMap, setSaveProgressMap] = useState({}); // { projectId: 0..1 }
+  const [socketOnline, setSocketOnline] = useState(false);
   const socketErrorRef = useRef({ lastToast: 0, logged: false });
   const socketRetryRef = useRef(0);
   const socketGiveUpRef = useRef(false);
@@ -119,6 +146,67 @@ export default function Dashboard() {
       toastTimers.clear();
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(DASHBOARD_STARRED_KEY, JSON.stringify(starredIds || {}));
+    } catch {
+      // Ignore storage quota/access issues
+    }
+  }, [starredIds]);
+
+  useEffect(() => {
+    if (!focusRunning) return;
+    const interval = window.setInterval(() => {
+      setFocusRemaining((prev) => {
+        if (prev <= 1) {
+          window.clearInterval(interval);
+          setFocusRunning(false);
+          pushToast("Focus session completed. Great momentum.", "success", 4600);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [focusRunning, pushToast]);
+
+  const closeCommandPalette = useCallback(() => {
+    setIsCommandOpen(false);
+    setCommandQuery("");
+  }, []);
+
+  const openCommandPalette = useCallback(() => {
+    setIsCommandOpen(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onCommandHotkey = (ev) => {
+      const pressedK = (ev.key || "").toLowerCase() === "k";
+      if ((ev.metaKey || ev.ctrlKey) && pressedK) {
+        ev.preventDefault();
+        setIsCommandOpen(true);
+        return;
+      }
+      if (ev.key === "Escape" && isCommandOpen) {
+        ev.preventDefault();
+        closeCommandPalette();
+      }
+    };
+
+    window.addEventListener("keydown", onCommandHotkey);
+    return () => window.removeEventListener("keydown", onCommandHotkey);
+  }, [isCommandOpen, closeCommandPalette]);
+
+  useEffect(() => {
+    if (!isCommandOpen) return;
+    const timer = setTimeout(() => {
+      commandInputRef.current?.focus?.();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [isCommandOpen]);
 
   const forcedLogoutRef = useRef(false);
   useEffect(() => { forcedLogoutRef.current = false; }, [user]);
@@ -401,6 +489,7 @@ export default function Dashboard() {
         window.__OBJEKTA_DASHBOARD_SOCKET_INITIALIZED = true;
         socketRetryRef.current = 0;
         socketGiveUpRef.current = false;
+        setSocketOnline(false);
 
         const s = io(API_BASE || window.location.origin, {
           withCredentials: true,
@@ -414,9 +503,14 @@ export default function Dashboard() {
         socketRef.current = s;
 
         s.on("connect", () => {
+          setSocketOnline(true);
           try {
             s.emit("join-dashboard", { userId: user?.id || user?._id || user?.email || s.id });
           } catch (e) {}
+        });
+
+        s.on("disconnect", () => {
+          setSocketOnline(false);
         });
 
         s.on("project_created", (proj) => {
@@ -479,6 +573,7 @@ export default function Dashboard() {
         });
 
         s.on("connect_error", (err) => {
+          setSocketOnline(false);
           const now = Date.now();
           socketRetryRef.current += 1;
           console.warn("Socket connect_error:", err?.message || err);
@@ -499,12 +594,14 @@ export default function Dashboard() {
         });
 
         s.on("reconnect_failed", () => {
+          setSocketOnline(false);
           if (socketGiveUpRef.current) return;
           socketGiveUpRef.current = true;
           pushToast("Realtime disabled (server unreachable)", "warn");
           try { s.disconnect(); } catch (e) {}
         });
       } catch (err) {
+        setSocketOnline(false);
         console.warn("socket init failed", err);
         pushToast("Realtime disabled", "warn");
       }
@@ -515,6 +612,7 @@ export default function Dashboard() {
         socketRef.current?.disconnect();
       } catch (e) {}
       socketRef.current = null;
+      setSocketOnline(false);
       if (typeof window !== "undefined") {
         window.__OBJEKTA_DASHBOARD_SOCKET_INITIALIZED = false;
       }
@@ -716,13 +814,31 @@ export default function Dashboard() {
     };
   }, [qInput]);
 
+  const toggleProjectStar = useCallback((projectId) => {
+    if (!projectId) return;
+    setStarredIds((prev) => {
+      const next = { ...(prev || {}) };
+      if (next[projectId]) delete next[projectId];
+      else next[projectId] = true;
+      return next;
+    });
+  }, []);
+
   // Filtered projects
   const filteredProjects = React.useMemo(() => {
     if (!Array.isArray(projects)) return [];
     const qLower = q.trim().toLowerCase();
     let list = projects.filter((p) => {
-      if (!qLower) return true;
-      return (p.title || "").toLowerCase().includes(qLower);
+      const matchesSearch = !qLower || (p.title || "").toLowerCase().includes(qLower);
+      if (!matchesSearch) return false;
+
+      if (projectFilter === "starred") {
+        return !!starredIds?.[p._id];
+      }
+      if (projectFilter === "active") {
+        return Number(p.progress || 0) < 100;
+      }
+      return true;
     });
     if (sortBy === "recent") {
       list = [...list].sort(
@@ -735,7 +851,69 @@ export default function Dashboard() {
       list = [...list].sort((a, b) => (b.progress || 0) - (a.progress || 0));
     }
     return list;
-  }, [projects, q, sortBy]);
+  }, [projects, q, sortBy, projectFilter, starredIds]);
+
+  const applyFocusPreset = useCallback((minutes) => {
+    const seconds = Math.max(1, Number(minutes || 0)) * 60;
+    setFocusDuration(seconds);
+    setFocusRemaining(seconds);
+    setFocusRunning(false);
+  }, []);
+
+  const resetFocusSession = useCallback(() => {
+    setFocusRemaining(focusDuration);
+    setFocusRunning(false);
+  }, [focusDuration]);
+
+  const formatClock = useCallback((secondsInput) => {
+    const total = Math.max(0, Number(secondsInput || 0));
+    const mins = Math.floor(total / 60);
+    const secs = total % 60;
+    return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  }, []);
+
+  const focusProgress = React.useMemo(() => {
+    if (!focusDuration) return 0;
+    const completed = focusDuration - focusRemaining;
+    return Math.max(0, Math.min(100, Math.round((completed / focusDuration) * 100)));
+  }, [focusDuration, focusRemaining]);
+
+  const starredCount = React.useMemo(() => {
+    if (!Array.isArray(projects)) return 0;
+    return projects.reduce((count, p) => count + (starredIds?.[p._id] ? 1 : 0), 0);
+  }, [projects, starredIds]);
+
+  const activeProjectCount = React.useMemo(() => {
+    if (!Array.isArray(projects)) return 0;
+    return projects.filter((p) => Number(p.progress || 0) < 100).length;
+  }, [projects]);
+
+  const averageProgress = React.useMemo(() => {
+    if (!Array.isArray(projects) || projects.length === 0) return 0;
+    const sum = projects.reduce((acc, p) => acc + Number(p.progress || 0), 0);
+    return Math.round(sum / projects.length);
+  }, [projects]);
+
+  const liveCollaboratorCount = React.useMemo(() => {
+    const groups = Object.values(presenceMap || {});
+    return groups.reduce((sum, users) => sum + (Array.isArray(users) ? users.length : 0), 0);
+  }, [presenceMap]);
+
+  const momentumScore = React.useMemo(() => {
+    const value = averageProgress * 0.55 + activeProjectCount * 6 + liveCollaboratorCount * 4;
+    return Math.max(0, Math.min(100, Math.round(value)));
+  }, [averageProgress, activeProjectCount, liveCollaboratorCount]);
+
+  const spotlightProjects = React.useMemo(() => {
+    if (!Array.isArray(projects)) return [];
+    return [...projects]
+      .sort((a, b) => {
+        const scoreA = Number(a.progress || 0) + (starredIds?.[a._id] ? 18 : 0);
+        const scoreB = Number(b.progress || 0) + (starredIds?.[b._id] ? 18 : 0);
+        return scoreB - scoreA;
+      })
+      .slice(0, 4);
+  }, [projects, starredIds]);
 
   // Context menu handlers
   useEffect(() => {
@@ -788,6 +966,9 @@ export default function Dashboard() {
         return openProjectModal(p);
       case "duplicate":
         return duplicateProject(p);
+      case "star":
+        toggleProjectStar(p?._id);
+        return pushToast(starredIds?.[p?._id] ? "Removed from starred" : "Added to starred", "info");
       case "delete":
         return openProjectModal(p);
       case "share":
@@ -862,6 +1043,106 @@ export default function Dashboard() {
     return "Good evening";
   }, []);
 
+  const realtimeStateLabel = socketOnline ? "Live sync online" : "Realtime standby";
+
+  const commandActions = (() => {
+    const systemActions = [
+      {
+        id: "new-project",
+        icon: FiPlus,
+        label: "Create new project",
+        description: "Start a blank scene in one click",
+        hint: "New",
+        keywords: "new create project",
+        run: () => createProject(),
+      },
+      {
+        id: "open-studio",
+        icon: FiLayout,
+        label: "Open Studio",
+        description: "Jump into the editor workspace",
+        hint: "Studio",
+        keywords: "studio open editor",
+        run: () => navToStudio(),
+      },
+      {
+        id: "import",
+        icon: FiDownload,
+        label: "Import in Studio",
+        description: "Open Studio in import mode",
+        hint: "Import",
+        keywords: "import upload",
+        run: () => handleImport(),
+      },
+      {
+        id: "marketplace",
+        icon: FiGlobe,
+        label: "Browse marketplace",
+        description: "Find new assets and materials",
+        hint: "Gallery",
+        keywords: "marketplace gallery assets",
+        run: () => handleMarketplace(),
+      },
+      {
+        id: "export",
+        icon: FiExternalLink,
+        label: "Export snapshot",
+        description: "Export the most recent project snapshot",
+        hint: "Export",
+        keywords: "export snapshot download",
+        run: () => handleExportAction(),
+      },
+      {
+        id: "focus-25",
+        icon: FiTarget,
+        label: "Start 25 minute focus",
+        description: "Set and start a deep work timer",
+        hint: "25m",
+        keywords: "focus pomodoro timer",
+        run: () => {
+          applyFocusPreset(25);
+          setFocusRunning(true);
+        },
+      },
+    ];
+
+    const projectActions = Array.isArray(projects)
+      ? projects.slice(0, 8).map((project, index) => ({
+          id: `project-${project._id || index}`,
+          icon: FiFolder,
+          label: `Open ${project.title || "Untitled"}`,
+          description: "Open this project directly in Studio",
+          hint: timeAgo(project.updatedAt || project.createdAt) || "Recent",
+          keywords: `${project.title || ""} project open studio`,
+          run: () => navToStudio(project),
+        }))
+      : [];
+
+    return [...systemActions, ...projectActions];
+  })();
+
+  const filteredCommandActions = React.useMemo(() => {
+    const needle = commandQuery.trim().toLowerCase();
+    if (!needle) return commandActions;
+    return commandActions.filter((cmd) => {
+      const haystack = `${cmd.label} ${cmd.description} ${cmd.keywords}`.toLowerCase();
+      return haystack.includes(needle);
+    });
+  }, [commandActions, commandQuery]);
+
+  const runCommandAction = useCallback((cmd) => {
+    if (!cmd || typeof cmd.run !== "function") return;
+    closeCommandPalette();
+    cmd.run();
+  }, [closeCommandPalette]);
+
+  const handleCommandInputKeyDown = useCallback((ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      runCommandAction(filteredCommandActions[0]);
+    }
+  }, [filteredCommandActions, runCommandAction]);
+
   // Render UI
   return (
     <div className="dashboard-root">
@@ -894,6 +1175,13 @@ export default function Dashboard() {
                 <p className="welcome-sub">
                   Your creative workspace is ready. You have <strong>{filteredProjects.length}</strong> project{filteredProjects.length !== 1 ? 's' : ''} in progress.
                 </p>
+                <div className="welcome-meta">
+                  <span className={`welcome-chip ${socketOnline ? 'welcome-chip--live' : ''}`}>
+                    <span className="welcome-chip-dot" /> {realtimeStateLabel}
+                  </span>
+                  <span className="welcome-chip">{starredCount} starred</span>
+                  <span className="welcome-chip">{averageProgress}% average completion</span>
+                </div>
               </div>
               <div className="welcome-search">
                 <div className="search-box">
@@ -906,8 +1194,13 @@ export default function Dashboard() {
                     className="search-input"
                     aria-label="Search projects"
                   />
-                  <kbd className="search-kbd">⌘K</kbd>
+                  <button className="search-kbd" onClick={openCommandPalette} aria-label="Open command palette">
+                    Ctrl/Cmd K
+                  </button>
                 </div>
+                <button className="command-launch-btn" onClick={openCommandPalette}>
+                  <FiCommand size={15} /> Command Palette
+                </button>
               </div>
             </div>
             <div className="welcome-glow" aria-hidden="true" />
@@ -946,7 +1239,99 @@ export default function Dashboard() {
             </div>
           </section>
 
-          {/* ── Quick Actions ────────────────────────────── */}
+          {/* ── Command Center Bento ───────────────────── */}
+          <section className="dash-bento" aria-label="Dashboard insights">
+            <article className="bento-card bento-card--insight">
+              <div className="bento-head">
+                <h3 className="bento-title"><FiBarChart2 size={16} /> Momentum</h3>
+                <span className="bento-pill">{momentumScore}/100</span>
+              </div>
+              <div className="momentum-ring" style={{ "--momentum-value": `${momentumScore}%` }}>
+                <div className="momentum-ring-inner">
+                  <div className="momentum-label">Momentum</div>
+                  <div className="momentum-value">{momentumScore}</div>
+                </div>
+              </div>
+              <div className="insight-stats">
+                <div className="insight-stat">
+                  <span className="insight-stat-label">Active projects</span>
+                  <span className="insight-stat-value">{activeProjectCount}</span>
+                </div>
+                <div className="insight-stat">
+                  <span className="insight-stat-label">Live collaborators</span>
+                  <span className="insight-stat-value">{liveCollaboratorCount}</span>
+                </div>
+              </div>
+            </article>
+
+            <article className="bento-card bento-card--focus">
+              <div className="bento-head">
+                <h3 className="bento-title"><FiTarget size={16} /> Focus Session</h3>
+                <span className="bento-pill">{Math.max(0, Math.round(focusRemaining / 60))}m left</span>
+              </div>
+
+              <div className="focus-ring" style={{ "--focus-progress": `${focusProgress}%` }}>
+                <div className="focus-ring-inner">
+                  <div className="focus-clock">{formatClock(focusRemaining)}</div>
+                  <div className="focus-sub">Deep work mode</div>
+                </div>
+              </div>
+
+              <div className="focus-presets" role="group" aria-label="Focus presets">
+                {FOCUS_PRESETS.map((minutes) => (
+                  <button
+                    key={minutes}
+                    className={`focus-preset ${focusDuration === minutes * 60 ? 'focus-preset--active' : ''}`}
+                    onClick={() => applyFocusPreset(minutes)}
+                  >
+                    {minutes}m
+                  </button>
+                ))}
+              </div>
+
+              <div className="focus-actions">
+                <button className="focus-btn focus-btn--primary" onClick={() => setFocusRunning((v) => !v)}>
+                  {focusRunning ? <FiPause size={14} /> : <FiPlay size={14} />}
+                  {focusRunning ? 'Pause' : 'Start'}
+                </button>
+                <button className="focus-btn" onClick={resetFocusSession}>
+                  <FiRotateCw size={14} /> Reset
+                </button>
+              </div>
+            </article>
+
+            <article className="bento-card bento-card--spotlight">
+              <div className="bento-head">
+                <h3 className="bento-title"><FiActivity size={16} /> Spotlight</h3>
+                <span className="bento-pill">Top work</span>
+              </div>
+
+              <div className="spotlight-list">
+                {spotlightProjects.length === 0 ? (
+                  <div className="spotlight-empty">Create a project to build your spotlight stack.</div>
+                ) : spotlightProjects.map((project, idx) => (
+                  <div key={project._id || `spot-${idx}`} className="spotlight-item">
+                    <button
+                      className={`spotlight-star ${starredIds?.[project._id] ? 'spotlight-star--active' : ''}`}
+                      onClick={() => toggleProjectStar(project._id)}
+                      aria-label={starredIds?.[project._id] ? 'Unstar project' : 'Star project'}
+                    >
+                      <FiStar size={13} />
+                    </button>
+                    <div className="spotlight-main">
+                      <div className="spotlight-name" title={project.title}>{project.title}</div>
+                      <div className="spotlight-meta">{timeAgo(project.updatedAt || project.createdAt)} • {project.progress || 0}%</div>
+                    </div>
+                    <button className="spotlight-open" onClick={() => navToStudio(project)}>
+                      Open
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </article>
+          </section>
+
+        {/* ── Quick Actions ────────────────────────────── */}
           <section className="dash-quick-actions">
             <button className="qa-btn qa-btn--primary" onClick={createProject}>
               <FiPlus size={18} />
@@ -968,14 +1353,44 @@ export default function Dashboard() {
               <FiExternalLink size={18} />
               <span>Export</span>
             </button>
+            <button className="qa-btn qa-btn--glass" onClick={openCommandPalette}>
+              <FiSliders size={18} />
+              <span>Commands</span>
+            </button>
           </section>
 
-          {/* ── Projects Section ─────────────────────────── */}
-          <section className="dash-projects-section">
+          {/* ── Projects Section (HERO) ─────────────────────────── */}
+          <section className="dash-projects-section dash-projects-hero">
             <div className="section-header">
               <div className="section-header-left">
-                <h2 className="section-title"><FiStar className="section-icon" /> Recent Projects</h2>
+                <h2 className="section-title"><FiStar className="section-icon" /> Your Projects</h2>
                 <span className="section-count">{filteredProjects.length}</span>
+                <div className="project-filter-chips" role="tablist" aria-label="Project filters">
+                  <button
+                    role="tab"
+                    aria-selected={projectFilter === 'all'}
+                    className={`filter-chip ${projectFilter === 'all' ? 'filter-chip--active' : ''}`}
+                    onClick={() => setProjectFilter('all')}
+                  >
+                    All
+                  </button>
+                  <button
+                    role="tab"
+                    aria-selected={projectFilter === 'starred'}
+                    className={`filter-chip ${projectFilter === 'starred' ? 'filter-chip--active' : ''}`}
+                    onClick={() => setProjectFilter('starred')}
+                  >
+                    Starred ({starredCount})
+                  </button>
+                  <button
+                    role="tab"
+                    aria-selected={projectFilter === 'active'}
+                    className={`filter-chip ${projectFilter === 'active' ? 'filter-chip--active' : ''}`}
+                    onClick={() => setProjectFilter('active')}
+                  >
+                    Active ({activeProjectCount})
+                  </button>
+                </div>
               </div>
               <div className="section-header-right">
                 <select
@@ -1029,57 +1444,7 @@ export default function Dashboard() {
             />
           </section>
 
-          {/* ── Activity & Team Row ──────────────────────── */}
-          <section className="dash-panels-row">
-            <div className="panel-card panel-activity">
-              <div className="panel-header">
-                <h3 className="panel-title"><FiClock size={16} /> Activity</h3>
-              </div>
-              <div className="activity-timeline">
-                {activity.length === 0 ? (
-                  <div className="panel-empty-state">No recent activity</div>
-                ) : activity.map((a) => (
-                  <div key={a.id} className="timeline-item">
-                    <div className="timeline-dot" />
-                    <div className="timeline-content">
-                      <span className="timeline-text">{a.text}</span>
-                      <span className="timeline-when">{a.when}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="panel-card panel-team">
-              <div className="panel-header">
-                <h3 className="panel-title"><FiUsers size={16} /> Team</h3>
-                <button className="panel-action-btn" onClick={() => pushToast("Invites coming soon", "info")}>
-                  <FiPlus size={14} /> Invite
-                </button>
-              </div>
-              <div className="team-list">
-                {collabs.length === 0 ? (
-                  <div className="panel-empty-state">No collaborators yet</div>
-                ) : collabs.map((c) => (
-                  <div key={c.id} className="team-member">
-                    <div className="team-avatar">
-                      {c.name?.[0]?.toUpperCase() ?? "U"}
-                      <span className="online-dot" />
-                    </div>
-                    <div className="team-info">
-                      <div className="team-name">{c.name}</div>
-                      <div className="team-role">{c.role || "Member"}</div>
-                    </div>
-                    <button className="team-action" onClick={() => pushToast(`Invite sent to ${c.name}`, "success")}>
-                      <FiShare2 size={14} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          {/* ── Saved Scenes ─────────────────────────────── */}
+          {/* ── Saved Scenes (moved higher) ─────────────────────────────── */}
           <section className="dash-projects-section dash-scenes-section">
             <div className="section-header">
               <div className="section-header-left">
@@ -1151,6 +1516,56 @@ export default function Dashboard() {
             )}
           </section>
 
+          {/* ── Activity & Team Row ──────────────────────── */}
+          <section className="dash-panels-row">
+            <div className="panel-card panel-activity">
+              <div className="panel-header">
+                <h3 className="panel-title"><FiClock size={16} /> Activity</h3>
+              </div>
+              <div className="activity-timeline">
+                {activity.length === 0 ? (
+                  <div className="panel-empty-state">No recent activity</div>
+                ) : activity.map((a) => (
+                  <div key={a.id} className="timeline-item">
+                    <div className="timeline-dot" />
+                    <div className="timeline-content">
+                      <span className="timeline-text">{a.text}</span>
+                      <span className="timeline-when">{a.when}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="panel-card panel-team">
+              <div className="panel-header">
+                <h3 className="panel-title"><FiUsers size={16} /> Team</h3>
+                <button className="panel-action-btn" onClick={() => pushToast("Invites coming soon", "info")}>
+                  <FiPlus size={14} /> Invite
+                </button>
+              </div>
+              <div className="team-list">
+                {collabs.length === 0 ? (
+                  <div className="panel-empty-state">No collaborators yet</div>
+                ) : collabs.map((c) => (
+                  <div key={c.id} className="team-member">
+                    <div className="team-avatar">
+                      {c.name?.[0]?.toUpperCase() ?? "U"}
+                      <span className="online-dot" />
+                    </div>
+                    <div className="team-info">
+                      <div className="team-name">{c.name}</div>
+                      <div className="team-role">{c.role || "Member"}</div>
+                    </div>
+                    <button className="team-action" onClick={() => pushToast(`Invite sent to ${c.name}`, "success")}>
+                      <FiShare2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
           {/* ── Account Section ──────────────────────────── */}
           <section className="dash-account-section">
             <div className="account-card">
@@ -1201,6 +1616,9 @@ export default function Dashboard() {
           </button>
           <button className="ctx-item" role="menuitem" onClick={() => handleContextAction('duplicate', context.project)}>
             <FiCopy size={14} /> Duplicate
+          </button>
+          <button className="ctx-item" role="menuitem" onClick={() => handleContextAction('star', context.project)}>
+            <FiStar size={14} /> {starredIds?.[context.project?._id] ? 'Remove Star' : 'Star Project'}
           </button>
           <button className="ctx-item" role="menuitem" onClick={() => handleContextAction('export', context.project)}>
             <FiDownload size={14} /> Export
@@ -1285,6 +1703,47 @@ export default function Dashboard() {
             </div>
           </div>
         </Modal>
+      )}
+
+      {/* ── Command Palette ─────────────────────────── */}
+      {isCommandOpen && (
+        <div className="command-overlay" role="dialog" aria-modal="true" aria-label="Command palette" onClick={closeCommandPalette}>
+          <div className="command-card" onClick={(ev) => ev.stopPropagation()}>
+            <div className="command-search-row">
+              <FiCommand className="command-search-icon" size={18} />
+              <input
+                ref={commandInputRef}
+                value={commandQuery}
+                onChange={(ev) => setCommandQuery(ev.target.value)}
+                onKeyDown={handleCommandInputKeyDown}
+                className="command-search-input"
+                placeholder="Search actions, projects, workflows..."
+                aria-label="Search commands"
+              />
+              <button className="command-close" onClick={closeCommandPalette} aria-label="Close command palette">
+                <FiX size={16} />
+              </button>
+            </div>
+
+            <div className="command-list" role="listbox" aria-label="Available commands">
+              {filteredCommandActions.length === 0 ? (
+                <div className="command-empty">No commands matched your search.</div>
+              ) : filteredCommandActions.slice(0, 10).map((cmd) => {
+                const CommandIcon = cmd.icon || FiCommand;
+                return (
+                  <button key={cmd.id} className="command-item" onClick={() => runCommandAction(cmd)} role="option">
+                    <span className="command-item-icon"><CommandIcon size={15} /></span>
+                    <span className="command-item-main">
+                      <span className="command-item-title">{cmd.label}</span>
+                      <span className="command-item-description">{cmd.description}</span>
+                    </span>
+                    {cmd.hint ? <span className="command-item-hint">{cmd.hint}</span> : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Toasts ───────────────────────────────────── */}
