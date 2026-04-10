@@ -20,7 +20,41 @@ const storage = multer.diskStorage({
     cb(null, name);
   },
 });
-const upload = multer({ storage });
+
+const allowedSceneExt = new Set([".glb", ".gltf", ".json"]);
+const allowedSceneMime = new Set([
+  "application/json",
+  "application/octet-stream",
+  "application/gltf+json",
+  "model/gltf-binary",
+]);
+
+const allowedEnvExt = new Set([".hdr", ".exr", ".png", ".jpg", ".jpeg", ".webp"]);
+const allowedEnvMime = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/vnd.radiance",
+  "application/octet-stream",
+]);
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 300 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    const mime = file.mimetype || "";
+    if (file.fieldname === "file") {
+      if (allowedSceneExt.has(ext) || allowedSceneMime.has(mime)) return cb(null, true);
+      return cb(new Error("Invalid scene file type"));
+    }
+    if (file.fieldname === "environment") {
+      if (allowedEnvExt.has(ext) || allowedEnvMime.has(mime)) return cb(null, true);
+      return cb(new Error("Invalid environment file type"));
+    }
+    return cb(new Error("Invalid upload field"));
+  },
+});
 
 // POST /api/scenes/save
 // fields: name, description, json (stringified), file (optional), environmentMap(optional .hdr/.exr), backgroundColor, bloomEnabled, oceanEnabled, rainEnabled, cameraState

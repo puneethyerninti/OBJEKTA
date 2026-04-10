@@ -178,7 +178,21 @@ const upload = multer({
 });
 
 // ---------- Static Files ----------
-app.use("/uploads", express.static(uploadDir));
+app.use("/uploads/marketplace", (req, res, next) => {
+  const normalized = (req.path || "").replace(/\\/g, "/");
+  if (normalized === "/thumbnails" || normalized.startsWith("/thumbnails/")) {
+    return next();
+  }
+  return res.status(403).json({ success: false, message: "Direct marketplace asset URLs are disabled" });
+});
+
+app.use(
+  "/uploads",
+  express.static(uploadDir, {
+    dotfiles: "deny",
+    fallthrough: true,
+  })
+);
 
 if (serveFrontend) {
   app.use(
@@ -200,8 +214,14 @@ if (serveFrontend) {
 }
 
 // ---------- API Documentation ----------
-app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, { customSiteTitle: "OBJEKTA API Docs" }));
-app.get("/api/docs.json", (req, res) => res.json(swaggerSpec));
+const exposeApiDocs = process.env.EXPOSE_API_DOCS === "true" || process.env.NODE_ENV !== "production";
+if (exposeApiDocs) {
+  app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, { customSiteTitle: "OBJEKTA API Docs" }));
+  app.get("/api/docs.json", (req, res) => res.json(swaggerSpec));
+} else {
+  app.use("/api/docs", (_req, res) => res.status(404).json({ success: false, message: "Not found" }));
+  app.get("/api/docs.json", (_req, res) => res.status(404).json({ success: false, message: "Not found" }));
+}
 
 // ---------- API Routes ----------
 app.use("/api", apiLimiter);

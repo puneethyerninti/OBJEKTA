@@ -53,10 +53,12 @@ function broadcastToDoc(docName, msg, excludeOrigin) {
   });
 }
 
-function setupWSConnection(conn, _req, { docName }) {
+function setupWSConnection(conn, _req, { docName, userId = null }) {
   const { doc, awareness, conns } = getYDoc(docName);
   conns.add(conn);
   conn._docName = docName;
+  conn._userId = userId;
+  conn._awarenessClientIds = new Set();
 
   // Send initial sync step 1
   const encoder = encoding.createEncoder();
@@ -87,7 +89,20 @@ function setupWSConnection(conn, _req, { docName }) {
           conn.send(encoding.toUint8Array(syncEncoder));
         }
       } else if (msgType === messageAwareness) {
-        awarenessProtocol.applyAwarenessUpdate(awareness, decoding.readVarUint8Array(decoder), conn);
+        const awarenessUpdate = decoding.readVarUint8Array(decoder);
+        if (typeof awarenessProtocol.decodeAwarenessUpdate === 'function') {
+          try {
+            const decodedUpdate = awarenessProtocol.decodeAwarenessUpdate(awarenessUpdate);
+            const added = decodedUpdate?.added || [];
+            const updated = decodedUpdate?.updated || [];
+            const removed = decodedUpdate?.removed || [];
+            added.concat(updated).forEach((id) => conn._awarenessClientIds.add(id));
+            removed.forEach((id) => conn._awarenessClientIds.delete(id));
+          } catch (e) {
+            // ignore decode errors and still attempt to apply awareness update
+          }
+        }
+        awarenessProtocol.applyAwarenessUpdate(awareness, awarenessUpdate, conn);
       }
     } catch (err) {
       console.error('[Yjs] Message error:', err.message);
@@ -96,7 +111,10 @@ function setupWSConnection(conn, _req, { docName }) {
 
   conn.on('close', () => {
     conns.delete(conn);
-    awarenessProtocol.removeAwarenessStates(awareness, [doc.clientID], null);
+    const awarenessIds = Array.from(conn._awarenessClientIds || []);
+    if (awarenessIds.length > 0) {
+      awarenessProtocol.removeAwarenessStates(awareness, awarenessIds, null);
+    }
     // Clean up empty docs after a delay
     if (conns.size === 0) {
       setTimeout(() => {

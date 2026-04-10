@@ -9,10 +9,11 @@ import { collabProvider } from './CollaborationProvider';
  * @param {object} opts
  * @param {string|null} opts.projectId
  * @param {{ id: string, name: string }|null} opts.user
+ * @param {string|null} [opts.authToken]
  * @param {React.RefObject} opts.workspaceRef
  * @param {Function} [opts.onToast]
  */
-export function useCollaboration({ projectId, user, workspaceRef, onToast }) {
+export function useCollaboration({ projectId, user, authToken = null, workspaceRef, onToast }) {
   const [status, setStatus] = useState('disconnected');
   const [remoteUsers, setRemoteUsers] = useState([]);
   const [yjsConnected, setYjsConnected] = useState(false);
@@ -27,7 +28,7 @@ export function useCollaboration({ projectId, user, workspaceRef, onToast }) {
       return;
     }
 
-    collabProvider.connect(projectId, user);
+    collabProvider.connect(projectId, user, undefined, authToken || undefined);
     setYjsConnected(true);
 
     const unsub1 = collabProvider.onStatusChange((s) => {
@@ -91,7 +92,7 @@ export function useCollaboration({ projectId, user, workspaceRef, onToast }) {
       setYjsConnected(false);
       setStatus('disconnected');
     };
-  }, [projectId, user?.id]);
+  }, [authToken, projectId, user?.id]);
 
   // Push local transform changes to Y.Doc
   const pushObjectUpdate = useCallback((objectId, data) => {

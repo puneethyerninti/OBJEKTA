@@ -29,17 +29,44 @@ const s3 = new S3Client({
 const multipartMap = new Map();
 const MULTIPART_TTL_MS = parseInt(process.env.MULTIPART_TTL_MS || `${60 * 60 * 1000}`, 10); // 1h default
 
-const ALLOWED_MIME_PREFIXES = ["model/", "image/", "video/", "audio/"];
+const ALLOWED_EXTENSIONS = new Set([
+  "glb",
+  "gltf",
+  "fbx",
+  "obj",
+  "usdz",
+  "zip",
+  "hdr",
+  "exr",
+  "png",
+  "jpg",
+  "jpeg",
+  "webp",
+]);
+
 const ALLOWED_MIME_TYPES = new Set([
   "application/octet-stream",
   "application/gltf+json",
   "model/gltf-binary",
+  "application/zip",
+  "model/obj",
+  "model/vnd.usdz+zip",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/vnd.radiance",
+  "application/octet-stream",
 ]);
 
-function isAllowedContentType(contentType) {
+function getExtension(filename) {
+  return path.extname(String(filename || "")).toLowerCase().replace(/^\./, "");
+}
+
+function isAllowedUpload(filename, contentType) {
   if (!contentType || typeof contentType !== "string") return false;
-  if (ALLOWED_MIME_TYPES.has(contentType)) return true;
-  return ALLOWED_MIME_PREFIXES.some((prefix) => contentType.startsWith(prefix));
+  const ext = getExtension(filename);
+  if (!ext || !ALLOWED_EXTENSIONS.has(ext)) return false;
+  return ALLOWED_MIME_TYPES.has(contentType);
 }
 
 function sanitizeExt(filename) {
@@ -78,7 +105,7 @@ router.post("/presign", async (req, res) => {
     if (!requireS3(res)) return;
     const { filename, contentType, projectId, purpose: _purpose } = req.body;
     if (!filename || !contentType) return res.status(400).json({ message: "filename & contentType required" });
-    if (!isAllowedContentType(contentType)) return res.status(400).json({ message: "Unsupported contentType" });
+    if (!isAllowedUpload(filename, contentType)) return res.status(400).json({ message: "Unsupported file type" });
 
     // build a safe key: projekta/{projectId||temp}/{uuid}-{safeName}
     const ext = sanitizeExt(filename);
@@ -112,7 +139,7 @@ router.post("/multipart/start", async (req, res) => {
     if (!requireS3(res)) return;
     const { filename, contentType, projectId, fileSize } = req.body || {};
     if (!filename || !contentType) return res.status(400).json({ message: "filename & contentType required" });
-    if (!isAllowedContentType(contentType)) return res.status(400).json({ message: "Unsupported contentType" });
+    if (!isAllowedUpload(filename, contentType)) return res.status(400).json({ message: "Unsupported file type" });
 
     const maxBytes = parseInt(process.env.MULTIPART_MAX_BYTES || "5368709120", 10); // default 5GB
     if (fileSize && Number(fileSize) > maxBytes) {
@@ -224,7 +251,10 @@ router.post("/tus/finalize", async (req, res) => {
     if (!requireS3(res)) return;
     const { filename, projectId, contentType, originalName } = req.body || {};
     if (!filename) return res.status(400).json({ message: "filename required" });
-    if (contentType && !isAllowedContentType(contentType)) return res.status(400).json({ message: "Unsupported contentType" });
+    const nameForValidation = originalName || filename;
+    if (contentType && !isAllowedUpload(nameForValidation, contentType)) {
+      return res.status(400).json({ message: "Unsupported file type" });
+    }
     const tusDir = path.resolve(__dirname, "..", "uploads", "tus");
     const fp = path.join(tusDir, filename);
     if (!fs.existsSync(fp)) return res.status(404).json({ message: "tus file not found" });

@@ -1,10 +1,28 @@
 const express = require("express");
+const rateLimit = require("express-rate-limit");
 const { sendEmail } = require("../services/emailService");
 
 const router = express.Router();
 
+const contactLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number.parseInt(process.env.CONTACT_RATE_LIMIT_MAX || "20", 10),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many contact requests" },
+});
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // POST /api/contact — save contact form submissions (best-effort, no auth required)
-router.post("/", async (req, res) => {
+router.post("/", contactLimiter, async (req, res) => {
   try {
     const { name, email, subject, message } = req.body;
 
@@ -15,6 +33,10 @@ router.post("/", async (req, res) => {
 
     const receiver = process.env.CONTACT_RECEIVER || process.env.SMTP_FROM || null;
     const subjectLine = subject ? `Contact: ${subject}` : "Contact form submission";
+    const safeName = escapeHtml(name || "(not provided)");
+    const safeEmail = escapeHtml(email);
+    const safeSubject = escapeHtml(subject || "(none)");
+    const safeMessage = escapeHtml(message);
 
     if (receiver) {
       const result = await sendEmail({
@@ -24,10 +46,10 @@ router.post("/", async (req, res) => {
         html: `
           <div style="font-family:sans-serif;max-width:640px;margin:0 auto;padding:20px;">
             <h2 style="margin:0 0 8px;">New contact message</h2>
-            <p><strong>Name:</strong> ${name || "(not provided)"}</p>
-            <p><strong>Email:</strong> ${email}</p>
-            <p><strong>Subject:</strong> ${subject || "(none)"}</p>
-            <pre style="white-space:pre-wrap;background:#f5f5f5;padding:12px;border-radius:8px;">${message}</pre>
+            <p><strong>Name:</strong> ${safeName}</p>
+            <p><strong>Email:</strong> ${safeEmail}</p>
+            <p><strong>Subject:</strong> ${safeSubject}</p>
+            <pre style="white-space:pre-wrap;background:#f5f5f5;padding:12px;border-radius:8px;">${safeMessage}</pre>
           </div>
         `,
         text: `New contact message\nName: ${name || "(not provided)"}\nEmail: ${email}\nSubject: ${subject || "(none)"}\n\n${message}`,

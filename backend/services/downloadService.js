@@ -5,7 +5,15 @@
 const crypto = require("crypto");
 const path = require("path");
 
-const DOWNLOAD_SECRET = process.env.DOWNLOAD_SECRET || process.env.JWT_SECRET || "objekta-dl-secret";
+function resolveDownloadSecret() {
+  const secret = process.env.DOWNLOAD_SECRET || process.env.JWT_SECRET || "";
+  if (!secret && process.env.NODE_ENV === "production") {
+    throw new Error("DOWNLOAD_SECRET (or JWT_SECRET) must be configured in production");
+  }
+  return secret || "dev-download-secret-change-me";
+}
+
+const DOWNLOAD_SECRET = resolveDownloadSecret();
 const DOWNLOAD_EXPIRY_HOURS = Number(process.env.DOWNLOAD_EXPIRY_HOURS || "24");
 const MAX_DOWNLOADS = Number(process.env.MAX_DOWNLOADS_PER_ITEM || "5");
 const BACKEND_URL = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 5000}`;

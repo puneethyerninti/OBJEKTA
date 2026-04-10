@@ -2,7 +2,16 @@
 const express = require("express");
 const router = express.Router();
 const Product = require("../../models/Product");
-const { protect } = require("../../middleware/authMiddleware");
+
+function toPublicProduct(product) {
+  if (!product) return product;
+  const out = product.toObject ? product.toObject() : { ...product };
+  delete out.fileUrl;
+  if (out.seller && typeof out.seller === "object") {
+    delete out.seller.email;
+  }
+  return out;
+}
 
 // GET /api/marketplace/products — public listing with search, filter, sort, pagination
 router.get("/", async (req, res) => {
@@ -70,7 +79,7 @@ router.get("/", async (req, res) => {
 
     res.json({
       success: true,
-      products,
+      products: products.map((p) => toPublicProduct(p)),
       page: Number(page),
       totalPages: Math.ceil(totalCount / lim),
       totalCount,
@@ -101,14 +110,14 @@ router.get("/:idOrSlug", async (req, res) => {
     const { idOrSlug } = req.params;
     let product;
     if (idOrSlug.match(/^[0-9a-fA-F]{24}$/)) {
-      product = await Product.findById(idOrSlug)
-        .populate("seller", "name avatar email");
+      product = await Product.findOne({ _id: idOrSlug, status: "active" })
+        .populate("seller", "name avatar");
     } else {
       product = await Product.findOne({ slug: idOrSlug, status: "active" })
-        .populate("seller", "name avatar email");
+        .populate("seller", "name avatar");
     }
     if (!product) return res.status(404).json({ success: false, message: "Product not found" });
-    res.json({ success: true, product });
+    res.json({ success: true, product: toPublicProduct(product) });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

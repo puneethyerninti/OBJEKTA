@@ -71,6 +71,10 @@ function validateEnv() {
     console.warn("⚠️  COOKIE_SAMESITE=none requires COOKIE_SECURE=true to work in modern browsers");
   }
 
+    if (!process.env.DOWNLOAD_SECRET) {
+      console.warn("⚠️  DOWNLOAD_SECRET not set in production; download links fall back to JWT_SECRET");
+    }
+
   console.log("✅ Environment validation complete");
 }
 

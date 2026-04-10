@@ -12,6 +12,7 @@ const {
   PROVIDER,
 } = require("../../services/paymentService");
 const { generateOrderDownloadLinks } = require("../../services/downloadService");
+const { emitOrderCreated, emitOrderStatusUpdate, emitInventoryUpdate } = require("../../socket/marketplace");
 
 router.use(protect);
 
@@ -88,11 +89,12 @@ router.post("/", async (req, res) => {
     try {
       const { getIO } = require("../../socket");
       const io = getIO();
-      io.emit("order:created", {
+      emitOrderCreated(io, {
         orderId: order._id,
         buyer: req.userId,
         total,
         itemCount: orderItems.length,
+        sellerIds: Object.keys(sellerAmounts),
       });
     } catch (e) {
       /* socket not available */
@@ -153,15 +155,17 @@ router.post("/:id/confirm", async (req, res) => {
       try {
         const { getIO } = require("../../socket");
         const io = getIO();
-        io.emit("order:status:update", {
+        emitOrderStatusUpdate(io, {
           orderId: order._id,
           status: order.status,
           paymentStatus: order.paymentStatus,
+          buyerId: order.buyer,
+          sellerIds: (order.sellerPayouts || []).map((p) => p.seller),
         });
 
         // Notify inventory changes
         for (const item of order.items) {
-          io.emit("inventory:update", {
+          emitInventoryUpdate(io, {
             productId: item.product,
             sold: item.quantity,
           });
@@ -219,7 +223,7 @@ router.get("/", async (req, res) => {
 router.get("/:id", async (req, res) => {
   try {
     const order = await Order.findOne({ _id: req.params.id, buyer: req.userId })
-      .populate("items.product", "title thumbnail slug fileUrl")
+      .populate("items.product", "title thumbnail slug")
       .populate("buyer", "name email");
     if (!order) return res.status(404).json({ success: false, message: "Order not found" });
     res.json({ success: true, order });

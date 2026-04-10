@@ -491,6 +491,9 @@ export default function Dashboard() {
         socketGiveUpRef.current = false;
         setSocketOnline(false);
 
+        const socketToken =
+          localStorage.getItem("objekta_token") || localStorage.getItem("token") || null;
+
         const s = io(API_BASE || window.location.origin, {
           withCredentials: true,
           transports: ["websocket", "polling"],
@@ -499,13 +502,14 @@ export default function Dashboard() {
           reconnectionDelay: 2500,
           reconnectionDelayMax: 6000,
           forceNew: true,
+          auth: socketToken ? { token: socketToken } : undefined,
         });
         socketRef.current = s;
 
         s.on("connect", () => {
           setSocketOnline(true);
           try {
-            s.emit("join-dashboard", { userId: user?.id || user?._id || user?.email || s.id });
+            s.emit("join-dashboard");
           } catch (e) {}
         });
 
@@ -574,6 +578,10 @@ export default function Dashboard() {
 
         s.on("connect_error", (err) => {
           setSocketOnline(false);
+          if ((err?.message || "").toLowerCase().includes("unauthorized")) {
+            handleUnauthorized();
+            return;
+          }
           const now = Date.now();
           socketRetryRef.current += 1;
           console.warn("Socket connect_error:", err?.message || err);

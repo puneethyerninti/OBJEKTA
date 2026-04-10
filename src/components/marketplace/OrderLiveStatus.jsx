@@ -24,7 +24,12 @@ export default function OrderLiveStatus({ order, onStatusUpdate }) {
     if (!order?._id) return;
 
     const socketUrl = API_BASE || window.location.origin;
-    const socket = io(socketUrl, { transports: ["websocket", "polling"] });
+    const token = localStorage.getItem("objekta_token") || localStorage.getItem("token") || null;
+    const socket = io(socketUrl, {
+      transports: ["websocket", "polling"],
+      withCredentials: true,
+      auth: token ? { token } : undefined,
+    });
 
     socket.on("connect", () => {
       setConnected(true);

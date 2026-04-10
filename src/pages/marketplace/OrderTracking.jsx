@@ -105,7 +105,7 @@ export default function OrderTracking() {
               {order.downloadLinks.map((dl, i) => (
                 <a
                   key={i}
-                  href={dl.url}
+                  href={dl.signedUrl || dl.url}
                   className="mp-btn mp-btn-ghost"
                   target="_blank"
                   rel="noopener noreferrer"

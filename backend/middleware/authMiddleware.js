@@ -1,7 +1,7 @@
 // backend/middleware/authMiddleware.js
 const jwt = require("jsonwebtoken");
 
-exports.protect = (req, res, next) => {
+function extractToken(req, { allowQueryToken = false } = {}) {
   let token = null;
 
   // Accept token from Authorization header "Bearer <token>"
@@ -14,20 +14,36 @@ exports.protect = (req, res, next) => {
     token = req.cookies.accessToken || req.cookies.objekta_token || null;
   }
 
-  // Fallback: check query parameter (for WebSocket upgrades)
-  if (!token && req.query && req.query.token) {
+  // Optional fallback: query param token (websocket-only compatibility)
+  if (!token && allowQueryToken && req.query && req.query.token) {
     token = req.query.token;
   }
 
+  return token;
+}
+
+function verifyAccessToken(token) {
+  if (!token) return null;
+  try {
+    return jwt.verify(token, process.env.JWT_SECRET);
+  } catch (_err) {
+    return null;
+  }
+}
+
+exports.protect = (req, res, next) => {
+  const token = extractToken(req);
+
   if (!token) return res.status(401).json({ message: "Not authorized, token missing" });
 
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.userId = decoded.id;
-    next();
-  } catch (err) {
+  const decoded = verifyAccessToken(token);
+  if (!decoded) {
     return res.status(401).json({ message: "Not authorized, token invalid" });
   }
+
+  req.userId = decoded.id;
+  req.user = { id: decoded.id, _id: decoded.id };
+  next();
 };
 
 /**
@@ -59,3 +75,6 @@ exports.authorize = (...roles) => {
     }
   };
 };
+
+exports.extractToken = extractToken;
+exports.verifyAccessToken = verifyAccessToken;

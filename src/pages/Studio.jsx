@@ -555,6 +555,10 @@ export default function Studio() {
 
   // --- Yjs CRDT Collaboration ---
   const collabUser = authUser ? { id: authUser._id || authUser.id, name: authUser.name || authUser.email } : null;
+  const collabAuthToken =
+    typeof window !== "undefined"
+      ? localStorage.getItem("objekta_token") || localStorage.getItem("token") || null
+      : null;
   const {
     status: yjsStatus,
     yjsConnected,
@@ -566,7 +570,17 @@ export default function Studio() {
     isLockedByOther,
     setCursor: setCollabCursor,
     setSelectedObjects: setCollabSelected,
-  } = useCollaboration({ projectId, user: collabUser, workspaceRef, onToast: (t) => { try { pushToast(t); } catch (e) {} } });
+  } = useCollaboration({
+    projectId,
+    user: collabUser,
+    authToken: collabAuthToken,
+    workspaceRef,
+    onToast: (t) => {
+      try {
+        pushToast(t);
+      } catch (e) {}
+    },
+  });
 
   // --- Physics (Rapier WASM) ---
   const {
@@ -619,6 +633,10 @@ export default function Studio() {
     const headers = { "Content-Type": "application/json" };
     if (token) headers["Authorization"] = `Bearer ${token}`;
     return headers;
+  }, []);
+
+  const getAuthToken = useCallback(() => {
+    return localStorage.getItem("objekta_token") || localStorage.getItem("token") || null;
   }, []);
 
   const safeJson = async (res) => {
@@ -1564,7 +1582,13 @@ export default function Studio() {
       const module = await import("socket.io-client");
       const ioClient = module.io || module.default || module;
       const base = API_BASE || window.location.origin;
-      const socket = ioClient(base, { autoConnect: true, transports: ["websocket", "polling"], withCredentials: true });
+      const token = getAuthToken();
+      const socket = ioClient(base, {
+        autoConnect: true,
+        transports: ["websocket", "polling"],
+        withCredentials: true,
+        auth: token ? { token } : undefined,
+      });
       collabSocketRef.current = socket;
       socket.on("connect", () => {
         setCollabConnected(true); setCollabLoading(false); pushToast({ type: "info", message: "Connected to collab server" });
@@ -1572,6 +1596,10 @@ export default function Studio() {
       });
       socket.on("connect_error", (err) => {
         setCollabLoading(false);
+        if ((err?.message || "").toLowerCase().includes("unauthorized")) {
+          forceLogoutDueTo401();
+          return;
+        }
         const now = Date.now();
         if (now - (collabErrorGateRef.current.lastToast || 0) > 60000) {
           pushToast({ type: "error", message: "Collab connect failed" });
@@ -1593,7 +1621,7 @@ export default function Studio() {
       });
       socket.on("disconnect", () => { setCollabConnected(false); pushToast({ type: "info", message: "Collab disconnected" }); });
     } catch (e) { console.error("collab start failed", e); pushToast({ type: "error", message: "Failed to start collab (see console)" }); setCollabLoading(false); }
-  }, [pushToast]);
+  }, [forceLogoutDueTo401, getAuthToken, pushToast]);
 
   /* refreshLightListFromScene (unchanged) */
   const refreshLightListFromScene = useCallback(() => {
@@ -2449,8 +2477,8 @@ export default function Studio() {
         window.__OBJEKTA_STUDIO_SOCKET_INITIALIZED = true;
       }
       try {
-  const base = API_BASE || window.location.origin;
-  const module = await import("socket.io-client").catch(() => null);
+        const base = API_BASE || window.location.origin;
+        const module = await import("socket.io-client").catch(() => null);
         if (!module) {
 
 
@@ -2459,7 +2487,14 @@ export default function Studio() {
           return;
         }
         const ioClient = module.io || module.default || module;
-        const socket = ioClient(base, { path: "/socket.io", transports: ["websocket", "polling"], autoConnect: true, withCredentials: true });
+        const token = getAuthToken();
+        const socket = ioClient(base, {
+          path: "/socket.io",
+          transports: ["websocket", "polling"],
+          autoConnect: true,
+          withCredentials: true,
+          auth: token ? { token } : undefined,
+        });
         projectSocketRef.current = socket;
 
         socket.on("connect", () => {
@@ -2469,6 +2504,14 @@ export default function Studio() {
         });
 
         socket.on("disconnect", () => { if (!mounted) return; setIsConnectedToServer(false); });
+
+        socket.on("connect_error", (err) => {
+          if ((err?.message || "").toLowerCase().includes("unauthorized")) {
+            forceLogoutDueTo401();
+            return;
+          }
+          console.warn("project socket connect_error", err?.message || err);
+        });
 
         socket.on("project:patched", async (payload) => {
           try {

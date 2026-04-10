@@ -58,8 +58,19 @@ router.get("/:token", async (req, res) => {
     dlEntry.lastDownloadedAt = new Date();
     await order.save();
 
-    // Serve the file
-    const filePath = path.join(__dirname, "../../uploads", product.fileUrl.replace(/^\/uploads\//, ""));
+    // Serve local file when stored on disk
+    const uploadsRoot = path.resolve(__dirname, "../../uploads");
+    const normalizedRelative = String(product.fileUrl || "")
+      .replace(/^\/+/, "")
+      .replace(/^uploads\//, "");
+    if (normalizedRelative.includes("..")) {
+      return res.status(400).json({ success: false, message: "Invalid product file path" });
+    }
+    const filePath = path.resolve(uploadsRoot, normalizedRelative);
+    if (!filePath.startsWith(`${uploadsRoot}${path.sep}`) && filePath !== uploadsRoot) {
+      return res.status(400).json({ success: false, message: "Invalid product file path" });
+    }
+
     if (fs.existsSync(filePath)) {
       const ext = path.extname(filePath).toLowerCase();
       const contentType = ext === ".glb" ? "model/gltf-binary" : "application/octet-stream";
@@ -68,8 +79,15 @@ router.get("/:token", async (req, res) => {
       return fs.createReadStream(filePath).pipe(res);
     }
 
-    // Fallback: redirect to fileUrl (might be external)
-    return res.redirect(product.fileUrl);
+    // Optional controlled redirect for CDN-hosted assets
+    if (/^https?:\/\//i.test(product.fileUrl || "")) {
+      const allowedBase = process.env.S3_PUBLIC_BASE ? process.env.S3_PUBLIC_BASE.replace(/\/+$/, "") : null;
+      if (allowedBase && String(product.fileUrl).startsWith(`${allowedBase}/`)) {
+        return res.redirect(product.fileUrl);
+      }
+    }
+
+    return res.status(404).json({ success: false, message: "Product file not found" });
   } catch (err) {
     console.error("Download error:", err);
     res.status(500).json({ success: false, message: "Download failed" });

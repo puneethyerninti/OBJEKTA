@@ -3,7 +3,7 @@ const express = require("express");
 const router = express.Router();
 const Product = require("../../models/Product");
 const Order = require("../../models/Order");
-const { protect } = require("../../middleware/authMiddleware");
+const { protect, authorize } = require("../../middleware/authMiddleware");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
@@ -44,6 +44,7 @@ const upload = multer({
 
 // All seller routes require auth
 router.use(protect);
+router.use(authorize("seller", "admin"));
 
 // GET /api/marketplace/seller/products — list seller's own products
 router.get("/products", async (req, res) => {

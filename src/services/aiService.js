@@ -9,6 +9,17 @@ import { apiUrl } from "../utils/api";
 
 const AI_BASE = apiUrl("api/ai");
 
+function getAuthHeaders() {
+  const headers = { "Content-Type": "application/json" };
+  try {
+    const token = localStorage.getItem("objekta_token") || localStorage.getItem("token");
+    if (token) headers.Authorization = `Bearer ${token}`;
+  } catch (e) {
+    // ignore storage access errors
+  }
+  return headers;
+}
+
 /** Check if any AI provider is configured on the backend. */
 export async function getAIStatus() {
   try {
@@ -33,7 +44,7 @@ export async function getAIStatus() {
 export async function aiChat({ messages, sceneContext, provider, maxTokens, temperature }) {
   const res = await fetch(`${AI_BASE}/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: getAuthHeaders(),
     body: JSON.stringify({ messages, sceneContext, provider, maxTokens, temperature }),
   });
   const data = await res.json();
@@ -53,7 +64,7 @@ export async function aiChat({ messages, sceneContext, provider, maxTokens, temp
 export async function aiDescribeScene(sceneContext) {
   const res = await fetch(`${AI_BASE}/describe`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: getAuthHeaders(),
     body: JSON.stringify({ sceneContext }),
   });
   const data = await res.json();
@@ -74,7 +85,7 @@ export async function aiDescribeScene(sceneContext) {
 export async function aiSuggestMaterial(objectInfo, sceneContext) {
   const res = await fetch(`${AI_BASE}/suggest-material`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: getAuthHeaders(),
     body: JSON.stringify({ objectInfo, sceneContext }),
   });
   const data = await res.json();
@@ -94,7 +105,7 @@ export async function aiSuggestMaterial(objectInfo, sceneContext) {
 export async function aiSuggestNames(objects) {
   const res = await fetch(`${AI_BASE}/suggest-names`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: getAuthHeaders(),
     body: JSON.stringify({ objects }),
   });
   const data = await res.json();

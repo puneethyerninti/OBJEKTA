@@ -8,10 +8,20 @@ const express = require("express");
 const router = express.Router();
 const http = require("http");
 const https = require("https");
+const rateLimit = require("express-rate-limit");
 const { chat, availableProviders } = require("../services/aiProviders");
+const { protect } = require("../middleware/authMiddleware");
 
 // Python AI service URL (default: localhost:8100)
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || "http://127.0.0.1:8100";
+
+const aiWriteLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: Number.parseInt(process.env.AI_RATE_LIMIT_PER_MIN || "20", 10),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "AI rate limit exceeded" },
+});
 
 // ── Helper: proxy request to Python AI service ──────────────────────────
 function proxyToPython(path, body, timeout = 45000) {
@@ -77,7 +87,7 @@ Guidelines:
 • If the scene context is empty and the user asks about it, acknowledge it and suggest adding objects`;
 
 // ── POST /api/ai/chat — main chat endpoint ───────────────────────────
-router.post("/chat", async (req, res) => {
+router.post("/chat", protect, aiWriteLimiter, async (req, res) => {
   try {
     const { messages, sceneContext, provider, model, maxTokens, temperature, task } = req.body;
 
@@ -109,7 +119,7 @@ router.post("/chat", async (req, res) => {
 });
 
 // ── POST /api/ai/describe — describe scene ───────────────────────────
-router.post("/describe", async (req, res) => {
+router.post("/describe", protect, aiWriteLimiter, async (req, res) => {
   try {
     const { sceneContext } = req.body;
     if (!sceneContext) {
@@ -142,7 +152,7 @@ router.post("/describe", async (req, res) => {
 });
 
 // ── POST /api/ai/suggest-material — material suggestions ─────────────
-router.post("/suggest-material", async (req, res) => {
+router.post("/suggest-material", protect, aiWriteLimiter, async (req, res) => {
   try {
     const { objectInfo, sceneContext } = req.body;
     if (!objectInfo) {
@@ -174,7 +184,7 @@ router.post("/suggest-material", async (req, res) => {
 });
 
 // ── POST /api/ai/suggest-names — name suggestions ────────────────────
-router.post("/suggest-names", async (req, res) => {
+router.post("/suggest-names", protect, aiWriteLimiter, async (req, res) => {
   try {
     const { objects } = req.body;
     if (!objects || !Array.isArray(objects)) {
@@ -209,7 +219,7 @@ router.post("/suggest-names", async (req, res) => {
 });
 
 // ── POST /api/ai/optimize — scene optimization (Python-only) ─────────
-router.post("/optimize", async (req, res) => {
+router.post("/optimize", protect, aiWriteLimiter, async (req, res) => {
   try {
     const { sceneContext } = req.body;
     if (!sceneContext) {

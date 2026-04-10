@@ -38,6 +38,8 @@ export class CollaborationProvider {
     this.wsProvider = null;
     /** @type {string | null} */
     this.projectId = null;
+    /** @type {string | null} */
+    this.authToken = null;
     /** @type {Function[]} */
     this._listeners = [];
     /** @type {'disconnected' | 'connecting' | 'connected'} */
@@ -52,12 +54,15 @@ export class CollaborationProvider {
    * @param {string} projectId
    * @param {{ id: string, name: string }} user - Current user info
    * @param {string} [wsUrl] - WebSocket base URL (auto-detected if omitted)
+   * @param {string} [authToken] - Access token for authenticated websocket upgrades
    */
-  connect(projectId, user, wsUrl) {
-    if (this.projectId === projectId && this.wsProvider) return;
+  connect(projectId, user, wsUrl, authToken) {
+    const normalizedToken = authToken || null;
+    if (this.projectId === projectId && this.wsProvider && this.authToken === normalizedToken) return;
     this.disconnect();
 
     this.projectId = projectId;
+    this.authToken = normalizedToken;
     this.doc = new Y.Doc();
 
     // Derive WebSocket URL
@@ -77,6 +82,7 @@ export class CollaborationProvider {
       awareness: new Awareness(this.doc),
       resyncInterval: 5000,
       maxBackoffTime: 10000,
+      params: normalizedToken ? { token: normalizedToken } : undefined,
     });
 
     // Set local awareness state
@@ -132,6 +138,7 @@ export class CollaborationProvider {
       this.doc = null;
     }
     this.projectId = null;
+    this.authToken = null;
     this.status = 'disconnected';
     this._statusListeners.forEach(fn => fn('disconnected'));
   }

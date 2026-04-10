@@ -10,6 +10,7 @@ const {
   verifyStripeWebhook,
   PROVIDER,
 } = require("../../services/paymentService");
+const { emitOrderStatusUpdate } = require("../../socket/marketplace");
 
 // GET /api/marketplace/payments/provider — which gateway is active
 router.get("/provider", (req, res) => {
@@ -53,10 +54,12 @@ router.post("/refund", protect, async (req, res) => {
     // Emit real-time
     try {
       const { getIO } = require("../../socket");
-      getIO().emit("order:status:update", {
+      emitOrderStatusUpdate(getIO(), {
         orderId: order._id,
         status: order.status,
         paymentStatus: order.paymentStatus,
+        buyerId: order.buyer,
+        sellerIds: (order.sellerPayouts || []).map((p) => p.seller),
       });
     } catch (e) {}
 
@@ -90,10 +93,12 @@ router.post(
             await order.save();
             try {
               const { getIO } = require("../../socket");
-              getIO().emit("order:status:update", {
+              emitOrderStatusUpdate(getIO(), {
                 orderId: order._id,
                 status: order.status,
                 paymentStatus: order.paymentStatus,
+                buyerId: order.buyer,
+                sellerIds: (order.sellerPayouts || []).map((p) => p.seller),
               });
             } catch (e) {}
           }

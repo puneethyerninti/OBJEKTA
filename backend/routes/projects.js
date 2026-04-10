@@ -53,6 +53,23 @@ const allowedThumbTypes = new Set([
   'image/png','image/jpeg','image/jpg','image/pjpeg','image/webp','image/x-png'
 ]);
 
+const allowedSceneExt = new Set(['.json', '.glb', '.gltf']);
+const allowedSceneMime = new Set([
+  'application/json',
+  'application/octet-stream',
+  'application/gltf+json',
+  'model/gltf-binary',
+]);
+
+const allowedEnvExt = new Set(['.hdr', '.exr', '.png', '.jpg', '.jpeg', '.webp']);
+const allowedEnvMime = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/vnd.radiance',
+  'application/octet-stream',
+]);
+
 const uploadProjectFiles = multer({
   storage: combinedStorage,
   limits: {
@@ -65,9 +82,18 @@ const uploadProjectFiles = multer({
       if (!file.mimetype || allowedThumbTypes.has(file.mimetype)) return cb(null, true);
       return cb(new Error('Invalid thumbnail MIME type'));
     }
-    if (file.fieldname === 'scene') return cb(null, true);
-    // allow any type for environment
-    if (file.fieldname === 'environment') return cb(null, true);
+    if (file.fieldname === 'scene') {
+      const ext = path.extname(file.originalname || '').toLowerCase();
+      const mime = file.mimetype || '';
+      if (allowedSceneExt.has(ext) || allowedSceneMime.has(mime)) return cb(null, true);
+      return cb(new Error('Invalid scene file type'));
+    }
+    if (file.fieldname === 'environment') {
+      const ext = path.extname(file.originalname || '').toLowerCase();
+      const mime = file.mimetype || '';
+      if (allowedEnvExt.has(ext) || allowedEnvMime.has(mime)) return cb(null, true);
+      return cb(new Error('Invalid environment file type'));
+    }
     cb(null, true);
   }
 });
@@ -162,6 +188,46 @@ function canAccess(p, userId) {
   return false;
 }
 
+function safeIO() {
+  try {
+    return getIO();
+  } catch (e) {
+    return null;
+  }
+}
+
+function getProjectParticipantIds(project) {
+  const ids = new Set();
+  if (!project) return ids;
+
+  const ownerId = project.user?._id ? String(project.user._id) : project.user ? String(project.user) : null;
+  if (ownerId) ids.add(ownerId);
+
+  if (Array.isArray(project.collaborators)) {
+    project.collaborators.forEach((c) => {
+      const cid = c?._id ? String(c._id) : String(c);
+      if (cid) ids.add(cid);
+    });
+  }
+
+  return ids;
+}
+
+function emitProjectEvent(project, eventName, payload) {
+  const io = safeIO();
+  if (!io || !project) return;
+  for (const uid of getProjectParticipantIds(project)) {
+    io.to(`dashboard:${uid}`).emit(eventName, payload);
+    io.to(`user:${uid}`).emit(eventName, payload);
+  }
+}
+
+function emitProjectRoom(projectId, eventName, payload) {
+  const io = safeIO();
+  if (!io || !projectId) return;
+  io.to(String(projectId)).emit(eventName, payload);
+}
+
 // GET /api/projects - list (auth required)
 router.get("/", protect, async (req, res) => {
   try {
@@ -247,7 +313,7 @@ router.post("/", protect, handleProjectFiles, async (req, res) => {
       });
       await saved.save();
 
-      getIO()?.emit?.("project_thumbnail_updated", {
+      emitProjectEvent(saved, "project_thumbnail_updated", {
         projectId: String(saved._id),
         thumbnailUrl: makeAbsolute(req, publicUrl),
       });
@@ -267,11 +333,11 @@ router.post("/", protect, handleProjectFiles, async (req, res) => {
     // Build public object with normalized absolute thumbnail URL
     const publicObj = toPublic(req, saved);
 
-    getIO()?.emit?.("project_created", {
+    emitProjectEvent(saved, "project_created", {
       ...publicObj,
       thumbnailUrl: makeAbsolute(req, publicObj.thumbnailUrl)
     });
-    getIO()?.emit?.("projects:changed");
+    emitProjectEvent(saved, "projects:changed", { projectId: String(saved._id) });
 
     res.status(201).json(publicObj);
   } catch (err) {
@@ -301,7 +367,11 @@ router.post("/:id/assets", protect, upload.single("file"), async (req, res) => {
     project.lastSavedAt = new Date();
     await project.save();
 
-    getIO()?.emit?.("project_asset_added", {
+    emitProjectEvent(project, "project_asset_added", {
+      projectId: String(project._id),
+      asset,
+    });
+    emitProjectRoom(String(project._id), "project_asset_added", {
       projectId: String(project._id),
       asset,
     });
@@ -351,11 +421,10 @@ router.post("/:id/assets/s3", protect, async (req, res) => {
     const saved = await project.save();
 
     // emit socket event
-    try {
-      getIO()?.emit?.("project_asset_added", { projectId: String(saved._id), asset });
-      getIO()?.to?.(String(saved._id))?.emit?.("project_asset_added", { projectId: String(saved._id), asset });
-      getIO()?.emit?.("project_updated", toPublic(req, saved));
-    } catch (e) {}
+    emitProjectEvent(saved, "project_asset_added", { projectId: String(saved._id), asset });
+    emitProjectRoom(String(saved._id), "project_asset_added", { projectId: String(saved._id), asset });
+    emitProjectEvent(saved, "project_updated", toPublic(req, saved));
+    emitProjectRoom(String(saved._id), "project_updated", toPublic(req, saved));
 
     res.status(201).json({ success: true, project: toPublic(req, saved), asset });
   } catch (err) {
@@ -479,13 +548,17 @@ router.put("/:id", protect, handleProjectFiles, async (req, res) => {
 
     const publicObj = toPublic(req, updated);
 
-    getIO()?.emit?.("project_updated", {
+    emitProjectEvent(updated, "project_updated", {
       ...publicObj,
       thumbnailUrl: makeAbsolute(req, publicObj.thumbnailUrl)
     });
-    getIO()?.emit?.("projects:changed");
+    emitProjectRoom(id, "project_updated", {
+      ...publicObj,
+      thumbnailUrl: makeAbsolute(req, publicObj.thumbnailUrl),
+    });
+    emitProjectEvent(updated, "projects:changed", { projectId: String(id) });
     if (publicObj.thumbnailUrl)
-      getIO()?.emit?.("project_thumbnail_updated", {
+      emitProjectEvent(updated, "project_thumbnail_updated", {
         projectId: publicObj._id,
         thumbnailUrl: makeAbsolute(req, publicObj.thumbnailUrl),
       });
@@ -507,8 +580,8 @@ router.delete("/:id", protect, async (req, res) => {
 
     await Project.deleteOne({ _id: id });
 
-    getIO()?.emit?.("project_deleted", String(id));
-    getIO()?.emit?.("projects:changed");
+    emitProjectEvent(existing, "project_deleted", String(id));
+    emitProjectEvent(existing, "projects:changed", { projectId: String(id) });
     res.json({ ok: true });
   } catch (err) {
     console.error("DELETE /api/projects/:id error:", err);
