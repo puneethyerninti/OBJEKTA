@@ -7,7 +7,7 @@ import Toasts from "../components/Toasts";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { usePageTitle } from "../hooks/usePageTitle";
-import "../styles/dashboard-new.css";
+import "../styles/dashboard.css";
 import { API_BASE, apiUrl } from "../utils/api";
 import {
   FiPlus, FiSearch, FiGrid, FiList, FiLayout,
