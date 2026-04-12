@@ -20,12 +20,37 @@ function getAuthHeaders() {
   return headers;
 }
 
+async function readJsonSafe(res) {
+  try {
+    return await res.json();
+  } catch {
+    return {};
+  }
+}
+
+async function requestAI(path, payload) {
+  const res = await fetch(`${AI_BASE}${path}`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload || {}),
+  });
+  const data = await readJsonSafe(res);
+  if (!res.ok || !data.success) {
+    const err = new Error(data.message || `AI request failed (${res.status})`);
+    err.status = res.status;
+    err.fallback = data.fallback;
+    err.requiresLLM = data.requiresLLM;
+    throw err;
+  }
+  return data;
+}
+
 /** Check if any AI provider is configured on the backend. */
 export async function getAIStatus() {
   try {
     const res = await fetch(`${AI_BASE}/status`, { method: "GET" });
     if (!res.ok) return { configured: false, providers: [] };
-    return await res.json();
+    return await readJsonSafe(res);
   } catch {
     return { configured: false, providers: [] };
   }
@@ -42,18 +67,7 @@ export async function getAIStatus() {
  * @returns {Promise<{text:string, provider:string, model:string}>}
  */
 export async function aiChat({ messages, sceneContext, provider, maxTokens, temperature }) {
-  const res = await fetch(`${AI_BASE}/chat`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ messages, sceneContext, provider, maxTokens, temperature }),
-  });
-  const data = await res.json();
-  if (!data.success) {
-    const err = new Error(data.message || "AI request failed");
-    err.fallback = data.fallback;
-    throw err;
-  }
-  return data;
+  return requestAI("/chat", { messages, sceneContext, provider, maxTokens, temperature });
 }
 
 /**
@@ -62,18 +76,7 @@ export async function aiChat({ messages, sceneContext, provider, maxTokens, temp
  * @returns {Promise<{text:string, provider:string, model:string}>}
  */
 export async function aiDescribeScene(sceneContext) {
-  const res = await fetch(`${AI_BASE}/describe`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ sceneContext }),
-  });
-  const data = await res.json();
-  if (!data.success) {
-    const err = new Error(data.message || "AI describe failed");
-    err.fallback = data.fallback;
-    throw err;
-  }
-  return data;
+  return requestAI("/describe", { sceneContext });
 }
 
 /**
@@ -83,18 +86,7 @@ export async function aiDescribeScene(sceneContext) {
  * @returns {Promise<{text:string, provider:string, model:string}>}
  */
 export async function aiSuggestMaterial(objectInfo, sceneContext) {
-  const res = await fetch(`${AI_BASE}/suggest-material`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ objectInfo, sceneContext }),
-  });
-  const data = await res.json();
-  if (!data.success) {
-    const err = new Error(data.message || "AI material suggestion failed");
-    err.fallback = data.fallback;
-    throw err;
-  }
-  return data;
+  return requestAI("/suggest-material", { objectInfo, sceneContext });
 }
 
 /**
@@ -103,16 +95,5 @@ export async function aiSuggestMaterial(objectInfo, sceneContext) {
  * @returns {Promise<{text:string, provider:string, model:string}>}
  */
 export async function aiSuggestNames(objects) {
-  const res = await fetch(`${AI_BASE}/suggest-names`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ objects }),
-  });
-  const data = await res.json();
-  if (!data.success) {
-    const err = new Error(data.message || "AI name suggestion failed");
-    err.fallback = data.fallback;
-    throw err;
-  }
-  return data;
+  return requestAI("/suggest-names", { objects });
 }

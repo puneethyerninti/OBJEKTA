@@ -58,14 +58,16 @@ SYSTEM_PROMPT_CHAT = """You are **Objekta AI** — an expert 3D scene assistant 
 
 ## Response rules
 1. **Be conversational first**: When the user sends a greeting (hi, hello, hey), a thank-you, or casual small talk, respond naturally and warmly. Introduce yourself briefly as Objekta AI and offer to help with their 3D scene. Do NOT dump scene data in response to greetings.
-2. **Be precise**: give exact numeric values (roughness: 0.35, metalness: 0.9, color: #C0C0C0).
-3. **Be concise**: ≤ 250 words unless the user explicitly asks for detail.
-4. **Reference scene data**: when scene context is provided AND the user asks about the scene, mention specific object names, triangle counts, materials.
-5. **Never hallucinate**: only mention objects/properties that exist in the provided context.
-6. **Use bullet points** for lists, **bold** for key terms, and `code` for property names.
-7. **Action-oriented**: prefer "do X" over "you could consider X".
-8. **Format numbers**: use commas for thousands (1,234,567 triangles).
-9. If the scene is empty and the user asks about it, acknowledge it and suggest what to add."""
+2. **Honor user intent directly**: If the user asks for ideas/concepts/themes (e.g., cyberpunk scene ideas), provide concrete concepts immediately. Do NOT ask them to rephrase.
+3. **Be precise**: give exact numeric values (roughness: 0.35, metalness: 0.9, color: #C0C0C0).
+4. **Be concise**: ≤ 250 words unless the user explicitly asks for detail.
+5. **Reference scene data**: when scene context is provided AND the user asks about the scene, mention specific object names, triangle counts, materials.
+6. **Never hallucinate**: only mention objects/properties that exist in the provided context.
+7. **Use bullet points** for lists, **bold** for key terms, and `code` for property names.
+8. **Action-oriented**: prefer "do X" over "you could consider X".
+9. **Format numbers**: use commas for thousands (1,234,567 triangles).
+10. For **creative ideation** requests, provide at least 3 options and include: concept title, core assets, lighting style, and camera shot suggestion.
+11. If the scene is empty and the user asks about it, acknowledge it and suggest what to add."""
 
 SYSTEM_PROMPT_DESCRIBE = SYSTEM_PROMPT_CHAT + """
 
@@ -159,11 +161,70 @@ class AIResponse(BaseModel):
 
 TIMEOUT = 45.0
 
+DEFAULT_PROVIDER_ORDER = ["groq", "gemini", "ollama", "openai", "anthropic"]
+
+
+def _normalize_text(value: Optional[str]) -> str:
+    return str(value or "").strip().lower()
+
+
+def _resolve_model(provider: str, model: str, default_model: str) -> str:
+    if model:
+        return model
+
+    provider_model = os.getenv(f"{provider.upper()}_MODEL", "").strip()
+    if provider_model:
+        return provider_model
+
+    # Backward compatibility: global AI_MODEL only applies when provider is explicitly selected.
+    if _normalize_text(os.getenv("AI_PROVIDER", "")) == provider:
+        legacy_model = os.getenv("AI_MODEL", "").strip()
+        if legacy_model:
+            return legacy_model
+
+    return default_model
+
+
+def _is_provider_configured(name: str) -> bool:
+    if name == "ollama":
+        return _normalize_text(os.getenv("AI_PROVIDER", "")) == "ollama" or bool(os.getenv("OLLAMA_HOST"))
+    if name == "groq":
+        return bool(os.getenv("GROQ_API_KEY"))
+    if name == "gemini":
+        return bool(os.getenv("GEMINI_API_KEY"))
+    if name == "openai":
+        return bool(os.getenv("OPENAI_API_KEY"))
+    if name == "anthropic":
+        return bool(os.getenv("ANTHROPIC_API_KEY"))
+    return False
+
+
+def _resolve_provider_order(forced_provider: str = "") -> list[str]:
+    custom = [
+        _normalize_text(p)
+        for p in os.getenv("AI_PROVIDER_PRIORITY", "").split(",")
+        if _normalize_text(p) in DEFAULT_PROVIDER_ORDER
+    ]
+    base = list(dict.fromkeys(custom)) if custom else DEFAULT_PROVIDER_ORDER
+    if forced_provider and forced_provider in DEFAULT_PROVIDER_ORDER:
+        return [forced_provider] + [p for p in base if p != forced_provider]
+    return base
+
+
+def _resolve_active_provider(providers: list[str]) -> Optional[str]:
+    forced = _normalize_text(os.getenv("AI_PROVIDER", ""))
+    if forced and forced != "auto" and forced in providers:
+        return forced
+    for name in DEFAULT_PROVIDER_ORDER:
+        if name in providers:
+            return name
+    return providers[0] if providers else None
+
 async def _groq_chat(messages: list[dict], *, model: str = "", max_tokens: int = 1024, temperature: float = 0.7) -> dict:
     key = os.getenv("GROQ_API_KEY")
     if not key:
         raise ValueError("GROQ_API_KEY not set")
-    model = model or os.getenv("AI_MODEL", "llama-3.3-70b-versatile")
+    model = _resolve_model("groq", model, "llama-3.3-70b-versatile")
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         r = await client.post(
             "https://api.groq.com/openai/v1/chat/completions",
@@ -180,7 +241,7 @@ async def _gemini_chat(messages: list[dict], *, model: str = "", max_tokens: int
     key = os.getenv("GEMINI_API_KEY")
     if not key:
         raise ValueError("GEMINI_API_KEY not set")
-    model = model or os.getenv("AI_MODEL", "gemini-2.0-flash")
+    model = _resolve_model("gemini", model, "gemini-2.0-flash")
 
     system_parts = [m["content"] for m in messages if m["role"] == "system"]
     contents = []
@@ -209,7 +270,7 @@ async def _openai_chat(messages: list[dict], *, model: str = "", max_tokens: int
     key = os.getenv("OPENAI_API_KEY")
     if not key:
         raise ValueError("OPENAI_API_KEY not set")
-    model = model or os.getenv("AI_MODEL", "gpt-4o-mini")
+    model = _resolve_model("openai", model, "gpt-4o-mini")
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         r = await client.post(
             "https://api.openai.com/v1/chat/completions",
@@ -226,7 +287,7 @@ async def _anthropic_chat(messages: list[dict], *, model: str = "", max_tokens: 
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
         raise ValueError("ANTHROPIC_API_KEY not set")
-    model = model or os.getenv("AI_MODEL", "claude-sonnet-4-20250514")
+    model = _resolve_model("anthropic", model, "claude-sonnet-4-20250514")
 
     system_msgs = [m["content"] for m in messages if m["role"] == "system"]
     chat_msgs = [{"role": m["role"] if m["role"] in ("user", "assistant") else "user", "content": m["content"]}
@@ -249,7 +310,7 @@ async def _anthropic_chat(messages: list[dict], *, model: str = "", max_tokens: 
 
 
 async def _ollama_chat(messages: list[dict], *, model: str = "", max_tokens: int = 1024, temperature: float = 0.7) -> dict:
-    model = model or os.getenv("AI_MODEL", "gpt-oss:20b")
+    model = _resolve_model("ollama", model, "qwen2.5:14b-instruct")
     host = (os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434") or "http://127.0.0.1:11434").rstrip("/")
 
     body = {
@@ -289,15 +350,7 @@ PROVIDER_KEY_MAP = {
 
 
 def _available_providers() -> list[str]:
-    available = []
-    if os.getenv("AI_PROVIDER", "").lower() == "ollama" or os.getenv("OLLAMA_HOST"):
-        available.append("ollama")
-    for name, env in PROVIDER_KEY_MAP.items():
-        if not env:
-            continue
-        if os.getenv(env):
-            available.append(name)
-    return available
+    return [name for name in DEFAULT_PROVIDER_ORDER if _is_provider_configured(name)]
 
 
 async def _chat_with_fallback(
@@ -309,19 +362,26 @@ async def _chat_with_fallback(
     temperature: float = 0.7,
 ) -> dict:
     """Try the requested provider, then fall back through others."""
-    forced = provider or os.getenv("AI_PROVIDER", "")
-    if forced and forced in PROVIDER_MAP:
-        return await PROVIDER_MAP[forced](messages, model=model, max_tokens=max_tokens, temperature=temperature)
+    forced_raw = _normalize_text(provider or os.getenv("AI_PROVIDER", ""))
+    forced = forced_raw if forced_raw in PROVIDER_MAP and forced_raw != "auto" else ""
 
-    order = ["ollama", "groq", "gemini", "openai", "anthropic"]
+    order = _resolve_provider_order(forced)
     errors = []
-    for name in order:
-        if name == "ollama":
-            if os.getenv("AI_PROVIDER", "").lower() != "ollama" and not os.getenv("OLLAMA_HOST"):
-                continue
+
+    if forced:
+        if not _is_provider_configured(forced):
+            errors.append(f"{forced}: provider not configured")
         else:
-            if not os.getenv(PROVIDER_KEY_MAP.get(name, "")):
-                continue
+            try:
+                return await PROVIDER_MAP[forced](messages, model=model, max_tokens=max_tokens, temperature=temperature)
+            except Exception as e:
+                errors.append(f"{forced}: {e}")
+
+    for name in order:
+        if name == forced:
+            continue
+        if not _is_provider_configured(name):
+            continue
         try:
             return await PROVIDER_MAP[name](messages, model=model, max_tokens=max_tokens, temperature=temperature)
         except Exception as e:
@@ -460,7 +520,7 @@ async def status_endpoint():
         "success": True,
         "configured": len(providers) > 0,
         "providers": providers,
-        "activeProvider": os.getenv("AI_PROVIDER", providers[0] if providers else None),
+        "activeProvider": _resolve_active_provider(providers),
         "service": "python",
     }
 

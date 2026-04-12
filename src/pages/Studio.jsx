@@ -41,7 +41,7 @@ import setupEnvironment from "../components/EnvironmentSetup";
 import initGLBImporter from "../components/GLBImporter";
 import createMaterialEditor from "../components/MaterialEditor";
 import setupPostProcessing from "../components/PostProcessing";
-import { API_BASE, apiUrl } from "../utils/api";
+import { API_BASE, apiUrl, isCrossOriginTarget } from "../utils/api";
 
 // Extracted studio sub-modules
 import { PALETTE_ITEMS } from "./studio/constants";
@@ -545,6 +545,7 @@ export default function Studio() {
   const [isDirty, setIsDirty] = useState(false);
 
   const projectSocketRef = useRef(null);
+  const projectSocketErrorGateRef = useRef({ lastWarn: 0, logged: false });
   const autosaveTimerRef = useRef(null);
   const lastLocalSnapshotRef = useRef(null);
   const lastServerSavedAtRef = useRef(null);
@@ -1582,11 +1583,13 @@ export default function Studio() {
       const module = await import("socket.io-client");
       const ioClient = module.io || module.default || module;
       const base = API_BASE || window.location.origin;
+      const crossOriginSocket = isCrossOriginTarget(base);
       const token = getAuthToken();
       const socket = ioClient(base, {
         autoConnect: true,
-        transports: ["websocket", "polling"],
-        withCredentials: true,
+        transports: crossOriginSocket ? ["polling"] : ["websocket", "polling"],
+        upgrade: !crossOriginSocket,
+        withCredentials: !crossOriginSocket,
         auth: token ? { token } : undefined,
       });
       collabSocketRef.current = socket;
@@ -2478,6 +2481,7 @@ export default function Studio() {
       }
       try {
         const base = API_BASE || window.location.origin;
+        const crossOriginSocket = isCrossOriginTarget(base);
         const module = await import("socket.io-client").catch(() => null);
         if (!module) {
 
@@ -2490,9 +2494,10 @@ export default function Studio() {
         const token = getAuthToken();
         const socket = ioClient(base, {
           path: "/socket.io",
-          transports: ["websocket", "polling"],
+          transports: crossOriginSocket ? ["polling"] : ["websocket", "polling"],
+          upgrade: !crossOriginSocket,
           autoConnect: true,
-          withCredentials: true,
+          withCredentials: !crossOriginSocket,
           auth: token ? { token } : undefined,
         });
         projectSocketRef.current = socket;
@@ -2500,6 +2505,7 @@ export default function Studio() {
         socket.on("connect", () => {
           if (!mounted) return;
           setIsConnectedToServer(true);
+          projectSocketErrorGateRef.current.logged = false;
           if (projectId) socket.emit("join", { projectId });
         });
 
@@ -2510,7 +2516,15 @@ export default function Studio() {
             forceLogoutDueTo401();
             return;
           }
-          console.warn("project socket connect_error", err?.message || err);
+          const now = Date.now();
+          if (now - (projectSocketErrorGateRef.current.lastWarn || 0) > 15000) {
+            console.warn("project socket connect_error", err?.message || err);
+            projectSocketErrorGateRef.current.lastWarn = now;
+          }
+          if (!projectSocketErrorGateRef.current.logged) {
+            projectSocketErrorGateRef.current.logged = true;
+            console.error("project socket connect_error details", err);
+          }
         });
 
         socket.on("project:patched", async (payload) => {

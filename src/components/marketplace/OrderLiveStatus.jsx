@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { CheckCircle2, Clock, Truck, Package, XCircle, RefreshCw } from "lucide-react";
 import io from "socket.io-client";
+import { API_BASE, isCrossOriginTarget } from "../../utils/api";
 
 const STATUS_STEPS = [
   { key: "pending", label: "Pending", icon: Clock },
@@ -9,11 +10,6 @@ const STATUS_STEPS = [
   { key: "processing", label: "Processing", icon: Package },
   { key: "delivered", label: "Delivered", icon: Truck },
 ];
-
-const API_BASE =
-  typeof window !== "undefined"
-    ? window.__OBJEKTA_API_BASE || window.__OBJEKTA_API_URL__ || ""
-    : "";
 
 export default function OrderLiveStatus({ order, onStatusUpdate }) {
   const [liveStatus, setLiveStatus] = useState(order?.status || "pending");
@@ -24,10 +20,12 @@ export default function OrderLiveStatus({ order, onStatusUpdate }) {
     if (!order?._id) return;
 
     const socketUrl = API_BASE || window.location.origin;
+    const crossOriginSocket = isCrossOriginTarget(socketUrl);
     const token = localStorage.getItem("objekta_token") || localStorage.getItem("token") || null;
     const socket = io(socketUrl, {
-      transports: ["websocket", "polling"],
-      withCredentials: true,
+      transports: crossOriginSocket ? ["polling"] : ["websocket", "polling"],
+      upgrade: !crossOriginSocket,
+      withCredentials: !crossOriginSocket,
       auth: token ? { token } : undefined,
     });
 

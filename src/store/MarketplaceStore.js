@@ -1,11 +1,7 @@
 // src/store/MarketplaceStore.js
 // Zustand store for marketplace state: products, cart, orders, filters, real-time
 import { create } from "zustand";
-
-const API_BASE =
-  typeof window !== "undefined"
-    ? window.__OBJEKTA_API_BASE || window.__OBJEKTA_API_URL__ || ""
-    : "";
+import { API_BASE } from "../utils/api";
 
 function apiUrl(path) {
   return `${API_BASE.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;

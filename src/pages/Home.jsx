@@ -235,9 +235,9 @@ export default function Home() {
 
     if (typeof document !== "undefined") {
       preloadTargets.forEach((href) => {
-        if (document.querySelector(`link[rel="preload"][href="${href}"]`)) return;
+        if (document.querySelector(`link[rel="prefetch"][href="${href}"]`)) return;
         const link = document.createElement("link");
-        link.rel = "preload";
+        link.rel = "prefetch";
         link.as = "fetch";
         link.href = href;
         link.crossOrigin = "anonymous";
@@ -416,7 +416,7 @@ export default function Home() {
 
   const scrollToPanel = useCallback((targetIndex) => {
     if (targetIndex < 0 || targetIndex >= HOME_PANEL_KEYS.length) return;
-    const target = document.querySelector(`[data-home-panel-index=\"${targetIndex}\"]`);
+    const target = document.querySelector(`[data-home-panel-index="${targetIndex}"]`);
     if (!target) return;
     target.scrollIntoView({
       behavior: prefersReducedMotion ? "auto" : "smooth",

@@ -245,6 +245,19 @@ describe("askAboutScene", () => {
     expect(answer).toMatch(/MainLight/);
   });
 
+  it("returns themed scene ideas for creative prompts", async () => {
+    const objs = [makeObj("Sphere_1", 2000, { color: "00ff00", geomType: "SphereGeometry" })];
+    const answer = await askAboutScene(
+      'suggest me some ideas to create scenes example "Cyberpunk"',
+      objs,
+      makeScene([])
+    );
+    expect(answer).toMatch(/Cyberpunk/i);
+    expect(answer).toMatch(/Scene Concepts|Concept/i);
+    expect(answer).toMatch(/Core assets/i);
+    expect(answer).not.toMatch(/I'm not sure exactly what you're looking for/i);
+  });
+
   it("handles empty scene gracefully", async () => {
     const answer = await askAboutScene("What is in the scene?", [], makeScene([]));
     expect(answer).toMatch(/empty/i);

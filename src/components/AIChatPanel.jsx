@@ -8,8 +8,7 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import {
   FiMessageSquare, FiX, FiSend, FiZap, FiRefreshCcw,
-  FiCheck, FiAlertTriangle, FiWifi, FiWifiOff,
-  FiChevronDown, FiTrash2, FiMaximize2, FiMinimize2,
+  FiCheck, FiAlertTriangle, FiTrash2, FiMaximize2, FiMinimize2,
 } from "react-icons/fi";
 import useAIStore from "../store/AIStore";
 import {
@@ -74,7 +73,6 @@ const QUICK_ACTIONS = [
 export default function AIChatPanel({ workspaceRef, selected, pushToast }) {
   // ── Store ────────────────────────────────────────────────────────
   const status = useAIStore((s) => s.status);
-  const statusMessage = useAIStore((s) => s.statusMessage);
   const chatHistory = useAIStore((s) => s.chatHistory);
   const suggestions = useAIStore((s) => s.suggestions);
   const results = useAIStore((s) => s.results);
@@ -103,9 +101,11 @@ export default function AIChatPanel({ workspaceRef, selected, pushToast }) {
     let cancelled = false;
     getAIStatus().then((data) => {
       if (!cancelled) {
-        const hasProviders = data.configured === true;
+        const strictLLM = data?.strictLLM === true;
+        const llmReady = data?.llmReady == null ? data?.configured === true : data.llmReady === true;
+        const hasProviders = llmReady || (!strictLLM && data?.configured === true);
         const provider = data.activeProvider || (data.pythonService ? "python" : null);
-        setAIMode({ online: hasProviders, provider });
+        setAIMode({ online: hasProviders, provider: hasProviders ? provider : null });
       }
     }).catch(() => {
       if (!cancelled) setAIMode({ online: false, provider: null });

@@ -9,11 +9,38 @@ const router = express.Router();
 const http = require("http");
 const https = require("https");
 const rateLimit = require("express-rate-limit");
-const { chat, availableProviders } = require("../services/aiProviders");
+const { chat, availableProviders, checkOllamaStatus } = require("../services/aiProviders");
 const { protect } = require("../middleware/authMiddleware");
 
 // Python AI service URL (default: localhost:8100)
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || "http://127.0.0.1:8100";
+const AI_MODEL = process.env.OLLAMA_MODEL || process.env.AI_MODEL || "qwen2.5:14b-instruct";
+
+function parseBool(value, defaultValue = false) {
+  if (value == null || value === "") return defaultValue;
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return defaultValue;
+}
+
+const AI_REQUIRE_LLM = parseBool(process.env.AI_REQUIRE_LLM, false);
+
+function llmUnavailableMessage(reason = "") {
+  const parts = [
+    "No model-backed AI provider is currently reachable.",
+    "Configure a free provider (GROQ_API_KEY or GEMINI_API_KEY) or run a local Ollama model.",
+  ];
+  if (reason) parts.push(`Reason: ${reason}`);
+  return parts.join(" ");
+}
+
+function resolveActiveProvider(providers = []) {
+  const forced = String(process.env.AI_PROVIDER || "").trim().toLowerCase();
+  if (forced && forced !== "auto" && providers.includes(forced)) return forced;
+  const preferred = ["groq", "gemini", "ollama", "openai", "anthropic"].find((p) => providers.includes(p));
+  return preferred || providers[0] || null;
+}
 
 const aiWriteLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -55,6 +82,34 @@ function proxyToPython(path, body, timeout = 45000) {
   });
 }
 
+function proxyToPythonGet(path, timeout = 10000) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(path, AI_SERVICE_URL);
+    const lib = url.protocol === "https:" ? https : http;
+    const req = lib.request(
+      {
+        hostname: url.hostname,
+        port: url.port,
+        path: url.pathname,
+        method: "GET",
+        timeout,
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (d) => chunks.push(d));
+        res.on("end", () => {
+          const raw = Buffer.concat(chunks).toString("utf-8");
+          try { resolve({ status: res.statusCode, data: JSON.parse(raw) }); }
+          catch { resolve({ status: res.statusCode, data: raw }); }
+        });
+      }
+    );
+    req.on("error", (err) => reject(err));
+    req.on("timeout", () => { req.destroy(); reject(new Error("Python AI service timeout")); });
+    req.end();
+  });
+}
+
 async function tryPython(path, body) {
   try {
     const { status, data } = await proxyToPython(path, body);
@@ -77,10 +132,12 @@ Your capabilities:
 
 Guidelines:
 • When the user sends a greeting (hi, hello, hey), a thank-you, or casual message, respond naturally and warmly — introduce yourself briefly and offer to help. Do NOT dump scene data in response to greetings.
+• If the user asks for scene ideas/concepts/themes (e.g., cyberpunk), respond directly with at least 3 concrete concepts. Do NOT ask them to rephrase.
 • Be concise but thorough — give actionable advice, not vague suggestions
 • When suggesting material values, provide exact numbers (roughness: 0.35, metalness: 0.9)
 • For optimization, give specific thresholds (e.g. "reduce to <500k triangles for mobile")
 • Reference actual scene data when available AND relevant to the question — mention object names, triangle counts, etc.
+• For creative ideation responses, include: concept title, core assets, lighting style, and camera shot suggestion.
 • Format responses clearly with bullet points for lists
 • Keep responses under 300 words unless the user asks for detail
 • Never hallucinate scene objects — only reference what's in the provided context
@@ -110,10 +167,28 @@ router.post("/chat", protect, aiWriteLimiter, async (req, res) => {
       }
     }
 
-    const result = await chat(llmMessages, { provider, model, maxTokens: maxTokens || 1024, temperature: temperature ?? 0.7 });
-    res.json({ success: true, text: result.text, provider: result.provider, model: result.model });
+    try {
+      const result = await chat(llmMessages, { provider, model, maxTokens: maxTokens || 1024, temperature: temperature ?? 0.7 });
+      return res.json({ success: true, text: result.text, provider: result.provider, model: result.model });
+    } catch (llmErr) {
+      if (AI_REQUIRE_LLM) {
+        return res.status(503).json({
+          success: false,
+          requiresLLM: true,
+          message: llmUnavailableMessage(llmErr.message),
+        });
+      }
+      throw llmErr;
+    }
   } catch (err) {
     console.error("[AI route] error:", err.message);
+    if (AI_REQUIRE_LLM) {
+      return res.status(503).json({
+        success: false,
+        requiresLLM: true,
+        message: llmUnavailableMessage(err.message),
+      });
+    }
     res.status(500).json({ success: false, message: err.message, fallback: true });
   }
 });
@@ -131,22 +206,40 @@ router.post("/describe", protect, aiWriteLimiter, async (req, res) => {
     if (pyResult) return res.json(pyResult);
 
     // Fallback: JS LLM
-    const result = await chat(
-      [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "system", content: `Current 3D scene state:\n${sceneContext}` },
-        {
-          role: "user",
-          content:
-            "Describe this 3D scene in detail. Mention what objects are present, their visual appearance, the lighting setup, and overall composition. Be specific about colors, shapes, and spatial arrangement.",
-        },
-      ],
-      { maxTokens: 512, temperature: 0.6 }
-    );
+    try {
+      const result = await chat(
+        [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: `Current 3D scene state:\n${sceneContext}` },
+          {
+            role: "user",
+            content:
+              "Describe this 3D scene in detail. Mention what objects are present, their visual appearance, the lighting setup, and overall composition. Be specific about colors, shapes, and spatial arrangement.",
+          },
+        ],
+        { maxTokens: 512, temperature: 0.6 }
+      );
 
-    res.json({ success: true, text: result.text, provider: result.provider, model: result.model });
+      return res.json({ success: true, text: result.text, provider: result.provider, model: result.model });
+    } catch (llmErr) {
+      if (AI_REQUIRE_LLM) {
+        return res.status(503).json({
+          success: false,
+          requiresLLM: true,
+          message: llmUnavailableMessage(llmErr.message),
+        });
+      }
+      throw llmErr;
+    }
   } catch (err) {
     console.error("[AI describe] error:", err.message);
+    if (AI_REQUIRE_LLM) {
+      return res.status(503).json({
+        success: false,
+        requiresLLM: true,
+        message: llmUnavailableMessage(err.message),
+      });
+    }
     res.status(500).json({ success: false, message: err.message, fallback: true });
   }
 });
@@ -164,21 +257,39 @@ router.post("/suggest-material", protect, aiWriteLimiter, async (req, res) => {
     if (pyResult) return res.json(pyResult);
 
     // Fallback: JS LLM
-    const result = await chat(
-      [
-        { role: "system", content: SYSTEM_PROMPT },
-        ...(sceneContext ? [{ role: "system", content: `Scene:\n${sceneContext}` }] : []),
-        {
-          role: "user",
-          content: `Suggest improved PBR material values for this 3D object:\n${objectInfo}\n\nRespond in this exact format:\nroughness=<0-1>\nmetalness=<0-1>\ncolor=#<hex>\npreset=<name>\ndescription=<one paragraph explaining why these values work>`,
-        },
-      ],
-      { maxTokens: 300, temperature: 0.5 }
-    );
+    try {
+      const result = await chat(
+        [
+          { role: "system", content: SYSTEM_PROMPT },
+          ...(sceneContext ? [{ role: "system", content: `Scene:\n${sceneContext}` }] : []),
+          {
+            role: "user",
+            content: `Suggest improved PBR material values for this 3D object:\n${objectInfo}\n\nRespond in this exact format:\nroughness=<0-1>\nmetalness=<0-1>\ncolor=#<hex>\npreset=<name>\ndescription=<one paragraph explaining why these values work>`,
+          },
+        ],
+        { maxTokens: 300, temperature: 0.5 }
+      );
 
-    res.json({ success: true, text: result.text, provider: result.provider, model: result.model });
+      return res.json({ success: true, text: result.text, provider: result.provider, model: result.model });
+    } catch (llmErr) {
+      if (AI_REQUIRE_LLM) {
+        return res.status(503).json({
+          success: false,
+          requiresLLM: true,
+          message: llmUnavailableMessage(llmErr.message),
+        });
+      }
+      throw llmErr;
+    }
   } catch (err) {
     console.error("[AI suggest-material] error:", err.message);
+    if (AI_REQUIRE_LLM) {
+      return res.status(503).json({
+        success: false,
+        requiresLLM: true,
+        message: llmUnavailableMessage(err.message),
+      });
+    }
     res.status(500).json({ success: false, message: err.message, fallback: true });
   }
 });
@@ -200,20 +311,38 @@ router.post("/suggest-names", protect, aiWriteLimiter, async (req, res) => {
       return `${i + 1}. Current: "${o.name}" | Shape: ${o.shape} | Color: ${o.color} | Material: ${o.surface} | Tris: ${o.tris}`;
     }).join("\n");
 
-    const result = await chat(
-      [
-        { role: "system", content: SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: `These 3D objects have generic/unnamed names. Suggest better descriptive names:\n${objList}\n\nRespond with ONLY a numbered list like:\n1. SuggestedName\n2. SuggestedName\n\nNames should be descriptive, PascalCase, max 30 chars.`,
-        },
-      ],
-      { maxTokens: 300, temperature: 0.6 }
-    );
+    try {
+      const result = await chat(
+        [
+          { role: "system", content: SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: `These 3D objects have generic/unnamed names. Suggest better descriptive names:\n${objList}\n\nRespond with ONLY a numbered list like:\n1. SuggestedName\n2. SuggestedName\n\nNames should be descriptive, PascalCase, max 30 chars.`,
+          },
+        ],
+        { maxTokens: 300, temperature: 0.6 }
+      );
 
-    res.json({ success: true, text: result.text, provider: result.provider, model: result.model });
+      return res.json({ success: true, text: result.text, provider: result.provider, model: result.model });
+    } catch (llmErr) {
+      if (AI_REQUIRE_LLM) {
+        return res.status(503).json({
+          success: false,
+          requiresLLM: true,
+          message: llmUnavailableMessage(llmErr.message),
+        });
+      }
+      throw llmErr;
+    }
   } catch (err) {
     console.error("[AI suggest-names] error:", err.message);
+    if (AI_REQUIRE_LLM) {
+      return res.status(503).json({
+        success: false,
+        requiresLLM: true,
+        message: llmUnavailableMessage(err.message),
+      });
+    }
     res.status(500).json({ success: false, message: err.message, fallback: true });
   }
 });
@@ -230,9 +359,22 @@ router.post("/optimize", protect, aiWriteLimiter, async (req, res) => {
     if (pyResult) return res.json(pyResult);
 
     // No JS fallback for optimize — use chat endpoint instead
-    res.status(503).json({ success: false, message: "Python AI service unavailable for optimization" });
+    res.status(503).json({
+      success: false,
+      requiresLLM: AI_REQUIRE_LLM,
+      message: AI_REQUIRE_LLM
+        ? llmUnavailableMessage("Python AI optimization service unavailable")
+        : "Python AI service unavailable for optimization",
+    });
   } catch (err) {
     console.error("[AI optimize] error:", err.message);
+    if (AI_REQUIRE_LLM) {
+      return res.status(503).json({
+        success: false,
+        requiresLLM: true,
+        message: llmUnavailableMessage(err.message),
+      });
+    }
     res.status(500).json({ success: false, message: err.message });
   }
 });
@@ -242,16 +384,24 @@ router.get("/status", async (_req, res) => {
   const providers = availableProviders();
   let pythonAvailable = false;
   try {
-    const pyStatus = await tryPython("/health", {});
-    pythonAvailable = !!pyStatus;
+    const pyHealth = await proxyToPythonGet("/health", 10000);
+    pythonAvailable = pyHealth.status >= 200 && pyHealth.status < 300;
   } catch (_) { /* ignore */ }
+
+  const ollama = providers.includes("ollama") ? await checkOllamaStatus() : null;
+  const hasCloudProvider = providers.some((p) => p !== "ollama");
+  const localOllamaReady = !!(ollama?.reachable && ollama?.modelReady);
+  const llmReady = pythonAvailable || hasCloudProvider || localOllamaReady;
 
   res.json({
     success: true,
     configured: providers.length > 0 || pythonAvailable,
+    llmReady,
+    strictLLM: AI_REQUIRE_LLM,
     providers,
     pythonService: pythonAvailable,
-    activeProvider: pythonAvailable ? "python" : (process.env.AI_PROVIDER || providers[0] || null),
+    activeProvider: pythonAvailable ? "python" : resolveActiveProvider(providers),
+    ollama,
   });
 });
 

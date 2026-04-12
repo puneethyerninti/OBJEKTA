@@ -53,8 +53,11 @@ export default function Scene() {
     return () => {
       if (glRef.current) {
         try {
-          glRef.current.dispose?.();
-          glRef.current.forceContextLoss?.();
+          const renderer = glRef.current;
+          const gl = renderer?.getContext?.();
+          const isLost = !!(gl && typeof gl.isContextLost === "function" && gl.isContextLost());
+          renderer.dispose?.();
+          if (!isLost) renderer.forceContextLoss?.();
         } catch (e) {
           console.debug('[Scene] Cleanup error', e);
         }

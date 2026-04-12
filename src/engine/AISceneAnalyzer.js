@@ -26,19 +26,39 @@ import {
   getAIStatus,
 } from "../services/aiService";
 
-// Cache whether backend AI is available (refreshed on first call)
-let _aiAvailable = null;
-async function isAIAvailable() {
-  if (_aiAvailable !== null) return _aiAvailable;
+const ALLOW_RULE_FALLBACK = String(import.meta.env.VITE_AI_ALLOW_RULE_FALLBACK || "")
+  .trim()
+  .toLowerCase() === "true";
+
+// Cache backend AI status (refreshed on first call)
+let _aiStatus = null;
+async function getAIAvailability() {
+  if (_aiStatus !== null) return _aiStatus;
   try {
     const status = await getAIStatus();
-    _aiAvailable = status.configured === true;
+    const configured = status?.configured === true;
+    const llmReady = status?.llmReady == null ? configured : status.llmReady === true;
+    const strictLLM = status?.strictLLM === true;
+    _aiStatus = { configured, llmReady, strictLLM };
   } catch {
-    _aiAvailable = false;
+    _aiStatus = { configured: false, llmReady: false, strictLLM: false };
   }
-  // Re-check every 60s in case user configures keys later
-  setTimeout(() => { _aiAvailable = null; }, 60000);
-  return _aiAvailable;
+  // Re-check every 60s in case AI runtime changes.
+  setTimeout(() => { _aiStatus = null; }, 60000);
+  return _aiStatus;
+}
+
+function canUseRuleFallback(status) {
+  if (ALLOW_RULE_FALLBACK) return true;
+  return status?.strictLLM !== true;
+}
+
+function buildLLMUnavailableMessage(err) {
+  if (err?.status === 401) {
+    return "AI request was unauthorized. Please sign in again and retry.";
+  }
+  const reason = err?.message ? ` Reason: ${err.message}` : "";
+  return `Local AI model is required but unavailable. Start Ollama, pull your model, and retry.${reason}`;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -61,6 +81,111 @@ function friendlyType(type) {
     HemisphereLight: "hemisphere light", RectAreaLight: "area light",
   };
   return map[type] || type || "object";
+}
+
+const THEME_SCENE_PRESETS = {
+  cyberpunk: {
+    label: "Cyberpunk",
+    match: /(cyberpunk|neon|blade\s*runner|night\s*city|dystopian\s*(future|city)?|sci[\s-]*fi)/i,
+    palette: "#00E5FF, #FF2DA6, #7C3AED, #0B1026",
+    lightingStyle: "strong neon rim lights + wet-surface bounce + volumetric haze",
+    concepts: [
+      {
+        title: "Neon Alley Ambush",
+        assets: "narrow alley walls, cables, AC units, puddles, vending machine, hologram sign",
+        setup: "rainy night atmosphere with steam vents and reflective asphalt",
+        camera: "35mm lens, low angle near puddles, deep perspective lines",
+      },
+      {
+        title: "Rooftop Data Exchange",
+        assets: "antenna cluster, rooftop billboards, drone pads, skyline cards, holographic UI panel",
+        setup: "high-wind rooftop with emissive edge strips and distant traffic glow",
+        camera: "50mm medium shot with skyline bokeh and slight dutch tilt",
+      },
+      {
+        title: "Megacorp Transit Hub",
+        assets: "platform modules, ad pillars, moving train shell, crowd silhouettes, security drones",
+        setup: "misty station interior with animated ad loops and scan lights",
+        camera: "24mm wide hero shot, foreground silhouettes, bloom-heavy highlights",
+      },
+    ],
+  },
+};
+
+function resolveThemePreset(question) {
+  const q = String(question || "");
+  for (const preset of Object.values(THEME_SCENE_PRESETS)) {
+    if (preset.match.test(q)) return preset;
+  }
+  return {
+    label: "Cinematic",
+    palette: "base neutral + one accent color + one practical light color",
+    lightingStyle: "clear key/fill/rim hierarchy with motivated practical lights",
+    concepts: [
+      {
+        title: "Hero Product Stage",
+        assets: "raised plinth, backdrop cards, softbox emitters, logo wall, floor reflections",
+        setup: "minimal studio look emphasizing clean silhouettes",
+        camera: "50mm centered framing with subtle dolly-in",
+      },
+      {
+        title: "Storytelling Corner",
+        assets: "desk vignette, props cluster, hanging practicals, wall decals, floor clutter",
+        setup: "lived-in space with contrast between warm practicals and cool ambient",
+        camera: "35mm over-shoulder or corner composition with layered depth",
+      },
+      {
+        title: "Atmospheric Corridor",
+        assets: "modular corridor kit, repeating lights, pipes, warning panels, fog planes",
+        setup: "long-depth composition for cinematic scale",
+        camera: "24-28mm with strong vanishing point and foreground occluders",
+      },
+    ],
+  };
+}
+
+function ideaStarterFromObject(serialized) {
+  if (!Array.isArray(serialized) || serialized.length === 0) return null;
+  const first = describeObject(serialized[0]);
+  if (first.shape === "sphere") {
+    return `Turn **${first.name}** into a hovering drone core: add an emissive ring, panel seams, and a small antenna cluster.`;
+  }
+  if (first.shape === "box") {
+    return `Use **${first.name}** as a modular building block: duplicate it into walls, kiosks, and stacked props.`;
+  }
+  if (first.shape === "plane") {
+    return `Use **${first.name}** as ground: add roughness variation + decals to anchor the environment.`;
+  }
+  return `Use **${first.name}** as the hero asset and design the environment to frame it.`;
+}
+
+function buildCreativeSceneIdeasReply(question, serialized, summary) {
+  const preset = resolveThemePreset(question);
+  const lines = [];
+  lines.push(`Great direction. **${preset.label}** is a strong scene style for Objekta.`);
+  lines.push(`\n**${preset.label} Scene Concepts:**`);
+
+  preset.concepts.forEach((concept, idx) => {
+    lines.push(`${idx + 1}. **${concept.title}**`);
+    lines.push(`• Core assets: ${concept.assets}`);
+    lines.push(`• Scene setup: ${concept.setup}`);
+    lines.push(`• Camera: ${concept.camera}`);
+  });
+
+  lines.push(`\n**Style Recipe:**`);
+  lines.push(`• Palette: ${preset.palette}`);
+  lines.push(`• Lighting: ${preset.lightingStyle}`);
+  lines.push(`• Performance target: keep hero shot under **500k triangles** and key lights under **6** for smooth realtime.`);
+
+  const starter = ideaStarterFromObject(serialized);
+  if (starter) {
+    lines.push(`\n**Quick Start From Current Scene:**`);
+    lines.push(`• ${starter}`);
+    lines.push(`• Current scene baseline: ${summary.objects} object${summary.objects !== 1 ? "s" : ""}, ${formatNum(summary.totalTris)} tris.`);
+  }
+
+  lines.push(`\nIf you want, I can generate a **step-by-step build checklist** for concept #1 using primitives and lights in your current scene.`);
+  return lines.join("\n");
 }
 
 // ── Color classification ──────────────────────────────────────────────
@@ -183,8 +308,11 @@ export async function describeScene(sceneChildren, scene) {
       return text;
     }
 
+    const aiStatus = await getAIAvailability();
+    let llmErr = null;
+
     // ── Try LLM ──────────────────────────────────────────────────────
-    if (await isAIAvailable()) {
+    if (aiStatus.llmReady) {
       try {
         const ctx = buildSceneContext(sceneChildren, scene);
         const result = await aiDescribeScene(ctx);
@@ -193,9 +321,16 @@ export async function describeScene(sceneChildren, scene) {
           store.setStatus("ready", `via ${result.provider}`);
           return result.text;
         }
-      } catch (llmErr) {
-        console.warn("[AI] LLM describe failed, using fallback:", llmErr.message);
+      } catch (err) {
+        llmErr = err;
+        console.warn("[AI] LLM describe failed, using fallback:", err.message);
       }
+    }
+
+    if (!canUseRuleFallback(aiStatus)) {
+      const message = buildLLMUnavailableMessage(llmErr);
+      store.setStatus("error", message);
+      throw new Error(message);
     }
 
     // ── Rule-based fallback (enhanced) ─────────────────────────────────
@@ -307,8 +442,11 @@ export async function suggestNames(sceneChildren) {
       return [];
     }
 
+    const aiStatus = await getAIAvailability();
+    let llmErr = null;
+
     // ── Try LLM ──────────────────────────────────────────────────────
-    if (await isAIAvailable()) {
+    if (aiStatus.llmReady) {
       try {
         const described = candidates.map((obj) => {
           const d = describeObject(obj);
@@ -332,9 +470,16 @@ export async function suggestNames(sceneChildren) {
             return parsed;
           }
         }
-      } catch (llmErr) {
-        console.warn("[AI] LLM suggestNames failed, using fallback:", llmErr.message);
+      } catch (err) {
+        llmErr = err;
+        console.warn("[AI] LLM suggestNames failed, using fallback:", err.message);
       }
+    }
+
+    if (!canUseRuleFallback(aiStatus)) {
+      const message = buildLLMUnavailableMessage(llmErr);
+      store.setStatus("error", message);
+      throw new Error(message);
     }
 
     // ── Rule-based fallback ──────────────────────────────────────────
@@ -386,8 +531,11 @@ export async function suggestMaterial(object) {
     const currentRough = info.material?.roughness;
     const currentMetal = info.material?.metalness;
 
+    const aiStatus = await getAIAvailability();
+    let llmErr = null;
+
     // ── Try LLM ──────────────────────────────────────────────────────
-    if (await isAIAvailable()) {
+    if (aiStatus.llmReady) {
       try {
         const objInfo = { name: desc.name, shape: desc.shape, color: desc.color, surface: desc.surface, tris: desc.tris, currentColor, currentRoughness: currentRough, currentMetalness: currentMetal };
         const res = await aiSuggestMaterial(objInfo);
@@ -411,9 +559,16 @@ export async function suggestMaterial(object) {
             return suggestion;
           }
         }
-      } catch (llmErr) {
-        console.warn("[AI] LLM suggestMaterial failed, using fallback:", llmErr.message);
+      } catch (err) {
+        llmErr = err;
+        console.warn("[AI] LLM suggestMaterial failed, using fallback:", err.message);
       }
+    }
+
+    if (!canUseRuleFallback(aiStatus)) {
+      const message = buildLLMUnavailableMessage(llmErr);
+      store.setStatus("error", message);
+      throw new Error(message);
     }
 
     // ── Rule-based fallback ──────────────────────────────────────────
@@ -508,8 +663,11 @@ export async function askAboutScene(question, sceneChildren, scene) {
     const summary = computeSceneSummary(sceneChildren);
     const q = question.toLowerCase();
 
+    const aiStatus = await getAIAvailability();
+    let llmErr = null;
+
     // ── Try LLM ──────────────────────────────────────────────────────
-    if (await isAIAvailable()) {
+    if (aiStatus.llmReady) {
       try {
         // Only send scene context for scene-related questions — not for
         // casual greetings or small talk, so the LLM responds naturally.
@@ -526,9 +684,17 @@ export async function askAboutScene(question, sceneChildren, scene) {
           store.setStatus("ready", `via ${res.provider}`);
           return res.text;
         }
-      } catch (llmErr) {
-        console.warn("[AI] LLM chat failed, using fallback:", llmErr.message);
+      } catch (err) {
+        llmErr = err;
+        console.warn("[AI] LLM chat failed, using fallback:", err.message);
       }
+    }
+
+    if (!canUseRuleFallback(aiStatus)) {
+      const message = buildLLMUnavailableMessage(llmErr);
+      store.pushMessage("assistant", message);
+      store.setStatus("error", message);
+      return message;
     }
 
     let answer = "";
@@ -544,12 +710,14 @@ export async function askAboutScene(question, sceneChildren, scene) {
         const heroObj = serialized.length > 0 ? describeObject(serialized.sort((a, b) => (b.geometry?.tris || 0) - (a.geometry?.tris || 0))[0]) : null;
         answer = `Hey! 👋 You've got a scene with ${objCount} object${objCount > 1 ? "s" : ""} and ${formatNum(summary.totalTris)} triangles.` +
           (heroObj ? ` Your main object looks like "${heroObj.name}" — a ${heroObj.color} ${heroObj.shape}.` : "") +
-          `\n\nI can help with:\n• **"Describe my scene"** — detailed overview\n• **"Suggest materials"** — PBR values for selected objects\n• **"How to optimize?"** — performance tips\n• **"What objects are here?"** — full object list`;
+          `\n\nI can help with:\n• **"Describe my scene"** — detailed overview\n• **"Suggest materials"** — PBR values for selected objects\n• **"How to optimize?"** — performance tips\n• **"Give me Cyberpunk scene ideas"** — themed concepts + build plan\n• **"What objects are here?"** — full object list`;
       }
     } else if (q.match(/thanks|thank you|thx|ty|cheers|appreciated/)) {
       answer = "You're welcome! Let me know if you need anything else — I'm here to help with your 3D scene. 🎨";
     } else if (q.match(/who are you|what are you|your name/)) {
       answer = "I'm **Objekta AI** — your 3D scene assistant. I analyze your scene data to give you insights about objects, materials, lighting, and optimization. For the best responses, configure an API key in the Settings to enable LLM-powered answers!";
+    } else if (q.match(/idea|ideas|concept|concepts|inspiration|theme|style|create.*scene|build.*scene|scene.*example|example.*scene|scene prompt/)) {
+      answer = buildCreativeSceneIdeasReply(question, serialized, summary);
     } else if (q.match(/how many|count|number of/)) {
       if (q.match(/triangle|tris|poly/)) {
         const triCount = formatNum(summary.totalTris);
@@ -636,10 +804,12 @@ export async function askAboutScene(question, sceneChildren, scene) {
         "🎨 **Describe Scene** — Detailed analysis of your objects, materials, and lighting\n" +
         "📝 **Smart Rename** — Context-aware name suggestions for generic objects\n" +
         "🎯 **Suggest Material** — PBR material values based on object characteristics\n" +
-        "⚡ **Analyze Scene** — Performance optimization recommendations\n\n" +
+        "⚡ **Analyze Scene** — Performance optimization recommendations\n" +
+        "🌆 **Generate Theme Ideas** — scene concepts (Cyberpunk, sci-fi, cinematic, etc.)\n\n" +
         "You can also ask me questions like:\n" +
         "• *\"How many triangles in my scene?\"*\n" +
         "• *\"Show me the lighting setup\"*\n" +
+        "• *\"Give me 3 Cyberpunk scene ideas\"*\n" +
         "• *\"How can I optimize performance?\"*\n" +
         "• *\"What materials are being used?\"*";
     } else {
@@ -655,6 +825,7 @@ export async function askAboutScene(question, sceneChildren, scene) {
           `Notable objects: ${topNames}.\n\n` +
           `Try asking something specific:\n` +
           `• *"How can I optimize this?"*\n` +
+          `• *"Give me Cyberpunk scene ideas"*\n` +
           `• *"What materials are used?"*\n` +
           `• *"Describe my scene in detail"*\n` +
           `• *"How's the lighting?"*`;

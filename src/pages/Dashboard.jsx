@@ -8,7 +8,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { usePageTitle } from "../hooks/usePageTitle";
 import "../styles/dashboard.css";
-import { API_BASE, apiUrl } from "../utils/api";
+import { API_BASE, apiUrl, isCrossOriginTarget } from "../utils/api";
 import {
   FiPlus, FiSearch, FiGrid, FiList, FiLayout,
   FiClock, FiFolder, FiUploadCloud, FiHardDrive, FiStar,
@@ -106,7 +106,7 @@ export default function Dashboard() {
   const [presenceMap, setPresenceMap] = useState({});
   const [saveProgressMap, setSaveProgressMap] = useState({}); // { projectId: 0..1 }
   const [socketOnline, setSocketOnline] = useState(false);
-  const socketErrorRef = useRef({ lastToast: 0, logged: false });
+  const socketErrorRef = useRef({ lastToast: 0, lastWarn: 0, logged: false });
   const socketRetryRef = useRef(0);
   const socketGiveUpRef = useRef(false);
 
@@ -493,10 +493,13 @@ export default function Dashboard() {
 
         const socketToken =
           localStorage.getItem("objekta_token") || localStorage.getItem("token") || null;
+        const socketUrl = API_BASE || window.location.origin;
+        const crossOriginSocket = isCrossOriginTarget(socketUrl);
 
-        const s = io(API_BASE || window.location.origin, {
-          withCredentials: true,
-          transports: ["websocket", "polling"],
+        const s = io(socketUrl, {
+          withCredentials: !crossOriginSocket,
+          transports: crossOriginSocket ? ["polling"] : ["websocket", "polling"],
+          upgrade: !crossOriginSocket,
           timeout: 5000,
           reconnectionAttempts: 3,
           reconnectionDelay: 2500,
@@ -508,6 +511,9 @@ export default function Dashboard() {
 
         s.on("connect", () => {
           setSocketOnline(true);
+          socketErrorRef.current.logged = false;
+          socketRetryRef.current = 0;
+          socketGiveUpRef.current = false;
           try {
             s.emit("join-dashboard");
           } catch (e) {}
@@ -584,7 +590,10 @@ export default function Dashboard() {
           }
           const now = Date.now();
           socketRetryRef.current += 1;
-          console.warn("Socket connect_error:", err?.message || err);
+          if (now - (socketErrorRef.current.lastWarn || 0) > 15000) {
+            console.warn("Socket connect_error:", err?.message || err);
+            socketErrorRef.current.lastWarn = now;
+          }
           if (now - (socketErrorRef.current.lastToast || 0) > 60000) {
             pushToast("Realtime connection error", "warn");
             socketErrorRef.current.lastToast = now;

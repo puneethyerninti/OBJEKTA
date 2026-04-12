@@ -3,12 +3,14 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
 import "./patchThreeChunks";
+import { API_BASE } from "./utils/api";
 
 // Surface API base for runtime overrides; safe to read Vite envs inside module context
 if (typeof window !== "undefined") {
   window.__OBJEKTA_API_BASE = window.__OBJEKTA_API_BASE
-    || import.meta.env.VITE_API_BASE
-    || import.meta.env.VITE_API_URL;
+    || API_BASE;
+  window.__OBJEKTA_API_URL__ = window.__OBJEKTA_API_URL__
+    || window.__OBJEKTA_API_BASE;
 
   // Keep asset-base fallback in JS module scope to avoid inline-script CSP exceptions.
   window.__OBJEKTA_ASSET_BASE = window.__OBJEKTA_ASSET_BASE

@@ -2198,10 +2198,11 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
         cameraControlsApiRef.current?.dispose?.();
       } catch (e) {}
       try {
-        rendererRef.current?.dispose?.();
-      } catch (e) {}
-      try {
-        rendererRef.current?.forceContextLoss?.();
+        const renderer = rendererRef.current;
+        const gl = renderer?.getContext?.();
+        const isLost = !!(gl && typeof gl.isContextLost === "function" && gl.isContextLost());
+        renderer?.dispose?.();
+        if (!isLost) renderer?.forceContextLoss?.();
       } catch (e) {}
       try {
         rendererRef.current = null;
