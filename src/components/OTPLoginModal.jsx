@@ -137,7 +137,7 @@ export default function OTPLoginModal({ isOpen, onClose, onSuccess }) {
                 className="otp-input otp-code-input"
                 autoFocus
               />
-              {devOtp && process.env.NODE_ENV !== 'production' && (
+              {devOtp && import.meta.env.DEV && (
                 <div className="otp-dev-hint">
                   📧 Dev: {devOtp}
                 </div>

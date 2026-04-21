@@ -8,6 +8,8 @@ const express = require("express");
 const request = require("supertest");
 const jwt = require("jsonwebtoken");
 
+process.env.PAYMENT_PROVIDER = "mock";
+
 // Models
 const User = require("../models/User");
 const Product = require("../models/Product");
@@ -73,7 +75,7 @@ describe("Products API", () => {
     const res = await request(app).get("/api/marketplace/products");
     expect(res.status).toBe(200);
     expect(res.body.products).toEqual([]);
-    expect(res.body.total).toBe(0);
+    expect(res.body.totalCount).toBe(0);
   });
 
   it("Seller can create a product via direct DB insert", async () => {
@@ -103,15 +105,15 @@ describe("Products API", () => {
   it("GET /api/marketplace/products/:id returns product detail", async () => {
     const res = await request(app).get(`/api/marketplace/products/${productId}`);
     expect(res.status).toBe(200);
-    expect(res.body.title).toBe("Test Space Station");
-    expect(res.body.seller).toBeTruthy();
+    expect(res.body.product.title).toBe("Test Space Station");
+    expect(res.body.product.seller).toBeTruthy();
   });
 
   it("GET /api/marketplace/products/categories returns aggregation", async () => {
     const res = await request(app).get("/api/marketplace/products/categories");
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body)).toBe(true);
-    expect(res.body.find((c) => c._id === "architecture")).toBeTruthy();
+    expect(Array.isArray(res.body.categories)).toBe(true);
+    expect(res.body.categories.find((c) => c._id === "architecture")).toBeTruthy();
   });
 
   it("Search by query works", async () => {
@@ -154,8 +156,8 @@ describe("Cart API", () => {
       .set("Authorization", `Bearer ${buyerToken}`)
       .send({ productId, quantity: 1 });
     expect(res.status).toBe(200);
-    expect(res.body.items.length).toBe(1);
-    expect(res.body.items[0].product.toString()).toBe(productId);
+    expect(res.body.cart.items.length).toBe(1);
+    expect(String(res.body.cart.items[0].product?._id || res.body.cart.items[0].product)).toBe(productId);
   });
 
   it("GET /api/marketplace/cart returns cart with items", async () => {
@@ -163,7 +165,7 @@ describe("Cart API", () => {
       .get("/api/marketplace/cart")
       .set("Authorization", `Bearer ${buyerToken}`);
     expect(res.status).toBe(200);
-    expect(res.body.items.length).toBe(1);
+    expect(res.body.cart.items.length).toBe(1);
   });
 
   it("PUT /api/marketplace/cart/update changes quantity", async () => {
@@ -172,7 +174,7 @@ describe("Cart API", () => {
       .set("Authorization", `Bearer ${buyerToken}`)
       .send({ productId, quantity: 3 });
     expect(res.status).toBe(200);
-    expect(res.body.items[0].quantity).toBe(3);
+    expect(res.body.cart.items[0].quantity).toBe(3);
   });
 
   it("DELETE /api/marketplace/cart/remove/:productId removes item", async () => {
@@ -180,7 +182,7 @@ describe("Cart API", () => {
       .delete(`/api/marketplace/cart/remove/${productId}`)
       .set("Authorization", `Bearer ${buyerToken}`);
     expect(res.status).toBe(200);
-    expect(res.body.items.length).toBe(0);
+    expect(res.body.cart.items.length).toBe(0);
   });
 });
 
@@ -204,7 +206,7 @@ describe("Orders API", () => {
     expect(res.body.order).toBeTruthy();
     expect(res.body.order.status).toBe("pending");
     expect(res.body.order.total).toBeGreaterThan(0);
-    expect(res.body.paymentIntent).toBeTruthy();
+    expect(res.body.clientSecret).toBeTruthy();
   });
 
   it("GET /api/marketplace/orders lists orders", async () => {
@@ -264,10 +266,10 @@ describe("Seller API", () => {
       .get("/api/marketplace/seller/stats")
       .set("Authorization", `Bearer ${sellerToken}`);
     expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty("totalProducts");
-    expect(res.body).toHaveProperty("totalSold");
-    expect(res.body).toHaveProperty("grossRevenue");
-    expect(res.body).toHaveProperty("netRevenue");
+    expect(res.body.stats).toHaveProperty("totalProducts");
+    expect(res.body.stats).toHaveProperty("totalSold");
+    expect(res.body.stats).toHaveProperty("grossRevenue");
+    expect(res.body.stats).toHaveProperty("netRevenue");
   });
 
   it("GET /api/marketplace/seller/products returns seller products", async () => {
@@ -275,8 +277,8 @@ describe("Seller API", () => {
       .get("/api/marketplace/seller/products")
       .set("Authorization", `Bearer ${sellerToken}`);
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body)).toBe(true);
-    expect(res.body.length).toBeGreaterThanOrEqual(1);
+    expect(Array.isArray(res.body.products)).toBe(true);
+    expect(res.body.products.length).toBeGreaterThanOrEqual(1);
   });
 
   it("PUT /api/marketplace/seller/products/:id updates product", async () => {
@@ -285,7 +287,7 @@ describe("Seller API", () => {
       .set("Authorization", `Bearer ${sellerToken}`)
       .send({ price: 39.99, description: "Updated description" });
     expect(res.status).toBe(200);
-    expect(res.body.price).toBe(39.99);
+    expect(res.body.product.price).toBe(39.99);
   });
 
   it("DELETE /api/marketplace/seller/products/:id soft-deletes", async () => {
@@ -310,20 +312,20 @@ describe("Payment Service", () => {
   });
 
   it("createPaymentIntent returns intent object", async () => {
-    const intent = await paymentService.createPaymentIntent(4999, "usd", { orderId: "test123" });
+    const intent = await paymentService.createPaymentIntent({ amount: 49.99, currency: "usd", metadata: { orderId: "test123" } });
     expect(intent).toHaveProperty("id");
     expect(intent).toHaveProperty("status");
-    expect(intent.amount).toBe(4999);
+    expect(intent.amount).toBe(49.99);
   });
 
   it("confirmPayment succeeds for mock", async () => {
-    const intent = await paymentService.createPaymentIntent(2999, "usd", {});
+    const intent = await paymentService.createPaymentIntent({ amount: 29.99, currency: "usd", metadata: {} });
     const result = await paymentService.confirmPayment(intent.id);
     expect(result).toHaveProperty("status");
   });
 
   it("refundPayment works for mock", async () => {
-    const intent = await paymentService.createPaymentIntent(1999, "usd", {});
+    const intent = await paymentService.createPaymentIntent({ amount: 19.99, currency: "usd", metadata: {} });
     await paymentService.confirmPayment(intent.id);
     const refund = await paymentService.refundPayment(intent.id);
     expect(refund).toHaveProperty("status");

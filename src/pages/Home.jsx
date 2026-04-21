@@ -57,7 +57,7 @@ const SHOWCASE_MODELS = [
     title: "Portable Rig",
     desc: "Travel-ready laptop kit showing shader tweaks and annotation overlays.",
     accent: "cyan",
-    poster: "assets/laptop-poster.webp",
+    poster: null,
     previewPosition: [0, 0.45, 0],
     fullscreenPosition: [0, 0.75, 0],
     fullscreenFitSize: 4.2,
@@ -68,7 +68,7 @@ const SHOWCASE_MODELS = [
     title: "Command Desk",
     desc: "Multi-screen control deck for layout, approvals, and lighting passes.",
     accent: "violet",
-    poster: "assets/desk-poster.webp",
+    poster: null,
     fullscreenTarget: [0, 1.0, 0],
   },
   {
@@ -76,7 +76,7 @@ const SHOWCASE_MODELS = [
     title: "Concept Vehicle",
     desc: "Hero-grade automotive model tuned for material look-dev and lighting overrides.",
     accent: "amber",
-    poster: "assets/porsche-poster.webp",
+    poster: null,
     fullscreenTarget: [0, 1.0, 0],
   },
   {
@@ -84,7 +84,7 @@ const SHOWCASE_MODELS = [
     title: "Black Dragon",
     desc: "Creature rig with idle animation and layered surface detail.",
     accent: "violet",
-    poster: "assets/thumbnail-placeholder.svg",
+    poster: null,
     previewRotation: [Math.PI, 0, 0],
     fullscreenRotation: [Math.PI, 0, 0],
     fullscreenTarget: [0, 1.2, 0],
@@ -94,7 +94,7 @@ const SHOWCASE_MODELS = [
     title: "Flynn's Arcade",
     desc: "Retro interior scene built for neon lighting and cinematic depth.",
     accent: "cyan",
-    poster: "assets/thumbnail-placeholder.svg",
+    poster: null,
     fullscreenTarget: [0, 1.0, 0],
   },
   {
@@ -102,7 +102,7 @@ const SHOWCASE_MODELS = [
     title: "Gipsy Avenger",
     desc: "Mech-scale asset optimized for real-time material previews.",
     accent: "amber",
-    poster: "assets/thumbnail-placeholder.svg",
+    poster: null,
     fullscreenTarget: [0, 1.0, 0],
   },
   {
@@ -110,7 +110,7 @@ const SHOWCASE_MODELS = [
     title: "iPhone 17 Pro",
     desc: "Product visualization mockup with clean PBR finishes.",
     accent: "cyan",
-    poster: "assets/thumbnail-placeholder.svg",
+    poster: null,
     fullscreenTarget: [0, 1.0, 0],
   },
 ];
@@ -120,8 +120,11 @@ const TICKER_ITEMS = [
   "Real-time GI", "Mesh Optimization", "LOD System", "Post-Processing",
   "Collaborative", "Resumable Uploads", "Scene Presets",
 ];
+const HOME_REFRESH_STAMP = "Live UI: Refresh 2026.04.21";
 
 const HOME_PANEL_KEYS = ["hero", "features", "showcase"];
+const DESKTOP_PANEL_BREAKPOINT = 680;
+const DESKTOP_PANEL_MODE_QUERY = `(min-width: ${DESKTOP_PANEL_BREAKPOINT}px) and (hover: hover) and (pointer: fine)`;
 
 const createPreviewLoader = () => {
   const manager = new THREE.LoadingManager();
@@ -155,7 +158,6 @@ const createPreviewLoader = () => {
 };
 
 
-
 export default function Home() {
   usePageTitle();
   const navigate = useNavigate();
@@ -172,6 +174,7 @@ export default function Home() {
   const [activeModel, setActiveModel] = useState(null);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [activePanelIndex, setActivePanelIndex] = useState(0);
+  const [desktopPanelMode, setDesktopPanelMode] = useState(false);
   const prefetchedRef = useRef({});
   const parsedRef = useRef({});
   const progressRef = useRef({});
@@ -185,6 +188,17 @@ export default function Home() {
     const handler = (e) => setPrefersReducedMotion(e.matches);
     mediaQuery.addEventListener("change", handler);
     return () => mediaQuery.removeEventListener("change", handler);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const mediaQuery = window.matchMedia(DESKTOP_PANEL_MODE_QUERY);
+    const update = () => {
+      setDesktopPanelMode(mediaQuery.matches);
+    };
+    update();
+    mediaQuery.addEventListener("change", update);
+    return () => mediaQuery.removeEventListener("change", update);
   }, []);
 
   useEffect(() => {
@@ -427,10 +441,8 @@ export default function Home() {
 
   // Wheel and keyboard panel navigation on desktop.
   useEffect(() => {
-    if (prefersReducedMotion) return undefined;
+    if (!desktopPanelMode || prefersReducedMotion) return undefined;
     if (typeof window === "undefined") return undefined;
-    const isDesktop = window.matchMedia("(min-width: 1025px)").matches;
-    if (!isDesktop) return undefined;
 
     const onWheel = (event) => {
       if (Math.abs(event.deltaY) < 30 || wheelLockRef.current) return;
@@ -469,7 +481,7 @@ export default function Home() {
       window.removeEventListener("wheel", onWheel);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [activePanelIndex, prefersReducedMotion, scrollToPanel]);
+  }, [activePanelIndex, desktopPanelMode, prefersReducedMotion, scrollToPanel]);
 
   // Track showcase cards for lazy Canvas mount
   useEffect(() => {
@@ -604,29 +616,32 @@ export default function Home() {
   }, []);
 
   const getPanelStateClass = (index) => {
+    if (!desktopPanelMode) return "is-active";
     if (index === activePanelIndex) return "is-active";
     if (index < activePanelIndex) return "is-hidden-above";
     return "is-hidden-below";
   };
 
   return (
-    <div className="home-screen">
+    <div className={`home-screen home-screen--refresh-2026 ${desktopPanelMode ? "home-screen--panel-mode" : "home-screen--stack-mode"}`}>
       <div className="scene-background" aria-hidden="true">
         <Scene />
       </div>
       <main className="home-shell">
-        <div className="hp-panel-dots" aria-label="Home sections">
-          {HOME_PANEL_KEYS.map((key, index) => (
-            <button
-              key={key}
-              type="button"
-              className={`hp-panel-dot ${index === activePanelIndex ? "is-active" : ""}`}
-              onClick={() => scrollToPanel(index)}
-              aria-label={`Go to ${key} section`}
-              aria-current={index === activePanelIndex ? "true" : "false"}
-            />
-          ))}
-        </div>
+        {desktopPanelMode && (
+          <div className="hp-panel-dots" aria-label="Home sections">
+            {HOME_PANEL_KEYS.map((key, index) => (
+              <button
+                key={key}
+                type="button"
+                className={`hp-panel-dot ${index === activePanelIndex ? "is-active" : ""}`}
+                onClick={() => scrollToPanel(index)}
+                aria-label={`Go to ${key} section`}
+                aria-current={index === activePanelIndex ? "true" : "false"}
+              />
+            ))}
+          </div>
+        )}
 
         {/* ──── HERO ──── */}
         <section
@@ -640,6 +655,7 @@ export default function Home() {
               <span className="hp-badge-dot" aria-hidden />
               Web-Based 3D Studio
             </span>
+            <span className="hp-refresh-pill" aria-label="Current Home UI revision">{HOME_REFRESH_STAMP}</span>
 
             <h1 className="hp-title">
               Design immersive{" "}
@@ -762,8 +778,9 @@ export default function Home() {
           <div className="hp-showcase-grid">
             {SHOWCASE_MODELS.map((model, index) => {
               const modelSrc = assetUrl(model.src);
-              const posterSrc = assetUrl(model.poster);
-              const resolvedModel = { ...model, src: modelSrc, poster: posterSrc };
+              const hasPoster = Boolean(model.poster);
+              const posterSrc = hasPoster ? assetUrl(model.poster) : "";
+              const resolvedModel = { ...model, src: modelSrc, poster: hasPoster ? posterSrc : undefined };
               const previewSource = parsedPrefetch[modelSrc] || prefetched[modelSrc] || undefined;
               const previewLoaded = Boolean(previewLoadedMap[modelSrc]);
               const progress = progressMap[modelSrc] ?? 0;
@@ -778,21 +795,27 @@ export default function Home() {
               return (
                 <article
                   key={model.title}
-                  className="hp-showcase-card showcase-card-v2 hp-roll-target"
+                  className={`hp-showcase-card showcase-card-v2 hp-roll-target ${hasPoster ? "" : "hp-showcase-card--no-poster"}`}
                   data-key={cardKey}
+                  data-accent={model.accent}
                   onClick={() => handleShowcaseOpen(resolvedModel)}
                   style={{ animationDelay: `${index * 0.12}s` }}
                 >
                   <div className="hp-preview">
-                    <div className={`hp-preview-poster hp-preview-${model.accent}`}>
+                    <div className={`hp-preview-poster hp-preview-${model.accent} ${hasPoster ? "" : "hp-preview-no-poster"}`}>
                       <div className="hp-preview-canvas">
-                        <img
-                          src={posterSrc}
-                          alt={`${model.title} preview`}
-                          className={`hp-preview-poster-img ${previewLoaded ? 'is-hidden' : ''}`}
-                          loading={index < 2 ? 'eager' : 'lazy'}
-                          decoding="async"
-                        />
+                        {hasPoster && (
+                          <img
+                            src={posterSrc}
+                            alt={`${model.title} preview`}
+                            className={`hp-preview-poster-img ${previewLoaded ? 'is-hidden' : ''}`}
+                            loading={index < 2 ? 'eager' : 'lazy'}
+                            decoding="async"
+                          />
+                        )}
+                        {!hasPoster && (
+                          <div className="hp-preview-fallback-label" aria-hidden="true">{model.title}</div>
+                        )}
                         {!previewLoaded && (
                           <div className="hp-loader">
                             <svg className="hp-loader-ring" viewBox="0 0 80 80" fill="none">

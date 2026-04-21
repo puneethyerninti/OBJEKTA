@@ -40,21 +40,34 @@ describe('uploadLargeFile strategy chooser', () => {
 
   it('uses multipart for large files', async () => {
     const big = new File([new Uint8Array(60 * 1024 * 1024)], 'big.glb', { type: 'model/gltf-binary' });
-    const fm = vi.spyOn(global, 'fetch');
+    const fm = vi.spyOn(global, 'fetch').mockImplementation(async (input, init = {}) => {
+      const url = typeof input === 'string' ? input : input?.url;
+      const method = (init.method || input?.method || 'GET').toUpperCase();
 
-    // start multipart (parts: assume partSize 8MB => 8 parts)
-    fm.mockImplementationOnce(async () => new Response(JSON.stringify({ uploadId: 'u1', key: 'k-big', bucket: 'b', partSize: 8 * 1024 * 1024, parts: 8 }), { status: 200 }));
+      if (url.includes('/api/uploads/multipart/start') && method === 'POST') {
+        return new Response(JSON.stringify({ uploadId: 'u1', key: 'k-big', bucket: 'b', partSize: 8 * 1024 * 1024, parts: 8 }), { status: 200 });
+      }
 
-    // sign+put pairs, repeat for 8 parts
-    for (let i = 0; i < 8; i++) {
-      fm.mockImplementationOnce(async () => new Response(JSON.stringify({ url: `https://s3/part${i+1}` }), { status: 200 }));
-      fm.mockImplementationOnce(async () => new Response(null, { status: 200, headers: { ETag: `etag${i+1}` } }));
-    }
+      if (url.includes('/api/uploads/multipart/sign') && method === 'POST') {
+        const body = JSON.parse(init.body || '{}');
+        return new Response(JSON.stringify({ url: `https://s3/part${body.partNumber}` }), { status: 200 });
+      }
 
-    // complete
-    fm.mockImplementationOnce(async () => new Response(JSON.stringify({ ok: true, key: 'k-big' }), { status: 200 }));
-    // register
-    fm.mockImplementationOnce(async () => new Response(JSON.stringify({ success: true, asset: { key: 'k-big', source: 's3' } }), { status: 200 }));
+      if (url.startsWith('https://s3/part') && method === 'PUT') {
+        const partNumber = Number((url.match(/part(\d+)$/) || [])[1] || 1);
+        return new Response(null, { status: 200, headers: { ETag: `etag${partNumber}` } });
+      }
+
+      if (url.includes('/api/uploads/multipart/complete') && method === 'POST') {
+        return new Response(JSON.stringify({ ok: true, key: 'k-big' }), { status: 200 });
+      }
+
+      if (url.includes('/api/projects/') && url.includes('/assets/s3') && method === 'POST') {
+        return new Response(JSON.stringify({ success: true, asset: { key: 'k-big', source: 's3' } }), { status: 200 });
+      }
+
+      throw new Error(`Unhandled fetch in test: ${method} ${url}`);
+    });
 
     const res = await uploadLargeFile({ file: big, projectId: 'p1' });
     expect(res.asset).toBeTruthy();
@@ -63,14 +76,20 @@ describe('uploadLargeFile strategy chooser', () => {
 
   it('falls back to tus when multipart fails', async () => {
     const big = new File([new Uint8Array(60 * 1024 * 1024)], 'big.glb', { type: 'model/gltf-binary' });
-    const fm = vi.spyOn(global, 'fetch');
+    const fm = vi.spyOn(global, 'fetch').mockImplementation(async (input, init = {}) => {
+      const url = typeof input === 'string' ? input : input?.url;
+      const method = (init.method || input?.method || 'GET').toUpperCase();
 
-    // start multipart -> fail
-    fm.mockImplementationOnce(async () => new Response('err', { status: 500 }));
+      if (url.includes('/api/uploads/multipart/start') && method === 'POST') {
+        return new Response('err', { status: 500 });
+      }
 
-    // tus will kick in from mocked module; then registration is attempted
-    // register after tus
-    fm.mockImplementationOnce(async () => new Response(JSON.stringify({ success: true, asset: { url: 'http://localhost:5000/api/uploads/tus/mock/big.glb', source: 'tus' } }), { status: 200 }));
+      if (url.includes('/api/projects/') && url.includes('/assets/s3') && method === 'POST') {
+        return new Response(JSON.stringify({ success: true, asset: { url: 'http://localhost:5000/api/uploads/tus/mock/big.glb', source: 'tus' } }), { status: 200 });
+      }
+
+      throw new Error(`Unhandled fetch in test: ${method} ${url}`);
+    });
 
     const res = await uploadLargeFile({ file: big, projectId: 'p1' });
     // may or may not contain asset depending on registration; in this test we mocked registration OK

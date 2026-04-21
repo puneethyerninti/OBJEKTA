@@ -36,6 +36,12 @@ export default defineConfig({
     ],
   },
   server: {
+    headers: {
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      Pragma: "no-cache",
+      Expires: "0",
+      "Surrogate-Control": "no-store",
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:5000',
@@ -46,6 +52,14 @@ export default defineConfig({
         target: 'http://localhost:5000',
         ws: true,
       },
+    },
+  },
+  preview: {
+    headers: {
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      Pragma: "no-cache",
+      Expires: "0",
+      "Surrogate-Control": "no-store",
     },
   },
   build: {
