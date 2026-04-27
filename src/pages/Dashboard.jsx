@@ -1557,8 +1557,8 @@ export default function Dashboard() {
             <div className="panel-card panel-team">
               <div className="panel-header">
                 <h3 className="panel-title"><FiUsers size={16} /> Team</h3>
-                <button className="panel-action-btn" onClick={() => pushToast("Invites coming soon", "info")}>
-                  <FiPlus size={14} /> Invite
+                <button className="panel-action-btn" onClick={() => navigate('/documentation')}>
+                  <FiPlus size={14} /> Invite Guide
                 </button>
               </div>
               <div className="team-list">

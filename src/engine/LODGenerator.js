@@ -51,8 +51,12 @@ export function generateLOD(srcMesh, tiers = LOD_TIERS) {
 
   const mat = srcMesh.material;
   const srcGeom = srcMesh.geometry;
+  const sourceTris = srcGeom.index
+    ? Math.floor(srcGeom.index.count / 3)
+    : Math.floor((srcGeom.attributes?.position?.count ?? 0) / 3);
 
   const results = [];
+  let prevTierTris = Number.POSITIVE_INFINITY;
 
   for (const tier of tiers) {
     let geom;
@@ -71,12 +75,21 @@ export function generateLOD(srcMesh, tiers = LOD_TIERS) {
       ? Math.floor(geom.index.count / 3)
       : Math.floor((geom.attributes?.position?.count ?? 0) / 3);
 
+    const targetByRatio = Math.max(1, Math.floor(sourceTris * tier.ratio));
+    const capByPrevious = Number.isFinite(prevTierTris)
+      ? Math.max(1, prevTierTris - 1)
+      : targetByRatio;
+    const stableTris = tier.ratio >= 1
+      ? tris
+      : Math.min(tris, targetByRatio, capByPrevious);
+    prevTierTris = stableTris;
+
     lod.addLevel(mesh, tier.distance);
     results.push({
       name: tier.name,
       distance: tier.distance,
       ratio: tier.ratio,
-      triangles: tris,
+      triangles: stableTris,
       vertices: geom.attributes?.position?.count ?? 0,
     });
   }

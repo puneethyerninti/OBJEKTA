@@ -26,7 +26,7 @@ export default function OrderHistory() {
 
   useEffect(() => {
     fetchOrders();
-  }, []);
+  }, [fetchOrders]);
 
   if (!user) return <Navigate to="/login" replace />;
 

@@ -57,7 +57,7 @@ const SHOWCASE_MODELS = [
     title: "Portable Rig",
     desc: "Travel-ready laptop kit showing shader tweaks and annotation overlays.",
     accent: "cyan",
-    poster: "assets/laptop-poster.webp",
+    poster: null,
     previewPosition: [0, 0.45, 0],
     fullscreenPosition: [0, 0.75, 0],
     fullscreenFitSize: 4.2,
@@ -68,7 +68,7 @@ const SHOWCASE_MODELS = [
     title: "Command Desk",
     desc: "Multi-screen control deck for layout, approvals, and lighting passes.",
     accent: "violet",
-    poster: "assets/desk-poster.webp",
+    poster: null,
     fullscreenTarget: [0, 1.0, 0],
   },
   {
@@ -76,7 +76,7 @@ const SHOWCASE_MODELS = [
     title: "Concept Vehicle",
     desc: "Hero-grade automotive model tuned for material look-dev and lighting overrides.",
     accent: "amber",
-    poster: "assets/porsche-poster.webp",
+    poster: null,
     fullscreenTarget: [0, 1.0, 0],
   },
   {
@@ -84,7 +84,7 @@ const SHOWCASE_MODELS = [
     title: "Black Dragon",
     desc: "Creature rig with idle animation and layered surface detail.",
     accent: "violet",
-    poster: "assets/thumbnail-placeholder.svg",
+    poster: null,
     previewRotation: [Math.PI, 0, 0],
     fullscreenRotation: [Math.PI, 0, 0],
     fullscreenTarget: [0, 1.2, 0],
@@ -94,7 +94,7 @@ const SHOWCASE_MODELS = [
     title: "Flynn's Arcade",
     desc: "Retro interior scene built for neon lighting and cinematic depth.",
     accent: "cyan",
-    poster: "assets/thumbnail-placeholder.svg",
+    poster: null,
     fullscreenTarget: [0, 1.0, 0],
   },
   {
@@ -102,7 +102,7 @@ const SHOWCASE_MODELS = [
     title: "Gipsy Avenger",
     desc: "Mech-scale asset optimized for real-time material previews.",
     accent: "amber",
-    poster: "assets/thumbnail-placeholder.svg",
+    poster: null,
     fullscreenTarget: [0, 1.0, 0],
   },
   {
@@ -110,7 +110,7 @@ const SHOWCASE_MODELS = [
     title: "iPhone 17 Pro",
     desc: "Product visualization mockup with clean PBR finishes.",
     accent: "cyan",
-    poster: "assets/thumbnail-placeholder.svg",
+    poster: null,
     fullscreenTarget: [0, 1.0, 0],
   },
 ];
@@ -162,7 +162,7 @@ export default function Home() {
   const { user } = useAuth();
   const [saveData, setSaveData] = useState(false);
   const [deviceTier, setDeviceTier] = useState("full");
-  const [showcaseVisible, setShowcaseVisible] = useState(true);
+  const [showcaseVisible, setShowcaseVisible] = useState(false);
   const [visibleCards, setVisibleCards] = useState({});
   const [interactionsEnabled, setInteractionsEnabled] = useState(true);
   const [prefetched, setPrefetched] = useState({});
@@ -171,6 +171,7 @@ export default function Home() {
   const [previewLoadedMap, setPreviewLoadedMap] = useState({});
   const [activeModel, setActiveModel] = useState(null);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const [panelModeEnabled, setPanelModeEnabled] = useState(false);
   const [activePanelIndex, setActivePanelIndex] = useState(0);
   const prefetchedRef = useRef({});
   const parsedRef = useRef({});
@@ -186,6 +187,23 @@ export default function Home() {
     mediaQuery.addEventListener("change", handler);
     return () => mediaQuery.removeEventListener("change", handler);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const panelModeQuery = window.matchMedia("(min-width: 680px) and (hover: hover) and (pointer: fine)");
+    const syncPanelMode = () => {
+      setPanelModeEnabled(panelModeQuery.matches && !prefersReducedMotion);
+    };
+
+    syncPanelMode();
+    if (typeof panelModeQuery.addEventListener === "function") {
+      panelModeQuery.addEventListener("change", syncPanelMode);
+      return () => panelModeQuery.removeEventListener("change", syncPanelMode);
+    }
+
+    panelModeQuery.addListener(syncPanelMode);
+    return () => panelModeQuery.removeListener(syncPanelMode);
+  }, [prefersReducedMotion]);
 
   useEffect(() => {
     if (typeof navigator === "undefined") return undefined;
@@ -217,7 +235,7 @@ export default function Home() {
 
   // Prefetch showcase GLTFs so they appear quickly
   useEffect(() => {
-    if (saveData) return;
+    if (saveData || !showcaseVisible) return;
     let mounted = true;
     const controllers = [];
     const updateProgress = (src, value) => {
@@ -252,7 +270,7 @@ export default function Home() {
       const controller = new AbortController();
       controllers.push(controller);
       const res = await fetch(src, {
-        cache: "force-cache",
+        cache: "no-cache",
         priority: eagerFetch ? "high" : "low",
         signal: controller.signal,
       });
@@ -361,7 +379,7 @@ export default function Home() {
   // Track hero visibility for interaction gating
   useEffect(() => {
     if (typeof IntersectionObserver === "undefined") return undefined;
-    const hero = document.querySelector(".hero-grid");
+    const hero = document.querySelector(".hp-hero");
     if (!hero) return undefined;
     const observer = new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
@@ -427,10 +445,8 @@ export default function Home() {
 
   // Wheel and keyboard panel navigation on desktop.
   useEffect(() => {
-    if (prefersReducedMotion) return undefined;
+    if (!panelModeEnabled || prefersReducedMotion) return undefined;
     if (typeof window === "undefined") return undefined;
-    const isDesktop = window.matchMedia("(min-width: 1025px)").matches;
-    if (!isDesktop) return undefined;
 
     const onWheel = (event) => {
       if (Math.abs(event.deltaY) < 30 || wheelLockRef.current) return;
@@ -469,7 +485,7 @@ export default function Home() {
       window.removeEventListener("wheel", onWheel);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [activePanelIndex, prefersReducedMotion, scrollToPanel]);
+  }, [activePanelIndex, panelModeEnabled, prefersReducedMotion, scrollToPanel]);
 
   // Track showcase cards for lazy Canvas mount
   useEffect(() => {
@@ -609,24 +625,28 @@ export default function Home() {
     return "is-hidden-below";
   };
 
+  const homeModeClass = panelModeEnabled ? "home-screen--panel-mode" : "home-screen--stack-mode";
+
   return (
-    <div className="home-screen">
+    <div className={`home-screen ${homeModeClass}`}>
       <div className="scene-background" aria-hidden="true">
         <Scene />
       </div>
       <main className="home-shell">
-        <div className="hp-panel-dots" aria-label="Home sections">
-          {HOME_PANEL_KEYS.map((key, index) => (
-            <button
-              key={key}
-              type="button"
-              className={`hp-panel-dot ${index === activePanelIndex ? "is-active" : ""}`}
-              onClick={() => scrollToPanel(index)}
-              aria-label={`Go to ${key} section`}
-              aria-current={index === activePanelIndex ? "true" : "false"}
-            />
-          ))}
-        </div>
+        {panelModeEnabled && (
+          <div className="hp-panel-dots" aria-label="Home sections">
+            {HOME_PANEL_KEYS.map((key, index) => (
+              <button
+                key={key}
+                type="button"
+                className={`hp-panel-dot ${index === activePanelIndex ? "is-active" : ""}`}
+                onClick={() => scrollToPanel(index)}
+                aria-label={`Go to ${key} section`}
+                aria-current={index === activePanelIndex ? "true" : "false"}
+              />
+            ))}
+          </div>
+        )}
 
         {/* ──── HERO ──── */}
         <section
@@ -665,7 +685,11 @@ export default function Home() {
                 className="hp-cta hp-cta-secondary"
                 data-magnetic="0.1"
                 aria-controls="showcase"
-                onClick={() => document.querySelector("#showcase")?.scrollIntoView({ behavior: "smooth" })}
+                onClick={() =>
+                  document.querySelector("#showcase")?.scrollIntoView({
+                    behavior: prefersReducedMotion ? "auto" : "smooth",
+                  })
+                }
               >
                 Explore Gallery
               </button>
@@ -726,7 +750,7 @@ export default function Home() {
           </div>
 
           <div className="hp-features-grid">
-            {FEATURE_ITEMS.map((item, idx) => (
+            {FEATURE_ITEMS.map((item) => (
               <article
                 key={item.title}
                 className="hp-feature-card hp-roll-target"
@@ -762,8 +786,7 @@ export default function Home() {
           <div className="hp-showcase-grid">
             {SHOWCASE_MODELS.map((model, index) => {
               const modelSrc = assetUrl(model.src);
-              const posterSrc = assetUrl(model.poster);
-              const resolvedModel = { ...model, src: modelSrc, poster: posterSrc };
+              const resolvedModel = { ...model, src: modelSrc, poster: undefined };
               const previewSource = parsedPrefetch[modelSrc] || prefetched[modelSrc] || undefined;
               const previewLoaded = Boolean(previewLoadedMap[modelSrc]);
               const progress = progressMap[modelSrc] ?? 0;
@@ -786,13 +809,9 @@ export default function Home() {
                   <div className="hp-preview">
                     <div className={`hp-preview-poster hp-preview-${model.accent}`}>
                       <div className="hp-preview-canvas">
-                        <img
-                          src={posterSrc}
-                          alt={`${model.title} preview`}
-                          className={`hp-preview-poster-img ${previewLoaded ? 'is-hidden' : ''}`}
-                          loading={index < 2 ? 'eager' : 'lazy'}
-                          decoding="async"
-                        />
+                        <div className="hp-preview-fallback" aria-hidden="true">
+                          <span className="hp-preview-fallback-label">{model.title}</span>
+                        </div>
                         {!previewLoaded && (
                           <div className="hp-loader">
                             <svg className="hp-loader-ring" viewBox="0 0 80 80" fill="none">
@@ -826,7 +845,7 @@ export default function Home() {
                               style={{ width: '100%', height: '100%' }}
                               dpr={Math.min(dprCap, devicePixelRatio)}
                               frameloop="demand"
-                              gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
+                              gl={{ antialias: true, alpha: true, powerPreference: 'low-power' }}
                               onCreated={({ gl }) => {
                                 try {
                                   if ('outputColorSpace' in gl) gl.outputColorSpace = THREE.SRGBColorSpace;

@@ -70,6 +70,8 @@ jobs:
         run: npm ci
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
+      - name: Production smoke test (preview build)
+        run: npm run test:e2e:prod-smoke
       - name: Run E2E tests
         run: npx playwright test
         env:

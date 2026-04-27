@@ -16,7 +16,7 @@ export default function CheckoutPage() {
 
   useEffect(() => {
     fetchCart();
-  }, []);
+  }, [fetchCart]);
 
   if (!user) return <Navigate to="/login" replace />;
 

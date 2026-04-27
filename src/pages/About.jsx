@@ -3,7 +3,7 @@ import React from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { usePageTitle } from "../hooks/usePageTitle";
-import { ArrowRight, Zap, Users, Palette, Upload, Layers, Grid3X3, Sparkles } from "lucide-react";
+import { ArrowRight, Zap, Users, Palette, Upload, Layers, Grid3X3, Sparkles, BookOpenText, ShieldCheck, Workflow } from "lucide-react";
 import "../styles/AboutContact.css";
 
 const CORE_CAPABILITIES = [
@@ -47,6 +47,27 @@ const STATS = [
   { value: "60 fps", label: "Render performance", icon: Sparkles },
   { value: "∞", label: "Collaboration scale", icon: Users },
   { value: "Zero", label: "Local installs", icon: Grid3X3 },
+];
+
+const DOCUMENTATION_TRACKS = [
+  {
+    title: "Getting Started",
+    desc: "Account setup, first project creation, and baseline team workflow standards.",
+    icon: <BookOpenText className="feature-icon" />,
+    to: "/documentation",
+  },
+  {
+    title: "Operational Workflow",
+    desc: "Recommended production sequence from concept, review cycles, to final delivery.",
+    icon: <Workflow className="feature-icon" />,
+    to: "/projects",
+  },
+  {
+    title: "Security and Access",
+    desc: "Authentication, collaboration permissions, and project governance best practices.",
+    icon: <ShieldCheck className="feature-icon" />,
+    to: "/documentation",
+  },
 ];
 
 export default function About() {
@@ -190,6 +211,27 @@ export default function About() {
           </div>
         </section>
 
+        <section className="about-tech-stack">
+          <div className="section-header">
+            <h2>Documentation Center</h2>
+            <p>Clear operating guidance for onboarding, delivery quality, and team collaboration.</p>
+          </div>
+          <div className="tech-grid">
+            {DOCUMENTATION_TRACKS.map((item) => (
+              <Link key={item.title} to={item.to} className="tech-card" aria-label={`Open ${item.title}`}>
+                <div className="tech-card-content">
+                  <h4 style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem" }}>
+                    {item.icon}
+                    {item.title}
+                  </h4>
+                  <p>{item.desc}</p>
+                </div>
+                <ArrowRight size={18} className="tech-arrow" />
+              </Link>
+            ))}
+          </div>
+        </section>
+
         {/* CTA Section */}
         <section className="about-cta">
           <h2>Ready to Create?</h2>
@@ -202,8 +244,8 @@ export default function About() {
               {user ? "Enter Studio" : "Get Started Free"}
               <ArrowRight size={20} />
             </button>
-            <Link to="/" className="btn btn-outline btn-lg">
-              Back to Home
+            <Link to="/documentation" className="btn btn-outline btn-lg">
+              View Documentation
             </Link>
           </div>
         </section>

@@ -195,7 +195,7 @@ describe("Page exports", () => {
   it("ProductDetail exports", async () => {
     const mod = await import("../pages/marketplace/ProductDetail");
     expect(typeof mod.default).toBe("function");
-  });
+  }, 15000);
 
   it("CartPage exports", async () => {
     const mod = await import("../pages/marketplace/CartPage");

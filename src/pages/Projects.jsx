@@ -76,7 +76,8 @@ export default function Projects() {
   usePageTitle("Projects");
   const { user } = useAuth();
   const navigate = useNavigate();
-  const studioTarget = user ? "/dashboard" : "/login";
+  const dashboardTarget = user ? "/dashboard" : "/login";
+  const studioEditorTarget = user ? "/studio" : "/login";
   const [selectedStatus, setSelectedStatus] = useState("All");
   const [sortBy, setSortBy] = useState("progress");
   const [selectedProject, setSelectedProject] = useState(null);
@@ -131,7 +132,7 @@ export default function Projects() {
         <section className="projects-header-premium">
           <h1>Manage Your <span className="gradient-text">Creative Pipeline</span></h1>
           <p>
-            Track active projects, coordinate across teams, and deliver production-ready 3D assets on schedule.
+            Coordinate production work across teams, keep project quality consistent, and ship review-ready 3D deliverables on schedule.
           </p>
         </section>
 
@@ -344,11 +345,11 @@ export default function Projects() {
                 </div>
 
                 <button
-                  onClick={() => navigate('/studio')}
+                  onClick={() => navigate(studioEditorTarget)}
                   className="btn btn-primary"
                   style={{ marginTop: "1rem", width: "100%" }}
                 >
-                  Open in Studio
+                  {user ? "Open in Studio" : "Sign In to Open"}
                 </button>
               </div>
             </div>
@@ -367,7 +368,7 @@ export default function Projects() {
                 <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>{TEMPLATE_ICONS[tmpl.icon]}</div>
                 <h3 className="project-card-title-premium">{tmpl.name}</h3>
                 <p className="project-card-desc-premium">{tmpl.desc}</p>
-                <button onClick={() => navigate(studioTarget)} className="btn btn-primary" style={{ marginTop: "1rem", width: "100%" }}>
+                <button onClick={() => navigate(studioEditorTarget)} className="btn btn-primary" style={{ marginTop: "1rem", width: "100%" }}>
                   Use Template
                 </button>
               </article>
@@ -378,13 +379,16 @@ export default function Projects() {
         {/* CTA Section */}
         <section className="about-cta">
           <h2>Ready to Streamline Your Workflow?</h2>
-          <p>Join teams using Objekta to manage complex 3D projects and deliver faster.</p>
+          <p>Use standardized workflows, documentation-driven reviews, and real-time collaboration to deliver confidently.</p>
           <div className="cta-actions">
-            <button onClick={() => navigate(studioTarget)} className="btn btn-primary btn-lg">
-              {user ? "Create Project" : "Get Started"}
+            <button onClick={() => navigate(dashboardTarget)} className="btn btn-primary btn-lg">
+              {user ? "Open Dashboard" : "Get Started"}
             </button>
-            <Link to="/contact" className="btn btn-secondary btn-lg">
-              Talk to Sales
+            <Link to="/documentation" className="btn btn-secondary btn-lg">
+              Read Workflow Documentation
+            </Link>
+            <Link to="/contact" className="btn btn-outline btn-lg">
+              Contact Product Team
             </Link>
           </div>
         </section>

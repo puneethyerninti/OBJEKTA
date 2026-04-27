@@ -65,6 +65,7 @@
     "test:run": "vitest run",
     "test:marketplace": "vitest run src/__tests__/marketplace.test.js",
     "test:e2e": "npx playwright test",
+    "test:e2e:prod-smoke": "npm run build && npx playwright test -c playwright.prod.config.js",
     "test:e2e:ui": "npx playwright test --ui",
     "lint": "eslint . --ext .js,.jsx,.cjs,.mjs",
     "format": "prettier --write ."

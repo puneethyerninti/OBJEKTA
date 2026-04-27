@@ -1,5 +1,5 @@
 // src/pages/marketplace/CartPage.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect } from "react";
 import { Link } from "react-router-dom";
 import { usePageTitle } from "../../hooks/usePageTitle";
 import { useMarketplaceStore } from "../../store/MarketplaceStore";
@@ -9,12 +9,11 @@ import "../../styles/marketplace.css";
 
 export default function CartPage() {
   usePageTitle("Shopping Cart");
-  const { cart, fetchCart, removeFromCart, updateCartItem, clearCart, cartLoading } =
-    useMarketplaceStore();
+  const { cart, fetchCart, removeFromCart, updateCartItem, clearCart } = useMarketplaceStore();
 
   useEffect(() => {
     fetchCart();
-  }, []);
+  }, [fetchCart]);
 
   const items = cart?.items || [];
   const formatPrice = (p) =>

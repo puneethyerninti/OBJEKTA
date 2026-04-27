@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { Home, Info, Palette, Folder, Mail, Menu, X, Store } from 'lucide-react';
+import { Home, Info, Palette, Folder, Mail, Menu, X, Store, BookOpenText } from 'lucide-react';
 import { assetUrl } from "../utils/assets";
 
 /**
@@ -61,6 +61,7 @@ export default function Navbar(props) {
   const links = [
     { to: "/", label: "Home", icon: <Home size={15} />, end: true },
     { to: "/about", label: "About", icon: <Info size={15} /> },
+    { to: "/documentation", label: "Docs", icon: <BookOpenText size={15} /> },
     { to: "/gallery", label: "Gallery", icon: <Palette size={15} /> },
     { to: "/projects", label: "Projects", icon: <Folder size={15} /> },
     { to: "/contact", label: "Contact", icon: <Mail size={15} /> },

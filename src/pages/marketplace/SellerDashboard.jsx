@@ -11,7 +11,6 @@ import {
   DollarSign,
   TrendingUp,
   Plus,
-  Edit,
   Trash2,
   ShoppingBag,
   X,
@@ -60,7 +59,7 @@ export default function SellerDashboard() {
     fetchSellerProducts();
     fetchSellerStats();
     fetchSellerOrders();
-  }, []);
+  }, [fetchSellerProducts, fetchSellerOrders, fetchSellerStats]);
 
   if (!user) return <Navigate to="/login" replace />;
 

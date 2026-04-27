@@ -7616,10 +7616,12 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
   inset: 0;
   z-index: 1;
   pointer-events: none;
-  /* Remove heavy vignette/diagonal shading to avoid square/diagonal box */
-  background: none;
-  display: none !important;
-  visibility: hidden !important;
+  background:
+    radial-gradient(ellipse 70% 55% at 12% 14%, rgba(127, 90, 240, 0.16), transparent 66%),
+    radial-gradient(ellipse 58% 45% at 88% 82%, rgba(0, 215, 255, 0.12), transparent 62%);
+  opacity: 0.9;
+  filter: blur(42px);
+  animation: homeAuroraDrift 18s ease-in-out infinite alternate;
 }
 
 .home-screen .scene-background::after {
@@ -7632,12 +7634,10 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
   transform: translateX(-50%);
   z-index: 1;
   pointer-events: none;
-  /* Remove large fixed radial glow that created visible edge */
-  background: none;
-  filter: none;
-  animation: none;
-  display: none !important;
-  visibility: hidden !important;
+  background: radial-gradient(ellipse 60% 46% at 50% 40%, rgba(255, 71, 163, 0.1), transparent 70%);
+  filter: blur(74px);
+  opacity: 0.7;
+  animation: homeAuroraPulse 12s ease-in-out infinite;
 }
 
 .home-screen .scene-background canvas {
@@ -8996,15 +8996,15 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
 }
 
 .home-screen .hp-hero::before {
-  opacity: 0 !important;
+  opacity: 0.42;
   animation-duration: 16s;
-  display: none !important;
+  display: block !important;
 }
 
 .home-screen .hp-hero::after {
-  opacity: 0 !important;
+  opacity: 0.28;
   animation-duration: 14s;
-  display: none !important;
+  display: block !important;
 }
 
 .home-screen .hp-badge {
@@ -9112,9 +9112,9 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
   perspective: 2000px;
 }
 
-.home-screen .hp-feature-card,
-.home-screen .hp-showcase-card,
-.home-screen .hp-badge {
+.home-screen.home-screen--panel-mode .hp-feature-card,
+.home-screen.home-screen--panel-mode .hp-showcase-card,
+.home-screen.home-screen--panel-mode .hp-badge {
   animation: none !important;
 }
 
@@ -9205,5 +9205,201 @@ model-viewer { display: block; width: 100%; height: 100%; background: transparen
     transform: none !important;
     filter: none !important;
     transition: none !important;
+  }
+}
+
+/* ── HOME MODE-SYNC + RESPONSIVE TUNE-UP ──────────────────────────────── */
+
+@keyframes homeAuroraDrift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  100% {
+    transform: translate3d(1.5%, -1.2%, 0) scale(1.06);
+  }
+}
+
+@keyframes homeAuroraPulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: translateX(-50%) scale(0.96);
+  }
+  50% {
+    opacity: 0.78;
+    transform: translateX(-50%) scale(1.06);
+  }
+}
+
+@keyframes homeCardBreathe {
+  0%,
+  100% {
+    border-color: rgba(127, 90, 240, 0.14);
+    box-shadow: 0 14px 30px rgba(127, 90, 240, 0.08);
+  }
+  50% {
+    border-color: rgba(0, 215, 255, 0.26);
+    box-shadow: 0 20px 36px rgba(0, 215, 255, 0.14);
+  }
+}
+
+.home-screen.home-screen--panel-mode .hp-panel-dots {
+  display: flex;
+}
+
+.home-screen.home-screen--stack-mode .hp-panel-dots {
+  display: none;
+}
+
+.home-screen.home-screen--stack-mode .hp-panel,
+.home-screen.home-screen--stack-mode .hp-panel.is-active,
+.home-screen.home-screen--stack-mode .hp-panel.is-hidden-above,
+.home-screen.home-screen--stack-mode .hp-panel.is-hidden-below,
+.home-screen.home-screen--stack-mode .hp-panel .hp-fade-target,
+.home-screen.home-screen--stack-mode .hp-panel .hp-roll-target {
+  opacity: 1 !important;
+  transform: none !important;
+  filter: none !important;
+  transition: none !important;
+}
+
+.home-screen.home-screen--stack-mode .hp-feature-card,
+.home-screen.home-screen--stack-mode .hp-showcase-card {
+  animation: homeCardBreathe 8.5s ease-in-out infinite;
+}
+
+.home-screen .hp-preview-fallback {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  padding: 1rem;
+  background:
+    linear-gradient(165deg, rgba(17, 22, 38, 0.88), rgba(10, 12, 24, 0.92)),
+    radial-gradient(circle at 18% 18%, rgba(127, 90, 240, 0.45), transparent 52%),
+    radial-gradient(circle at 85% 12%, rgba(0, 215, 255, 0.32), transparent 47%);
+}
+
+.home-screen .hp-preview-fallback-label {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(215, 236, 255, 0.92);
+  text-shadow: 0 0 12px rgba(127, 90, 240, 0.4);
+}
+
+@media (max-width: 1024px) {
+  .home-screen .home-shell {
+    max-width: 100%;
+    padding-inline: 0.75rem;
+  }
+
+  .home-screen .hp-hero {
+    padding-left: 1.3rem;
+    padding-right: 1.3rem;
+  }
+
+  .home-screen .hp-features,
+  .home-screen .hp-showcase {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .home-screen .hp-showcase-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) and (hover: none), (max-width: 900px) and (pointer: coarse) {
+  .home-screen.home-screen--stack-mode .hp-showcase-grid {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(260px, 84vw);
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    overscroll-behavior-x: contain;
+    padding-bottom: 0.6rem;
+    gap: 1rem;
+  }
+
+  .home-screen.home-screen--stack-mode .hp-showcase-grid::-webkit-scrollbar {
+    display: none;
+  }
+
+  .home-screen.home-screen--stack-mode .hp-showcase-card {
+    scroll-snap-align: center;
+    min-height: 100%;
+  }
+}
+
+@media (max-width: 768px) and (hover: none), (max-width: 768px) and (pointer: coarse) {
+  .home-screen .hp-hero {
+    min-height: 0;
+    padding: calc(var(--navbar-height, 64px) + 1.8rem) 1rem 2.4rem;
+  }
+
+  .home-screen .hp-hero-content {
+    gap: 1.35rem;
+    width: min(100%, 560px);
+  }
+
+  .home-screen .hp-actions {
+    width: 100%;
+    max-width: none;
+  }
+
+  .home-screen .hp-cta {
+    width: 100%;
+    min-height: 48px;
+    padding: 0.85rem 1rem;
+  }
+
+  .home-screen .hp-trust {
+    width: 100%;
+    gap: 1rem;
+  }
+
+  .home-screen .hp-trust-item {
+    flex: 1 1 calc(50% - 0.5rem);
+    min-width: 130px;
+  }
+
+  .home-screen .hp-trust-divider {
+    display: none;
+  }
+
+  .home-screen .hp-features,
+  .home-screen .hp-showcase {
+    padding-top: 3.2rem;
+    padding-bottom: 3.2rem;
+    gap: 2.2rem;
+  }
+
+  .home-screen .hp-section-title {
+    font-size: clamp(1.7rem, 9vw, 2.2rem);
+  }
+
+  .home-screen .hp-showcase-grid {
+    grid-template-columns: none;
+  }
+
+  .home-screen .hp-feature-card {
+    padding: 1.5rem;
+  }
+
+  .home-screen .hp-card-body {
+    padding: 1.2rem;
+  }
+
+  .home-screen .hp-preview {
+    height: clamp(190px, 58vw, 250px);
+  }
+
+  .home-screen .hp-card-actions {
+    flex-direction: column;
   }
 }

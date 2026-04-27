@@ -10,6 +10,8 @@ OBJEKTA lets you build, animate, sculpt, and collaborate on 3D scenes entirely i
 
 ## Table of Contents
 
+- [Documentation Map](#documentation-map)
+- [Documentation Quality Rules](#documentation-quality-rules)
 - [Features](#features)
 - [Tech Stack](#tech-stack)
 - [Repository Layout](#repository-layout)
@@ -24,6 +26,30 @@ OBJEKTA lets you build, animate, sculpt, and collaborate on 3D scenes entirely i
 - [API Documentation](#api-documentation)
 - [Contributing](#contributing)
 - [License](#license)
+
+---
+
+## Documentation Map
+
+Use the following sources as the authoritative documentation set:
+
+- **In-app documentation center:** `/documentation` route inside the web application.
+- **Primary repository guide:** `README.md` (this file) for architecture, setup, and operations.
+- **End-user operating guide:** `docs/user-guide.md` for Studio workflow and day-to-day usage.
+- **Backend API reference:** Swagger UI served by the backend at `/api-docs`.
+
+---
+
+## Documentation Quality Rules
+
+All product and engineering documentation should follow these standards:
+
+1. **Use clear, formal English** with consistent terminology across pages and code comments.
+2. **Describe user intent before implementation details** so readers understand business context.
+3. **Provide explicit next actions** (commands, routes, or links) for every major section.
+4. **Avoid placeholder text and ambiguous labels** in UI, guides, and operational notes.
+5. **Keep platform continuity** between Home, Dashboard, and documentation language.
+6. **Update docs together with feature changes** to prevent drift between product and reference material.
 
 ---
 

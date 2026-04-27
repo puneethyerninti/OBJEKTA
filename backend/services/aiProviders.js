@@ -385,7 +385,7 @@ async function chat(messages, opts = {}) {
     if (!isProviderConfigured(forced)) {
       errors.push(`${forced}: provider not configured`);
       if (!allowProviderFallback) {
-        throw new Error(`Forced AI provider \"${forced}\" is not configured`);
+        throw new Error(`Forced AI provider "${forced}" is not configured`);
       }
     } else {
       try {

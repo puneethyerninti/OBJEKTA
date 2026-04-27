@@ -1,6 +1,6 @@
 // src/pages/marketplace/ProductDetail.jsx
 import React, { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { usePageTitle } from "../../hooks/usePageTitle";
 import { useMarketplaceStore } from "../../store/MarketplaceStore";
 import Breadcrumbs from "../../components/marketplace/Breadcrumbs";
@@ -31,7 +31,7 @@ export default function ProductDetail() {
 
   useEffect(() => {
     if (idOrSlug) fetchProductDetail(idOrSlug);
-  }, [idOrSlug]);
+  }, [idOrSlug, fetchProductDetail]);
 
   const handleAddToCart = async () => {
     if (!productDetail) return;

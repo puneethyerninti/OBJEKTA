@@ -2,7 +2,6 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const zlib = require('zlib');
-const { test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert');
 const { processScenePayload } = require('../utils/sceneStorage');
 

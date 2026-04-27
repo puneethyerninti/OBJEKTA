@@ -17,7 +17,7 @@ export default function OrderTracking() {
 
   useEffect(() => {
     if (orderId) fetchOrderDetail(orderId);
-  }, [orderId]);
+  }, [orderId, fetchOrderDetail]);
 
   if (!user) return <Navigate to="/login" replace />;
 

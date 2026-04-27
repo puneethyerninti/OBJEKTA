@@ -1,47 +1,49 @@
 // src/App.jsx
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
 import ErrorBoundary from "./components/ErrorBoundary";
 
-// Pages (keep your existing pages)
+// Eager page for first paint
 import Home from "./pages/Home";
 import About from "./pages/About";
 import Contact from "./pages/Contact";
-import Gallery from "./pages/Gallery";
-import Projects from "./pages/Projects";
-import Login from "./pages/Login";
-import Register from "./pages/Register";
-import Studio from "./pages/Studio";
 
-// New dashboard (intermediate)
-import Dashboard from "./pages/Dashboard";
-
-// Admin panel
-import Admin from "./pages/Admin";
-
-// Auth flow pages
-import VerifyEmailPage from "./pages/VerifyEmail";
-import ForgotPasswordPage from "./pages/ForgotPassword";
-import ResetPasswordPage from "./pages/ResetPassword";
-
-// Marketplace pages
-import MarketplacePage from "./pages/marketplace/MarketplacePage";
-import ProductDetail from "./pages/marketplace/ProductDetail";
-import CartPage from "./pages/marketplace/CartPage";
-import CheckoutPage from "./pages/marketplace/CheckoutPage";
-import OrderHistory from "./pages/marketplace/OrderHistory";
-import OrderTracking from "./pages/marketplace/OrderTracking";
-import SellerDashboard from "./pages/marketplace/SellerDashboard";
+// Lazy pages for route-level code splitting
+const Gallery = lazy(() => import("./pages/Gallery"));
+const Projects = lazy(() => import("./pages/Projects"));
+const Login = lazy(() => import("./pages/Login"));
+const Register = lazy(() => import("./pages/Register"));
+const Studio = lazy(() => import("./pages/Studio"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Documentation = lazy(() => import("./pages/Documentation"));
+const Admin = lazy(() => import("./pages/Admin"));
+const VerifyEmailPage = lazy(() => import("./pages/VerifyEmail"));
+const ForgotPasswordPage = lazy(() => import("./pages/ForgotPassword"));
+const ResetPasswordPage = lazy(() => import("./pages/ResetPassword"));
+const MarketplacePage = lazy(() => import("./pages/marketplace/MarketplacePage"));
+const ProductDetail = lazy(() => import("./pages/marketplace/ProductDetail"));
+const CartPage = lazy(() => import("./pages/marketplace/CartPage"));
+const CheckoutPage = lazy(() => import("./pages/marketplace/CheckoutPage"));
+const OrderHistory = lazy(() => import("./pages/marketplace/OrderHistory"));
+const OrderTracking = lazy(() => import("./pages/marketplace/OrderTracking"));
+const SellerDashboard = lazy(() => import("./pages/marketplace/SellerDashboard"));
 
 // Auth context (NOTE: path is ./contexts/AuthContext)
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
-import { useNavigate } from "react-router-dom";
 
 // DnD
 import { DndProvider } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
+
+function RouteLoading() {
+  return <div style={{ padding: 24, color: "white" }}>Loading…</div>;
+}
+
+function withSuspense(element) {
+  return <Suspense fallback={<RouteLoading />}>{element}</Suspense>;
+}
 
 function Layout({ children }) {
   const { pathname } = useLocation();
@@ -96,21 +98,22 @@ export default function App() {
           {/* Public pages */}
           <Route path="/" element={<Layout><Home /></Layout>} />
           <Route path="/about" element={<Layout><About /></Layout>} />
-          <Route path="/gallery" element={<Layout><Gallery /></Layout>} />
-          <Route path="/projects" element={<Layout><Projects /></Layout>} />
+          <Route path="/gallery" element={<Layout>{withSuspense(<Gallery />)}</Layout>} />
+          <Route path="/projects" element={<Layout>{withSuspense(<Projects />)}</Layout>} />
+          <Route path="/documentation" element={<Layout>{withSuspense(<Documentation />)}</Layout>} />
           <Route path="/contact" element={<Layout><Contact /></Layout>} />
-          <Route path="/login" element={<Layout><Login /></Layout>} />
-          <Route path="/register" element={<Layout><Register /></Layout>} />
-          <Route path="/verify-email" element={<Layout><VerifyEmailPage /></Layout>} />
-          <Route path="/reset-password" element={<Layout><ResetPasswordPage /></Layout>} />
-          <Route path="/forgot-password" element={<Layout><ForgotPasswordPage /></Layout>} />
+          <Route path="/login" element={<Layout>{withSuspense(<Login />)}</Layout>} />
+          <Route path="/register" element={<Layout>{withSuspense(<Register />)}</Layout>} />
+          <Route path="/verify-email" element={<Layout>{withSuspense(<VerifyEmailPage />)}</Layout>} />
+          <Route path="/reset-password" element={<Layout>{withSuspense(<ResetPasswordPage />)}</Layout>} />
+          <Route path="/forgot-password" element={<Layout>{withSuspense(<ForgotPasswordPage />)}</Layout>} />
 
           {/* Dashboard — requires login */}
           <Route
             path="/dashboard"
             element={
               <PrivateRoute>
-                <Layout><Dashboard /></Layout>
+                <Layout>{withSuspense(<Dashboard />)}</Layout>
               </PrivateRoute>
             }
           />
@@ -120,19 +123,19 @@ export default function App() {
             path="/admin"
             element={
               <PrivateRoute>
-                <Admin />
+                {withSuspense(<Admin />)}
               </PrivateRoute>
             }
           />
 
           {/* Marketplace — public browse, auth for cart/checkout/seller */}
-          <Route path="/marketplace" element={<Layout><MarketplacePage /></Layout>} />
-          <Route path="/marketplace/product/:idOrSlug" element={<Layout><ProductDetail /></Layout>} />
-          <Route path="/marketplace/cart" element={<Layout><PrivateRoute><CartPage /></PrivateRoute></Layout>} />
-          <Route path="/marketplace/checkout" element={<Layout><PrivateRoute><CheckoutPage /></PrivateRoute></Layout>} />
-          <Route path="/marketplace/orders" element={<Layout><PrivateRoute><OrderHistory /></PrivateRoute></Layout>} />
-          <Route path="/marketplace/orders/:orderId" element={<Layout><PrivateRoute><OrderTracking /></PrivateRoute></Layout>} />
-          <Route path="/marketplace/seller" element={<Layout><PrivateRoute><SellerDashboard /></PrivateRoute></Layout>} />
+          <Route path="/marketplace" element={<Layout>{withSuspense(<MarketplacePage />)}</Layout>} />
+          <Route path="/marketplace/product/:idOrSlug" element={<Layout>{withSuspense(<ProductDetail />)}</Layout>} />
+          <Route path="/marketplace/cart" element={<Layout><PrivateRoute>{withSuspense(<CartPage />)}</PrivateRoute></Layout>} />
+          <Route path="/marketplace/checkout" element={<Layout><PrivateRoute>{withSuspense(<CheckoutPage />)}</PrivateRoute></Layout>} />
+          <Route path="/marketplace/orders" element={<Layout><PrivateRoute>{withSuspense(<OrderHistory />)}</PrivateRoute></Layout>} />
+          <Route path="/marketplace/orders/:orderId" element={<Layout><PrivateRoute>{withSuspense(<OrderTracking />)}</PrivateRoute></Layout>} />
+          <Route path="/marketplace/seller" element={<Layout><PrivateRoute>{withSuspense(<SellerDashboard />)}</PrivateRoute></Layout>} />
 
           {/* Studio — requires login and uses DnD provider */}
           <Route
@@ -140,7 +143,7 @@ export default function App() {
             element={
               <PrivateRoute>
                 <DndProvider backend={HTML5Backend}>
-                  <Studio />
+                  {withSuspense(<Studio />)}
                 </DndProvider>
               </PrivateRoute>
             }

@@ -38,11 +38,6 @@ export default function Scene() {
         (typeof window !== 'undefined' && !!window.__OBJEKTA_DISABLE_POSTFX) ||
         (typeof import.meta !== 'undefined' && import.meta.env && String(import.meta.env.VITE_DISABLE_POSTFX) === 'true');
       setEffectsEnabled(!!gl2 && !disable);
-      // Release the test context to avoid leaking WebGL contexts
-      if (gl2) {
-        const ext = gl2.getExtension('WEBGL_lose_context');
-        if (ext) ext.loseContext();
-      }
     } catch (_) {
       setEffectsEnabled(false);
     }
@@ -54,10 +49,7 @@ export default function Scene() {
       if (glRef.current) {
         try {
           const renderer = glRef.current;
-          const gl = renderer?.getContext?.();
-          const isLost = !!(gl && typeof gl.isContextLost === "function" && gl.isContextLost());
           renderer.dispose?.();
-          if (!isLost) renderer.forceContextLoss?.();
         } catch (e) {
           console.debug('[Scene] Cleanup error', e);
         }

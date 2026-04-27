@@ -16,8 +16,7 @@ export default defineConfig({
   resolve: {
     dedupe: [
       'react', 'react-dom',
-      'three', 'postprocessing',
-      '@react-three/fiber', '@react-three/drei', '@react-three/postprocessing'
+      'three',
     ],
     alias: {
       three: 'three'
@@ -49,6 +48,7 @@ export default defineConfig({
     },
   },
   build: {
-    target: 'esnext'
+    target: 'esnext',
+    chunkSizeWarningLimit: 2300,
   },
 });

@@ -180,22 +180,31 @@ export default function Gallery() {
           )}
         </section>
 
+        <section style={{ marginTop: "3.25rem" }}>
+          <div className="project-card-premium" style={{ padding: "1.4rem" }}>
+            <h2 style={{ margin: 0, fontSize: "1.35rem", fontWeight: 800, color: "#ffffff" }}>How Scenes Are Curated</h2>
+            <p style={{ margin: "0.7rem 0 0", color: "rgba(255,255,255,0.72)", lineHeight: 1.7 }}>
+              Every featured scene is selected for technical quality, clear visual direction, and reproducible production workflow.
+              Priority is given to projects demonstrating strong material calibration, collaborative review discipline, and delivery readiness.
+            </p>
+          </div>
+        </section>
+
         {/* CTA Section */}
         <section className="about-cta" style={{ marginTop: '4rem' }}>
-          <h2>Want to feature your work?</h2>
+          <h2>Want to Feature Your Work?</h2>
           <p>
-            Build a scene in Objekta and share it with the community — the best submissions are featured here.
+            Build in Objekta, run review passes, and submit polished scenes for editorial consideration.
           </p>
           <div className="cta-actions">
             <button
               onClick={() => navigate(user ? "/dashboard" : "/login")}
               className="btn btn-primary btn-lg"
             >
-              {user ? "Open Studio" : "Join Now"}
+              {user ? "Open Dashboard" : "Start with Objekta"}
             </button>
-            <a href="/projects" className="btn btn-secondary btn-lg">
-              View All Projects
-            </a>
+            <Link to="/projects" className="btn btn-secondary btn-lg">Browse Project Pipeline</Link>
+            <Link to="/documentation" className="btn btn-outline btn-lg">Read Submission Standards</Link>
           </div>
         </section>
       </main>
