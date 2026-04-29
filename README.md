@@ -4,7 +4,7 @@
 
 OBJEKTA lets you build, animate, sculpt, and collaborate on 3D scenes entirely in the browser. It ships with a full PBR material system, WASM-powered physics, AI-assisted editing, real-time multi-user collaboration via CRDT, and an integrated marketplace for buying and selling 3D assets.
 
-**Production URL:** [https://objekta.app](https://objekta.app)
+**Production URL:** [https://objekta-9.onrender.com](https://objekta-9.onrender.com)
 
 ---
 
