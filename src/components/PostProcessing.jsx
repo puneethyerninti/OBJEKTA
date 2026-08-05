@@ -203,7 +203,18 @@ export function setupPostProcessing({ renderer, scene, camera, width = 800, heig
     composer.addPass(vignettePass);
 
     // FXAA (always last, always enabled)
-    fxaaPass = new ShaderPass(FXAAShader);
+    // Some drivers warn when using extreme sample bias values (e.g. -100). Clamp to a safe range.
+    const safeFXAAShader = { ...FXAAShader };
+    try {
+      if (typeof safeFXAAShader.fragmentShader === 'string') {
+        // Replace occurrences of -100.0 bias used in some FXAA macros with -16.0 (safe range)
+        safeFXAAShader.fragmentShader = safeFXAAShader.fragmentShader.replace(/-100\.0/g, '-16.0');
+      }
+    } catch (e) {
+      // If replacement fails, fall back to original shader
+      safeFXAAShader.fragmentShader = FXAAShader.fragmentShader;
+    }
+    fxaaPass = new ShaderPass(safeFXAAShader);
     fxaaPass.uniforms["resolution"].value.set(1 / width, 1 / height);
     composer.addPass(fxaaPass);
 

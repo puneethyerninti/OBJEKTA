@@ -1725,7 +1725,10 @@ const Workspace = forwardRef(function Workspace({ selected: _selected, onSelect,
             const { width, height } = entry.contentRect;
             if (width > 10 && height > 10) {
                 if (!isCanvasReady) {
-                    console.log(`[Workspace] Canvas is ready (${width}x${height}). Initializing renderer size.`);
+                    // Use debug-level logging for canvas readiness to avoid noisy production logs
+                    if (process.env.NODE_ENV !== 'production') {
+                      console.debug(`[Workspace] Canvas is ready (${width}x${height}). Initializing renderer size.`);
+                    }
                     doResize(width, height);
                     setIsCanvasReady(true);
                 } else {

@@ -381,7 +381,8 @@ export default function Dashboard() {
           list = [];
         }
 
-        console.log("[OBJEKTA] fetched projects:", list.length, list);
+        // Avoid logging full project objects in production builds (may contain sensitive data).
+        console.info(`[OBJEKTA] fetched projects: ${list.length}`);
 
         const normalized = list.map(normalizeProject).filter(Boolean);
         setProjects(normalized);
