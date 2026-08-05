@@ -2,7 +2,7 @@ import React from 'react';
 import PropTypes from 'prop-types';
 import {
   FiHome, FiLayout, FiGlobe, FiDownload, FiPlus,
-  FiHardDrive, FiLogOut, FiCommand,
+  FiHardDrive, FiLogOut,
 } from 'react-icons/fi';
 
 function Sidebar({ user, stats, onCreate, onOpenStudio, onLogout, onImport, onMarketplace, onNavigateHome }) {
@@ -16,8 +16,11 @@ function Sidebar({ user, stats, onCreate, onOpenStudio, onLogout, onImport, onMa
     <aside className="dash-sidebar" aria-label="Sidebar">
       {/* Brand */}
       <div className="sidebar-brand">
-        <div className="sidebar-logo" aria-hidden><FiCommand size={18} /></div>
-        <span className="sidebar-brand-text">Objekta</span>
+        <div className="sidebar-logo" aria-hidden>
+          <span className="sidebar-logo-core" />
+          <span className="sidebar-logo-ring" />
+        </div>
+        <span className="sidebar-brand-text">OBJEKTA</span>
       </div>
 
       {/* Navigation */}

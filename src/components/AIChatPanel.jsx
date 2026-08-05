@@ -11,6 +11,7 @@ import {
   FiCheck, FiAlertTriangle, FiTrash2, FiMaximize2, FiMinimize2,
 } from "react-icons/fi";
 import useAIStore from "../store/AIStore";
+import TypewriterText from "./TypewriterText";
 import {
   describeScene,
   suggestNames,
@@ -83,8 +84,11 @@ export default function AIChatPanel({ workspaceRef, selected, pushToast }) {
   const [chatInput, setChatInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [aiMode, setAIMode] = useState({ online: false, provider: null });
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const [typedMap, setTypedMap] = useState({});
   const chatEndRef = useRef(null);
   const inputRef = useRef(null);
+  const typedInitRef = useRef(false);
 
   // ── Auto-scroll ──────────────────────────────────────────────────
   useEffect(() => {
@@ -96,16 +100,39 @@ export default function AIChatPanel({ workspaceRef, selected, pushToast }) {
     if (open) setTimeout(() => inputRef.current?.focus(), 100);
   }, [open]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const handler = (event) => setPrefersReducedMotion(event.matches);
+    setPrefersReducedMotion(mediaQuery.matches);
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handler);
+      return () => mediaQuery.removeEventListener("change", handler);
+    }
+    mediaQuery.addListener(handler);
+    return () => mediaQuery.removeListener(handler);
+  }, []);
+
+  useEffect(() => {
+    if (typedInitRef.current) return;
+    if (chatHistory.length > 0) {
+      const initial = {};
+      chatHistory.forEach((msg) => {
+        if (msg.role === "assistant") initial[msg.timestamp] = true;
+      });
+      setTypedMap(initial);
+    }
+    typedInitRef.current = true;
+  }, [chatHistory]);
+
   // ── Check AI backend ─────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
     getAIStatus().then((data) => {
       if (!cancelled) {
-        const strictLLM = data?.strictLLM === true;
         const llmReady = data?.llmReady == null ? data?.configured === true : data.llmReady === true;
-        const hasProviders = llmReady || (!strictLLM && data?.configured === true);
         const provider = data.activeProvider || (data.pythonService ? "python" : null);
-        setAIMode({ online: hasProviders, provider: hasProviders ? provider : null });
+        setAIMode({ online: llmReady, provider: llmReady ? provider : null });
       }
     }).catch(() => {
       if (!cancelled) setAIMode({ online: false, provider: null });
@@ -177,6 +204,11 @@ export default function AIChatPanel({ workspaceRef, selected, pushToast }) {
       useAIStore.getState().applySuggestion(uuid);
     }
   }, [workspaceRef, pushToast]);
+
+  const markTyped = useCallback((timestamp) => {
+    if (!timestamp) return;
+    setTypedMap((prev) => (prev[timestamp] ? prev : { ...prev, [timestamp]: true }));
+  }, []);
 
   const handleClearChat = useCallback(() => {
     useAIStore.getState().clearChat();
@@ -312,16 +344,32 @@ export default function AIChatPanel({ workspaceRef, selected, pushToast }) {
         )}
 
         {/* Chat messages */}
-        {chatHistory.map((msg, i) => (
-          <div key={i} className={`aichat-msg aichat-msg--${msg.role}`}>
-            <div className="aichat-msg-avatar">
-              {msg.role === "user" ? "You" : "AI"}
+        {chatHistory.map((msg, i) => {
+          const isAssistant = msg.role === "assistant";
+          const hasTyped = Boolean(typedMap[msg.timestamp]);
+          const shouldAnimate = isAssistant && !hasTyped;
+          return (
+            <div key={msg.timestamp || i} className={`aichat-msg aichat-msg--${msg.role}`}>
+              <div className="aichat-msg-avatar">
+                {msg.role === "user" ? "You" : "AI"}
+              </div>
+              <div className="aichat-msg-content">
+                {isAssistant ? (
+                  <TypewriterText
+                    text={msg.content}
+                    render={renderMd}
+                    className="aichat-typewriter"
+                    active={shouldAnimate}
+                    reducedMotion={prefersReducedMotion}
+                    onDone={() => markTyped(msg.timestamp)}
+                  />
+                ) : (
+                  renderMd(msg.content)
+                )}
+              </div>
             </div>
-            <div className="aichat-msg-content">
-              {renderMd(msg.content)}
-            </div>
-          </div>
-        ))}
+          );
+        })}
 
         {/* Loading indicator */}
         {loading && (

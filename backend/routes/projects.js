@@ -5,6 +5,7 @@ const path = require("path");
 const fs = require("fs");
 const multer = require("multer");
 const zlib = require("zlib");
+const crypto = require("crypto");
 const Project = require("../models/Project");
 const { getIO } = require("../socket");
 const { protect } = require("../middleware/authMiddleware");
@@ -165,6 +166,35 @@ function toPublic(req, p) {
   return obj;
 }
 
+function toReviewPublic(req, p) {
+  const obj = toPublic(req, hydrateData(p));
+  if (!obj) return obj;
+  delete obj.user;
+  delete obj.collaborators;
+  delete obj.collaboratorRoles;
+  delete obj.shareToken;
+  delete obj.assets;
+  delete obj.dataBlob;
+  delete obj.sceneFilePath;
+  return {
+    _id: obj._id,
+    title: obj.title,
+    description: obj.description || "",
+    thumbnailUrl: obj.thumbnailUrl || null,
+    data: obj.data || {},
+    visibility: obj.visibility || "private",
+    reviewStatus: obj.reviewStatus || "draft",
+    publishedAt: obj.publishedAt || null,
+    approvedVersion: obj.approvedVersion || null,
+    lastSavedAt: obj.lastSavedAt || obj.updatedAt || null,
+    updatedAt: obj.updatedAt || null,
+    environmentMap: obj.environmentMap ? makeAbsolute(req, obj.environmentMap) : null,
+    environmentColor: obj.environmentColor || null,
+    cameraState: obj.cameraState || null,
+    effects: obj.effects || {},
+  };
+}
+
 // Helper: access check (owner or collaborator)
 function canAccess(p, userId) {
   if (!p) return false;
@@ -186,6 +216,15 @@ function canAccess(p, userId) {
     console.warn(`[canAccess] DENIED — userId=${uid} ownerId=${ownerId} collaborators=[${(p.collaborators || []).map(c => String(c?._id || c)).join(',')}]`);
   }
   return false;
+}
+
+function isOwner(p, userId) {
+  const ownerId = p?.user?._id ? String(p.user._id) : p?.user ? String(p.user) : null;
+  return !!ownerId && ownerId === String(userId || "");
+}
+
+function makeShareToken() {
+  return crypto.randomBytes(32).toString("base64url");
 }
 
 function safeIO() {
@@ -236,13 +275,36 @@ router.get("/", protect, async (req, res) => {
     const projects = await Project.find({
       $or: [ { user: uid }, { collaborators: uid } ]
     })
-      .select("title description user collaborators progress assets thumbnail lastSavedAt environmentMap environmentColor cameraState effects dataCompressed dataSize createdAt updatedAt")
+      .select("title description user collaborators progress assets thumbnail lastSavedAt environmentMap environmentColor cameraState effects dataCompressed dataSize visibility reviewStatus shareEnabled shareExpiresAt publishedAt approvedVersion createdAt updatedAt")
       .sort({ updatedAt: -1 })
       .lean();
     return res.status(200).json({ success: true, projects: projects.map((p) => toPublic(req, p)) });
   } catch (err) {
     console.error("GET /api/projects error:", err);
     res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// GET /api/projects/review/:token - public read-only review payload
+router.get("/review/:token", async (req, res) => {
+  try {
+    const token = String(req.params.token || "").trim();
+    if (!/^[A-Za-z0-9_-]{32,120}$/.test(token)) {
+      return res.status(404).json({ success: false, message: "Review link not found" });
+    }
+
+    const project = await Project.findOne({ shareToken: token, shareEnabled: true })
+      .select("+shareToken")
+      .lean();
+    if (!project) return res.status(404).json({ success: false, message: "Review link not found" });
+    if (project.shareExpiresAt && new Date(project.shareExpiresAt).getTime() < Date.now()) {
+      return res.status(410).json({ success: false, message: "Review link expired" });
+    }
+
+    return res.json({ success: true, project: toReviewPublic(req, project) });
+  } catch (err) {
+    console.error("GET /api/projects/review/:token error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
@@ -430,6 +492,98 @@ router.post("/:id/assets/s3", protect, async (req, res) => {
   } catch (err) {
     console.error("POST /api/projects/:id/assets/s3 error:", err);
     res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
+// POST /api/projects/:id/share - owner creates or refreshes a secure review link
+router.post("/:id/share", protect, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const project = await Project.findById(id).select("+shareToken");
+    if (!project) return res.status(404).json({ success: false, message: "Project not found" });
+    if (!isOwner(project, req.userId)) {
+      return res.status(403).json({ success: false, message: "Only the project owner can share this project" });
+    }
+
+    const expiresInDays = Number.parseInt(req.body?.expiresInDays, 10);
+    const shouldRotate = req.body?.rotate === true || req.body?.rotate === "true";
+    if (!project.shareToken || shouldRotate) project.shareToken = makeShareToken();
+    project.shareEnabled = true;
+    project.visibility = project.visibility === "published" ? "published" : "review";
+    project.reviewStatus = project.reviewStatus === "draft" ? "in_review" : project.reviewStatus;
+    project.shareExpiresAt = Number.isFinite(expiresInDays) && expiresInDays > 0
+      ? new Date(Date.now() + Math.min(expiresInDays, 365) * 24 * 60 * 60 * 1000)
+      : null;
+    await project.save();
+
+    const shareUrl = `${req.protocol}://${req.get("host")}/review/${project.shareToken}`;
+    emitProjectEvent(project, "project_updated", toPublic(req, project));
+    emitProjectEvent(project, "projects:changed", { projectId: String(project._id) });
+
+    return res.json({
+      success: true,
+      shareUrl,
+      token: project.shareToken,
+      project: toPublic(req, project),
+    });
+  } catch (err) {
+    console.error("POST /api/projects/:id/share error:", err);
+    return res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+// DELETE /api/projects/:id/share - owner revokes the active review link
+router.delete("/:id/share", protect, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const project = await Project.findById(id).select("+shareToken");
+    if (!project) return res.status(404).json({ success: false, message: "Project not found" });
+    if (!isOwner(project, req.userId)) {
+      return res.status(403).json({ success: false, message: "Only the project owner can revoke this review link" });
+    }
+
+    project.shareEnabled = false;
+    project.shareToken = null;
+    project.shareExpiresAt = null;
+    project.visibility = project.publishedAt ? "published" : "private";
+    await project.save();
+
+    emitProjectEvent(project, "project_updated", toPublic(req, project));
+    emitProjectEvent(project, "projects:changed", { projectId: String(project._id) });
+    return res.json({ success: true, project: toPublic(req, project) });
+  } catch (err) {
+    console.error("DELETE /api/projects/:id/share error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// PATCH /api/projects/:id/review-status - owner/editor updates workflow status
+router.patch("/:id/review-status", protect, async (req, res) => {
+  try {
+    const allowed = new Set(["draft", "in_review", "changes_requested", "approved", "published"]);
+    const status = String(req.body?.reviewStatus || "").trim();
+    if (!allowed.has(status)) return res.status(400).json({ success: false, message: "Invalid review status" });
+
+    const project = await Project.findById(req.params.id);
+    if (!project) return res.status(404).json({ success: false, message: "Project not found" });
+    if (!canAccess(project, req.userId)) return res.status(403).json({ success: false, message: "Forbidden" });
+
+    project.reviewStatus = status;
+    if (status === "published") {
+      project.visibility = "published";
+      project.publishedAt = project.publishedAt || new Date();
+    }
+    if (status === "approved" && Number.isFinite(Number(req.body?.approvedVersion))) {
+      project.approvedVersion = Number(req.body.approvedVersion);
+    }
+    await project.save();
+
+    emitProjectEvent(project, "project_updated", toPublic(req, project));
+    emitProjectEvent(project, "projects:changed", { projectId: String(project._id) });
+    return res.json({ success: true, project: toPublic(req, project) });
+  } catch (err) {
+    console.error("PATCH /api/projects/:id/review-status error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 

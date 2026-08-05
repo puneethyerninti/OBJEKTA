@@ -19,6 +19,7 @@ const Studio = lazy(() => import("./pages/Studio"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Documentation = lazy(() => import("./pages/Documentation"));
 const Admin = lazy(() => import("./pages/Admin"));
+const ReviewViewer = lazy(() => import("./pages/ReviewViewer"));
 const VerifyEmailPage = lazy(() => import("./pages/VerifyEmail"));
 const ForgotPasswordPage = lazy(() => import("./pages/ForgotPassword"));
 const ResetPasswordPage = lazy(() => import("./pages/ResetPassword"));
@@ -38,7 +39,12 @@ import { DndProvider } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
 
 function RouteLoading() {
-  return <div style={{ padding: 24, color: "white" }}>Loading…</div>;
+  return (
+    <div className="route-loader" role="status" aria-label="Loading">
+      <div className="route-loader__orb" aria-hidden="true" />
+      <div className="route-loader__ring" aria-hidden="true" />
+    </div>
+  );
 }
 
 function withSuspense(element) {
@@ -48,7 +54,7 @@ function withSuspense(element) {
 function Layout({ children }) {
   const { pathname } = useLocation();
   // Dashboard is fullscreen — no global navbar/footer chrome needed.
-  const hideChromeRoutes = ["/dashboard", "/studio"];
+  const hideChromeRoutes = ["/dashboard", "/studio", "/review"];
   const hideChrome = hideChromeRoutes.some((r) => pathname.startsWith(r));
   if (hideChrome) {
     return <>{children}</>;
@@ -64,7 +70,7 @@ function Layout({ children }) {
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
-  if (loading) return <div style={{ padding: 24, color: "white" }}>Loading…</div>;
+  if (loading) return <RouteLoading />;
   return user ? children : <Navigate to="/" replace />;
 }
 
@@ -102,6 +108,7 @@ export default function App() {
           <Route path="/projects" element={<Layout>{withSuspense(<Projects />)}</Layout>} />
           <Route path="/documentation" element={<Layout>{withSuspense(<Documentation />)}</Layout>} />
           <Route path="/contact" element={<Layout><Contact /></Layout>} />
+          <Route path="/review/:token" element={<Layout>{withSuspense(<ReviewViewer />)}</Layout>} />
           <Route path="/login" element={<Layout>{withSuspense(<Login />)}</Layout>} />
           <Route path="/register" element={<Layout>{withSuspense(<Register />)}</Layout>} />
           <Route path="/verify-email" element={<Layout>{withSuspense(<VerifyEmailPage />)}</Layout>} />

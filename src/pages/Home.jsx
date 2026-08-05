@@ -731,6 +731,19 @@ export default function Home() {
           </div>
         </div>
 
+        {/* ──── MOTION CAROUSEL ──── */}
+        <section className="hp-carousel" aria-label="Showcase highlights">
+          <div className="hp-carousel-track">
+            {[...SHOWCASE_MODELS, ...SHOWCASE_MODELS].map((model, i) => (
+              <div key={`${model.title}-${i}`} className="hp-carousel-card">
+                <small>{model.accent} preview</small>
+                <h4>{model.title}</h4>
+                <p>{model.desc}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
         {/* ──── FEATURES ──── */}
         <section
           id="features"

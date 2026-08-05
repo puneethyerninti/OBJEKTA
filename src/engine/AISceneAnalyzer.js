@@ -29,6 +29,9 @@ import {
 const ALLOW_RULE_FALLBACK = String(import.meta.env.VITE_AI_ALLOW_RULE_FALLBACK || "")
   .trim()
   .toLowerCase() === "true";
+const REQUIRE_LLM_FOR_CHAT = String(import.meta.env.VITE_AI_CHAT_REQUIRE_LLM || "true")
+  .trim()
+  .toLowerCase() !== "false";
 
 // Cache backend AI status (refreshed on first call)
 let _aiStatus = null;
@@ -58,7 +61,7 @@ function buildLLMUnavailableMessage(err) {
     return "AI request was unauthorized. Please sign in again and retry.";
   }
   const reason = err?.message ? ` Reason: ${err.message}` : "";
-  return `Local AI model is required but unavailable. Start Ollama, pull your model, and retry.${reason}`;
+  return `AI is unavailable right now. Configure a provider or start your local model and retry.${reason}`;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -690,7 +693,8 @@ export async function askAboutScene(question, sceneChildren, scene) {
       }
     }
 
-    if (!canUseRuleFallback(aiStatus)) {
+    const allowChatFallback = canUseRuleFallback(aiStatus) && !REQUIRE_LLM_FOR_CHAT;
+    if (!allowChatFallback) {
       const message = buildLLMUnavailableMessage(llmErr);
       store.pushMessage("assistant", message);
       store.setStatus("error", message);
@@ -719,117 +723,24 @@ export async function askAboutScene(question, sceneChildren, scene) {
     } else if (q.match(/idea|ideas|concept|concepts|inspiration|theme|style|create.*scene|build.*scene|scene.*example|example.*scene|scene prompt/)) {
       answer = buildCreativeSceneIdeasReply(question, serialized, summary);
     } else if (q.match(/how many|count|number of/)) {
-      if (q.match(/triangle|tris|poly/)) {
-        const triCount = formatNum(summary.totalTris);
-        answer = `Your scene has **${triCount} triangles** across ${summary.objects} object${summary.objects !== 1 ? "s" : ""}.`;
-        if (summary.objectsList?.length > 0) {
-          const top3 = [...summary.objectsList].sort((a, b) => b.tris - a.tris).slice(0, 3);
-          answer += "\n\nHeaviest objects:\n" + top3.map((o, i) => `${i + 1}. **${o.name || "Unnamed"}** — ${formatNum(o.tris)} tris`).join("\n");
-        }
-        if (summary.totalTris > 500000) answer += "\n\n⚠️ That's quite heavy for real-time — consider decimating the largest meshes.";
-        else if (summary.totalTris < 50000) answer += "\n\n✓ Very lightweight — great for real-time performance.";
-      } else if (q.match(/light/)) {
-        answer = lights.length === 0
-          ? "No explicit lights in the scene — it's using default ambient illumination. Consider adding a **DirectionalLight** for crisp shadows and depth."
-          : `**${lights.length} light${lights.length > 1 ? "s" : ""}** in the scene:\n` + lights.map((l) => `• ${friendlyType(l.type)} "${l.name || "unnamed"}" — intensity ${l.intensity}, color ${l.color}`).join("\n");
-      } else if (q.match(/object|mesh|model/)) {
-        answer = `**${summary.objects} object${summary.objects !== 1 ? "s" : ""}** totaling ${formatNum(summary.totalTris)} triangles.`;
-      } else {
-        answer = `**Scene stats:** ${summary.objects} object${summary.objects !== 1 ? "s" : ""}, ${formatNum(summary.totalTris)} triangles, ${lights.length} light${lights.length !== 1 ? "s" : ""}.`;
-      }
+      answer = generateCountResponse(q, summary, serialized, lights, formatNum);
     } else if (q.match(/list|show|what.*object|what.*scene|what'?s.*in|inventory/)) {
-      if (serialized.length === 0) {
-        answer = "The scene is empty — add objects from the toolbar to get started!";
-      } else {
-        const items = serialized.slice(0, 15).map((o) => {
-          const d = describeObject(o);
-          return `• **${d.name}** — ${d.color} ${d.surface} ${d.shape} (${formatNum(d.tris)} tris)`;
-        });
-        answer = `**Objects in scene (${serialized.length}):**\n${items.join("\n")}`;
-        if (serialized.length > 15) answer += `\n\n…and ${serialized.length - 15} more objects.`;
-      }
-    } else if (q.match(/optimi|performance|slow|heavy|improve|fps|speed|lag/)) {
-      const issues = [];
-      if (summary.totalTris > 500000) issues.push(`🔴 **High poly count** (${formatNum(summary.totalTris)} tris) — decimate the heaviest meshes using the Mesh Tools panel, or generate LOD levels.`);
-      if (lights.length > 6) issues.push(`🟡 **${lights.length} lights** is a lot — each real-time light has a GPU cost. Try baking static lights or reducing to 4-6.`);
-      const heavyObjs = (summary.objectsList || []).filter((o) => o.tris > 100000);
-      if (heavyObjs.length > 0) {
-        issues.push(`🟡 ${heavyObjs.length} object${heavyObjs.length > 1 ? "s" : ""} exceed${heavyObjs.length === 1 ? "s" : ""} 100k tris: ${heavyObjs.slice(0, 3).map((o) => `"${o.name || "Unnamed"}" (${formatNum(o.tris)})`).join(", ")} — use LOD or the decimator.`);
-      }
-      const zeroLights = lights.filter((l) => l.intensity === 0);
-      if (zeroLights.length > 0) issues.push(`🟡 ${zeroLights.length} light${zeroLights.length > 1 ? "s" : ""} with zero intensity — safe to remove.`);
-      const emptyObj = serialized.filter((o) => (o.geometry?.tris || 0) === 0);
-      if (emptyObj.length > 0) issues.push(`ℹ️ ${emptyObj.length} empty object${emptyObj.length > 1 ? "s" : ""} (0 tris) — consider removing unused groups.`);
-
-      if (issues.length > 0) {
-        answer = "**Performance Analysis:**\n\n" + issues.join("\n\n");
-      } else {
-        answer = `✅ **Scene looks great!** ${summary.objects} objects, ${formatNum(summary.totalTris)} tris, ${lights.length} lights — well within real-time budgets. No immediate optimization needed.`;
-      }
-    } else if (q.match(/material|texture|color|rough|metal|pbr|shader/)) {
-      if (serialized.length === 0) {
-        answer = "No objects to analyze yet. Add some objects and I'll break down their materials!";
-      } else {
-        const matLines = serialized.slice(0, 10).map((o) => {
-          const d = describeObject(o);
-          const r = o.material?.roughness;
-          const m = o.material?.metalness;
-          return `• **${d.name}** — ${d.color} ${d.surface} | roughness: ${r != null ? r.toFixed(2) : "default"}, metalness: ${m != null ? m.toFixed(2) : "default"}`;
-        });
-        answer = `**Material Breakdown:**\n${matLines.join("\n")}`;
-        answer += "\n\n💡 Select an object and click **Suggest Material** for PBR recommendations.";
-      }
-    } else if (q.match(/light|lighting|shadow|bright|dark|illumin/)) {
-      if (lights.length === 0) {
-        answer = "No explicit lights — the scene uses default ambient illumination.\n\n**Suggestions:**\n• Add a **DirectionalLight** (sun-like) for crisp shadows\n• Add a **HemisphereLight** for soft sky/ground color gradient\n• Add a **PointLight** for localized warm accents";
-      } else {
-        const lightDescs = lights.map((l) =>
-          `• **${friendlyType(l.type)}** "${l.name || "unnamed"}" — intensity ${l.intensity}, color ${l.color}`
-        );
-        answer = `**Lighting Setup (${lights.length} sources):**\n${lightDescs.join("\n")}`;
-        const totalIntensity = lights.reduce((s, l) => s + (l.intensity || 0), 0);
-        if (totalIntensity < 1) answer += "\n\n⚠️ Total intensity is low — the scene may appear dark. Try increasing your key light.";
-        else if (totalIntensity > 10) answer += "\n\n⚠️ Total intensity is high — watch for blown-out highlights. Consider lowering some lights.";
-        else answer += "\n\n✓ Light balance looks good.";
-      }
-    } else if (q.match(/export|save|download|share|glb|gltf/)) {
-      answer = `**Exporting your scene:**\n• Use the **Export** button in the toolbar for GLB/glTF format\n• Current size: ${summary.objects} objects, ${formatNum(summary.totalTris)} tris\n• For smaller files: decimate heavy meshes first in the Optimize panel\n• GLB is the recommended format for web and game engines`;
-    } else if (q.match(/name|rename/)) {
-      const generic = serialized.filter((o) => /^(Mesh|Object3D|Group|)$/.test(o.name));
-      answer = generic.length > 0
-        ? `**${generic.length} object${generic.length > 1 ? "s" : ""}** with generic names found. Click the **Smart Rename** button above for AI-powered name suggestions based on shape, color, and material.`
-        : "✓ All objects already have descriptive names — nice work keeping things organized!";
-    } else if (q.match(/help|what can|capability|feature|how.*use/)) {
-      answer = "**I'm Objekta AI — here's what I can do:**\n\n" +
-        "🎨 **Describe Scene** — Detailed analysis of your objects, materials, and lighting\n" +
-        "📝 **Smart Rename** — Context-aware name suggestions for generic objects\n" +
-        "🎯 **Suggest Material** — PBR material values based on object characteristics\n" +
-        "⚡ **Analyze Scene** — Performance optimization recommendations\n" +
-        "🌆 **Generate Theme Ideas** — scene concepts (Cyberpunk, sci-fi, cinematic, etc.)\n\n" +
-        "You can also ask me questions like:\n" +
-        "• *\"How many triangles in my scene?\"*\n" +
-        "• *\"Show me the lighting setup\"*\n" +
-        "• *\"Give me 3 Cyberpunk scene ideas\"*\n" +
-        "• *\"How can I optimize performance?\"*\n" +
-        "• *\"What materials are being used?\"*";
+      answer = generateListResponse(serialized, summary, formatNum);
+    } else if (q.match(/optimi|performance|slow|heavy|improve|fps|speed|lag|efficient|optimize/)) {
+      answer = generatePerformanceResponse(summary, serialized, lights, formatNum);
+    } else if (q.match(/material|texture|color|rough|metal|pbr|shader|surface/)) {
+      answer = generateMaterialResponse(serialized, formatNum);
+    } else if (q.match(/light|lighting|shadow|bright|dark|illumin|exposure|glow/)) {
+      answer = generateLightingResponse(lights, summary, friendlyType);
+    } else if (q.match(/export|save|download|share|glb|gltf|file|format|compress/)) {
+      answer = generateExportResponse(summary, formatNum);
+    } else if (q.match(/name|rename|label/)) {
+      answer = generateRenameResponse(serialized);
+    } else if (q.match(/help|what can|capability|feature|how.*use|what.*do|can you/)) {
+      answer = generateHelpResponse();
     } else {
-      // ── Conversational fallback — don't just dump data ─────────────
-      if (serialized.length === 0) {
-        answer = "Your scene is empty right now! Add some objects from the toolbar or import a model, and I'll be able to help with materials, lighting, optimization, and more.";
-      } else {
-        // Try to give a relevant contextual response instead of a data dump
-        const topObj = serialized.slice(0, 3).map((o) => describeObject(o));
-        const topNames = topObj.map((d) => `"${d.name}"`).join(", ");
-        answer = `I'm not sure exactly what you're looking for — let me give you a quick overview:\n\n` +
-          `Your scene has **${summary.objects} objects** (${formatNum(summary.totalTris)} tris) with ${lights.length} light${lights.length !== 1 ? "s" : ""}. ` +
-          `Notable objects: ${topNames}.\n\n` +
-          `Try asking something specific:\n` +
-          `• *"How can I optimize this?"*\n` +
-          `• *"Give me Cyberpunk scene ideas"*\n` +
-          `• *"What materials are used?"*\n` +
-          `• *"Describe my scene in detail"*\n` +
-          `• *"How's the lighting?"*`;
-      }
+      // ── Conversational fallback — be helpful without just dumping data ─────────────
+      answer = generateContextualResponse(q, serialized, summary, lights, formatNum);
     }
 
     store.pushMessage("assistant", answer);
@@ -944,6 +855,161 @@ export async function analyzeSceneOptimizations(sceneChildren, scene) {
     store.setStatus("error", err.message);
     throw err;
   }
+}
+
+// ── Helper functions for dynamic response generation ──────────────────────────
+
+function generateCountResponse(q, summary, serialized, lights, formatNum) {
+  if (q.match(/triangle|tris|poly/)) {
+    const triCount = formatNum(summary.totalTris);
+    let answer = `Your scene has **${triCount} triangles** across ${summary.objects} object${summary.objects !== 1 ? "s" : ""}.`;
+    if (summary.objectsList?.length > 0) {
+      const top3 = [...summary.objectsList].sort((a, b) => b.tris - a.tris).slice(0, 3);
+      answer += "\n\nHeaviest objects:\n" + top3.map((o, i) => `${i + 1}. **${o.name || "Unnamed"}** — ${formatNum(o.tris)} tris`).join("\n");
+    }
+    if (summary.totalTris > 500000) answer += "\n\n⚠️ That's quite heavy for real-time — consider decimating the largest meshes.";
+    else if (summary.totalTris < 50000) answer += "\n\n✓ Very lightweight — great for real-time performance.";
+    return answer;
+  } else if (q.match(/light/)) {
+    return lights.length === 0
+      ? "No explicit lights in the scene — it's using default ambient illumination. Consider adding a **DirectionalLight** for crisp shadows and depth."
+      : `**${lights.length} light${lights.length > 1 ? "s" : ""}** in the scene:\n` + lights.map((l) => `• ${friendlyType(l.type)} "${l.name || "unnamed"}" — intensity ${l.intensity}, color ${l.color}`).join("\n");
+  } else if (q.match(/object|mesh|model/)) {
+    return `**${summary.objects} object${summary.objects !== 1 ? "s" : ""}** totaling ${formatNum(summary.totalTris)} triangles.`;
+  } else {
+    return `**Scene stats:** ${summary.objects} object${summary.objects !== 1 ? "s" : ""}, ${formatNum(summary.totalTris)} triangles, ${lights.length} light${lights.length !== 1 ? "s" : ""}.`;
+  }
+}
+
+function generateListResponse(serialized, summary, formatNum) {
+  if (serialized.length === 0) {
+    return "The scene is empty — add objects from the toolbar to get started!";
+  }
+  const items = serialized.slice(0, 15).map((o) => {
+    const d = describeObject(o);
+    return `• **${d.name}** — ${d.color} ${d.surface} ${d.shape} (${formatNum(d.tris)} tris)`;
+  });
+  let answer = `**Objects in scene (${serialized.length}):**\n${items.join("\n")}`;
+  if (serialized.length > 15) answer += `\n\n…and ${serialized.length - 15} more objects.`;
+  return answer;
+}
+
+function generatePerformanceResponse(summary, serialized, lights, formatNum) {
+  const issues = [];
+  if (summary.totalTris > 500000) issues.push(`🔴 **High poly count** (${formatNum(summary.totalTris)} tris) — decimate the heaviest meshes using the Mesh Tools panel, or generate LOD levels.`);
+  if (lights.length > 6) issues.push(`🟡 **${lights.length} lights** is a lot — each real-time light has a GPU cost. Try baking static lights or reducing to 4-6.`);
+  const heavyObjs = (summary.objectsList || []).filter((o) => o.tris > 100000);
+  if (heavyObjs.length > 0) {
+    issues.push(`🟡 ${heavyObjs.length} object${heavyObjs.length > 1 ? "s" : ""} exceed${heavyObjs.length === 1 ? "s" : ""} 100k tris: ${heavyObjs.slice(0, 3).map((o) => `"${o.name || "Unnamed"}" (${formatNum(o.tris)})`).join(", ")} — use LOD or the decimator.`);
+  }
+  const zeroLights = lights.filter((l) => l.intensity === 0);
+  if (zeroLights.length > 0) issues.push(`🟡 ${zeroLights.length} light${zeroLights.length > 1 ? "s" : ""} with zero intensity — safe to remove.`);
+  const emptyObj = serialized.filter((o) => (o.geometry?.tris || 0) === 0);
+  if (emptyObj.length > 0) issues.push(`ℹ️ ${emptyObj.length} empty object${emptyObj.length > 1 ? "s" : ""} (0 tris) — consider removing unused groups.`);
+
+  if (issues.length > 0) {
+    return "**Performance Analysis:**\n\n" + issues.join("\n\n");
+  } else {
+    return `✅ **Scene looks great!** ${summary.objects} objects, ${formatNum(summary.totalTris)} tris, ${lights.length} lights — well within real-time budgets. No immediate optimization needed.`;
+  }
+}
+
+function generateMaterialResponse(serialized, formatNum) {
+  if (serialized.length === 0) {
+    return "No objects to analyze yet. Add some objects and I'll break down their materials!";
+  }
+  const matLines = serialized.slice(0, 10).map((o) => {
+    const d = describeObject(o);
+    const r = o.material?.roughness;
+    const m = o.material?.metalness;
+    return `• **${d.name}** — ${d.color} ${d.surface} | roughness: ${r != null ? r.toFixed(2) : "default"}, metalness: ${m != null ? m.toFixed(2) : "default"}`;
+  });
+  let answer = `**Material Breakdown:**\n${matLines.join("\n")}`;
+  answer += "\n\n💡 Select an object and click **Suggest Material** for PBR recommendations.";
+  return answer;
+}
+
+function generateLightingResponse(lights, summary, friendlyType) {
+  if (lights.length === 0) {
+    return "No explicit lights — the scene uses default ambient illumination.\n\n**Suggestions:**\n• Add a **DirectionalLight** (sun-like) for crisp shadows\n• Add a **HemisphereLight** for soft sky/ground color gradient\n• Add a **PointLight** for localized warm accents";
+  }
+  const lightDescs = lights.map((l) =>
+    `• **${friendlyType(l.type)}** "${l.name || "unnamed"}" — intensity ${l.intensity}, color ${l.color}`
+  );
+  let answer = `**Lighting Setup (${lights.length} sources):**\n${lightDescs.join("\n")}`;
+  const totalIntensity = lights.reduce((s, l) => s + (l.intensity || 0), 0);
+  if (totalIntensity < 1) answer += "\n\n⚠️ Total intensity is low — the scene may appear dark. Try increasing your key light.";
+  else if (totalIntensity > 10) answer += "\n\n⚠️ Total intensity is high — watch for blown-out highlights. Consider lowering some lights.";
+  else answer += "\n\n✓ Light balance looks good.";
+  return answer;
+}
+
+function generateExportResponse(summary, formatNum) {
+  return `**Exporting your scene:**\n• Use the **Export** button in the toolbar for GLB/glTF format\n• Current size: ${summary.objects} objects, ${formatNum(summary.totalTris)} tris\n• For smaller files: decimate heavy meshes first in the Optimize panel\n• GLB is the recommended format for web and game engines`;
+}
+
+function generateRenameResponse(serialized) {
+  const generic = serialized.filter((o) => /^(Mesh|Object3D|Group|)$/.test(o.name));
+  return generic.length > 0
+    ? `**${generic.length} object${generic.length > 1 ? "s" : ""}** with generic names found. Click the **Smart Rename** button above for AI-powered name suggestions based on shape, color, and material.`
+    : "✓ All objects already have descriptive names — nice work keeping things organized!";
+}
+
+function generateHelpResponse() {
+  return "**I'm Objekta AI — here's what I can do:**\n\n" +
+    "🎨 **Describe Scene** — Detailed analysis of your objects, materials, and lighting\n" +
+    "📝 **Smart Rename** — Context-aware name suggestions for generic objects\n" +
+    "🎯 **Suggest Material** — PBR material values based on object characteristics\n" +
+    "⚡ **Analyze Scene** — Performance optimization recommendations\n" +
+    "🌆 **Generate Theme Ideas** — scene concepts (Cyberpunk, sci-fi, cinematic, etc.)\n\n" +
+    "You can also ask me questions like:\n" +
+    "• *\"How many triangles in my scene?\"*\n" +
+    "• *\"Show me the lighting setup\"*\n" +
+    "• *\"Give me 3 Cyberpunk scene ideas\"*\n" +
+    "• *\"How can I optimize performance?\"*\n" +
+    "• *\"What materials are being used?\"*";
+}
+
+function generateContextualResponse(q, serialized, summary, lights, formatNum) {
+  if (serialized.length === 0) {
+    return "Your scene is empty right now! Add some objects from the toolbar or import a model, and I'll be able to help with materials, lighting, optimization, and more.";
+  }
+
+  // Try to infer intent from question and give relevant info
+  const topObj = serialized.slice(0, 3).map((o) => describeObject(o));
+  const topNames = topObj.map((d) => `"${d.name}"`).join(", ");
+
+  // Check if question seems to be looking for analysis/advice
+  if (q.match(/should|would|could|best|better|recommend|suggest|advice|help.*make|improve|good|bad|issue|problem/)) {
+    return `Looking at your scene with **${summary.objects} objects** (${formatNum(summary.totalTris)} tris), I'd say: ` +
+      `The main objects are ${topNames}. The lighting setup has **${lights.length} light${lights.length !== 1 ? "s" : ""}**.\n\n` +
+      `What specific area would you like to improve? I can help with:\n` +
+      `• *"How can I optimize this?"* — performance tips\n` +
+      `• *"Suggest materials for my objects"* — PBR values\n` +
+      `• *"Give me scene ideas"* — themed concepts\n` +
+      `• *"How's my lighting?"* — lighting analysis`;
+  }
+
+  // Check if question is asking what something is or does
+  if (q.match(/what'?s|what is|what does|tell.*about|explain|describe/)) {
+    return `Your scene has ${summary.objects} notable objects: ${topNames}. ` +
+      `Total triangles: **${formatNum(summary.totalTris)}**. Lights: **${lights.length}**.\n\n` +
+      `Want to know more about:\n` +
+      `• *"List all my objects"* — full inventory\n` +
+      `• *"Describe my scene"* — detailed analysis\n` +
+      `• *"Show lighting setup"* — all lights\n` +
+      `• *"What materials are used?"* — material breakdown`;
+  }
+
+  // Fallback: offer suggestions
+  return `I'm not sure exactly what you're looking for. Your scene has **${summary.objects} objects** with ${topNames} as highlights. ` +
+    `${formatNum(summary.totalTris)} triangles, **${lights.length} lights**.\n\n` +
+    `Try asking something specific:\n` +
+    `• *"How can I optimize this?"*\n` +
+    `• *"Give me Cyberpunk scene ideas"*\n` +
+    `• *"What materials should I use?"*\n` +
+    `• *"Describe my scene in detail"*\n` +
+    `• *"How's the lighting?"*`;
 }
 
 // ── Util ──────────────────────────────────────────────────────────────

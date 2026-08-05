@@ -10,6 +10,23 @@ const projectSchema = new mongoose.Schema(
     // Per-collaborator permission: { "<userId>": "editor" | "viewer" }
     // Owner is always the `user` field. Collaborators default to "editor".
     collaboratorRoles: { type: Map, of: String, default: {} },
+    visibility: {
+      type: String,
+      enum: ["private", "review", "published"],
+      default: "private",
+      index: true,
+    },
+    reviewStatus: {
+      type: String,
+      enum: ["draft", "in_review", "changes_requested", "approved", "published"],
+      default: "draft",
+      index: true,
+    },
+    shareToken: { type: String, default: null, unique: true, sparse: true, select: false },
+    shareEnabled: { type: Boolean, default: false },
+    shareExpiresAt: { type: Date, default: null },
+    publishedAt: { type: Date, default: null },
+    approvedVersion: { type: Number, default: null },
     progress: { type: Number, default: 0 },
     assets: { type: Array, default: [] },
     thumbnail: { type: String, default: "" },

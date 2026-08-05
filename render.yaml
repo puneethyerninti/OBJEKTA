@@ -15,7 +15,9 @@ services:
       - key: MONGO_URI
         sync: false
       - key: FRONTEND_ORIGIN
-        sync: false
+        value: https://objekta3d.vercel.app
+      - key: EXTRA_CORS_ORIGINS
+        value: https://objekta-9.onrender.com
       - key: AWS_REGION
         sync: false
       - key: AWS_ACCESS_KEY_ID
@@ -27,14 +29,4 @@ services:
       - key: S3_PUBLIC_BASE
         sync: false
 
-  - type: web
-    name: objekta-frontend
-    rootDir: .
-    buildCommand: npm install && npm run build
-    staticPublishPath: dist
-    autoDeploy: true
-    envVars:
-      - key: VITE_API_BASE
-        value: https://objekta-backend.onrender.com
-      - key: VITE_ASSET_BASE
-        value: https://objekta-frontend.onrender.com
+# Frontend will be deployed on Vercel. Removed Render frontend service to avoid duplicate deployments.

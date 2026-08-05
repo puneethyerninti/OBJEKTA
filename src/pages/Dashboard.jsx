@@ -325,7 +325,22 @@ export default function Dashboard() {
     const updatedAt = p.lastSavedAt || p.updatedAt || p.updated_at || p.updated || p.lastSaved || null;
     const progress = (typeof p.progress === "number" && p.progress) || (p.data && typeof p.data.progress === "number" && p.data.progress) || 0;
     const collaborators = p.collaborators || p.collabs || p.members || [];
-    return { _id, title, thumbnailUrl: thumbnail, createdAt, updatedAt, progress, collaborators, raw: p };
+    const reviewStatus = p.reviewStatus || p.raw?.reviewStatus || "draft";
+    const visibility = p.visibility || p.raw?.visibility || "private";
+    const shareEnabled = !!(p.shareEnabled || p.raw?.shareEnabled);
+    return {
+      _id,
+      title,
+      thumbnailUrl: thumbnail,
+      createdAt,
+      updatedAt,
+      progress,
+      collaborators,
+      reviewStatus,
+      visibility,
+      shareEnabled,
+      raw: p,
+    };
   }, []);
 
   const safeDate = (str) => {
@@ -932,6 +947,12 @@ export default function Dashboard() {
       .slice(0, 4);
   }, [projects, starredIds]);
 
+  const carouselItems = React.useMemo(() => {
+    if (Array.isArray(spotlightProjects) && spotlightProjects.length) return spotlightProjects;
+    if (Array.isArray(projects)) return projects.slice(0, 6);
+    return [];
+  }, [spotlightProjects, projects]);
+
   // Context menu handlers
   useEffect(() => {
     const onDocClick = (ev) => {
@@ -974,6 +995,31 @@ export default function Dashboard() {
     setContext({ project: p, x, y });
   };
 
+  const copyReviewLink = async (project, { rotate = false } = {}) => {
+    if (!project?._id) return;
+    try {
+      const res = await doFetch(`/api/projects/${project._id}/share`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rotate }),
+      });
+      if (!res?.ok) {
+        throw new Error(res?.data?.message || "Unable to create review link");
+      }
+      const token = res.data?.token;
+      const url = token ? `${window.location.origin}/review/${token}` : res.data?.shareUrl;
+      if (!url) throw new Error("Review link was not returned");
+      await navigator.clipboard?.writeText(url);
+      if (res.data?.project) {
+        const next = normalizeProject(res.data.project);
+        setProjects((prev) => Array.isArray(prev) ? prev.map((item) => item._id === next._id ? next : item) : prev);
+      }
+      pushToast("Secure review link copied", "success");
+    } catch (err) {
+      pushToast(err.message || "Failed to copy review link", "error");
+    }
+  };
+
   const handleContextAction = (action, p) => {
     setContext(null);
     switch (action) {
@@ -989,8 +1035,7 @@ export default function Dashboard() {
       case "delete":
         return openProjectModal(p);
       case "share":
-        navigator.clipboard?.writeText(`${window.location.origin}/studio?project=${encodeURIComponent(p._id)}`);
-        return pushToast("Share link copied", "info");
+        return copyReviewLink(p);
       case "export":
         return exportProjectSnapshot(p);
       default:
@@ -1255,6 +1300,42 @@ export default function Dashboard() {
               </div>
             </div>
           </section>
+
+          {/* ── Spotlight Carousel ───────────────────────── */}
+          {carouselItems.length > 0 && (
+            <section className="dash-carousel" aria-label="Spotlight carousel">
+              <div className="dash-carousel-header">
+                <div className="dash-carousel-title">Live Spotlight</div>
+              </div>
+              <div className="dash-carousel-viewport">
+                <div className="dash-carousel-track">
+                  {[...carouselItems, ...carouselItems].map((project, idx) => (
+                    <button
+                      key={`${project._id || project.title}-${idx}`}
+                      type="button"
+                      className="dash-carousel-card"
+                      onClick={() => navToStudio(project)}
+                    >
+                      <div className="dash-carousel-thumb">
+                        {renderThumbSrc(project.thumbnailUrl) ? (
+                          <img src={renderThumbSrc(project.thumbnailUrl)} alt={project.title} />
+                        ) : (
+                          <span>{(project.title || "Project").slice(0, 2).toUpperCase()}</span>
+                        )}
+                      </div>
+                      <div className="dash-carousel-meta">
+                        <div className="dash-carousel-name">{project.title || "Untitled"}</div>
+                        <div className="dash-carousel-sub">
+                          {timeAgo(project.updatedAt || project.createdAt)} · {project.progress || 0}%
+                        </div>
+                      </div>
+                      <span className="dash-carousel-cta">Open</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
 
           {/* ── Command Center Bento ───────────────────── */}
           <section className="dash-bento" aria-label="Dashboard insights">
@@ -1710,11 +1791,8 @@ export default function Dashboard() {
                 <button className="modal-btn modal-btn--primary" onClick={() => { navToStudio(preview); closePreview(); }}>
                   Open in Studio
                 </button>
-                <button className="modal-btn modal-btn--ghost" onClick={() => {
-                  navigator.clipboard?.writeText(`${window.location.origin}/studio?project=${encodeURIComponent(preview._id)}`);
-                  pushToast('Link copied', 'info');
-                }}>
-                  Copy Link
+                <button className="modal-btn modal-btn--ghost" onClick={() => copyReviewLink(preview)}>
+                  Copy Review Link
                 </button>
               </div>
             </div>

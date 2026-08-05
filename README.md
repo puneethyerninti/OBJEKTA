@@ -238,19 +238,34 @@ git clone https://github.com/puneethyerninti/OBJEKTA.git
 cd OBJEKTA
 ```
 
-### 2. Configure environment variables
+### 2. Set up Google OAuth (Required)
+
+OBJEKTA uses Google Sign-In for authentication. Follow **[GOOGLE_AUTH_SETUP.md](./GOOGLE_AUTH_SETUP.md)** to:
+
+1. Create a Google Cloud project
+2. Get your OAuth 2.0 Client ID
+3. Add `http://localhost:5173` to authorized origins in Google Cloud Console
+
+**Quick version:**
+- Get Client ID from [Google Cloud Console](https://console.cloud.google.com/)
+- Add `http://localhost:5173` as authorized origin
+- Copy the Client ID to your `.env` files
+
+### 3. Configure environment variables
 
 ```bash
 # Root (frontend)
-cp .env.example .env
+cp .env.local.example .env.local
+# Edit: VITE_GOOGLE_CLIENT_ID, VITE_API_BASE
 
 # Backend
-cp backend/.env.example backend/.env
+cp backend/.env.local.example backend/.env
+# Edit: GOOGLE_CLIENT_ID, MONGO_URI, JWT_SECRET
 ```
 
-Edit both `.env` files with your values (see [Environment Variables](#environment-variables)).
+See **[.env.local.example](./.env.local.example)** and **[backend/.env.local.example](./backend/.env.local.example)** for detailed comments.
 
-### 3. Install dependencies and start
+### 4. Install dependencies and start
 
 ```bash
 # Terminal 1 — Frontend
@@ -265,7 +280,16 @@ npm run dev
 # → http://localhost:5000
 ```
 
-### 4. (Optional) Start the AI micro-service
+### 5. (Optional) Start MongoDB
+
+```bash
+# If you're using local MongoDB (default)
+mongod
+```
+
+Alternatively, use MongoDB Atlas (free cloud database).
+
+### 6. (Optional) Start the AI micro-service
 
 ```bash
 cd backend/ai_service
@@ -273,9 +297,15 @@ pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --port 8100
 ```
 
-### 5. Open in browser
+### 7. Open in browser
 
-Navigate to `http://localhost:5173`. The Vite dev server proxies `/api` and `/socket.io` to the backend automatically.
+Navigate to `http://localhost:5173`. You should see the Google Sign-In button. The Vite dev server proxies `/api` and `/socket.io` to the backend automatically.
+
+---
+
+## Deploying to Render.com
+
+See **[RENDER_DEPLOYMENT_GUIDE.md](./RENDER_DEPLOYMENT_GUIDE.md)** for step-by-step instructions to deploy both frontend and backend to production with working Google OAuth.
 
 ---
 

@@ -290,6 +290,23 @@
   color: var(--text-muted, #ccc);
 }
 
+.ai-typewriter {
+  white-space: pre-wrap;
+}
+
+.ai-typewriter--active::after {
+  content: "|";
+  display: inline-block;
+  margin-left: 2px;
+  color: rgba(127,90,240,0.9);
+  animation: ai-caret 1s steps(1) infinite;
+}
+
+@keyframes ai-caret {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
 /* ── Chat input ──────────────────────────────────────────────────── */
 .ai-chat-input-row {
   display: flex;
